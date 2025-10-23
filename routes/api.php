@@ -32,7 +32,7 @@ Route::post('/setup/admin', function (\Illuminate\Http\Request $request) {
     $u->nombre   = $data['nombre'];
     $u->email    = $data['email'];
     $u->password = Hash::make($data['password']); // hash!
-    $u->puesto   = 'admin';
+    $u->puesto   = 1;
     $u->priv1 = $u->priv2 = $u->priv3 = $u->priv4 = 1;
     $u->save();
 
