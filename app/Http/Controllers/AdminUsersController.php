@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use App\Http\Requests\StoreAdminUserRequest;
 use App\Http\Requests\UpdateAdminUserRequest;
+use Illuminate\Support\Str;
 
 class AdminUsersController extends Controller
 {
@@ -22,11 +23,11 @@ class AdminUsersController extends Controller
         $q = Usuario::query();
 
         if ($s = $request->get('search')) {
-            $like = '%'.$s.'%';
+            $like = '%' . Str::lower($s) . '%';
             $q->where(function($qq) use ($like) {
-                $qq->where('nombre', 'ILIKE', $like)
-                   ->orWhere('email', 'ILIKE', $like)
-                   ->orWhere('puesto', 'ILIKE', $like);
+                $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                   ->orWhereRaw('LOWER(email) LIKE ?', [$like])
+                   ->orWhereRaw('LOWER(puesto) LIKE ?', [$like]);
             });
         }
 

@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class InventarioController extends Controller
 {
@@ -43,8 +44,8 @@ class InventarioController extends Controller
         }
 
         if ($s = $request->get('search')) {
-            $like = '%' . $s . '%';
-            $q->where('producto.nombre', 'ILIKE', $like);
+            $like = '%' . Str::lower($s) . '%';
+            $q->whereRaw('LOWER(producto.nombre) LIKE ?', [$like]);
         }
 
         $q->orderBy('producto.nombre');

@@ -11,6 +11,7 @@ use App\Http\Resources\ProductoResource;
 use Throwable;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 
 class ProductosController extends Controller
 {
@@ -30,10 +31,10 @@ class ProductosController extends Controller
         }
 
         if ($s = $request->get('search')) {
-            $like = '%' . $s . '%';
+            $like = '%' . Str::lower($s) . '%';
             $q->where(function ($qq) use ($like) {
-                $qq->where('nombre', 'ILIKE', $like)
-                    ->orWhere('descripcion', 'ILIKE', $like);
+                $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
             });
         }
 
@@ -50,10 +51,10 @@ class ProductosController extends Controller
         $q = $proveedor->productos()->with('proveedor');
 
         if ($s = $request->get('search')) {
-            $like = '%' . $s . '%';
+            $like = '%' . Str::lower($s) . '%';
             $q->where(function ($qq) use ($like) {
-                $qq->where('nombre', 'ILIKE', $like)
-                    ->orWhere('descripcion', 'ILIKE', $like);
+                $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
             });
         }
 

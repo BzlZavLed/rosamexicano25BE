@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Http\Requests\StoreProveedorRequest;
 use App\Http\Requests\UpdateProveedorRequest;
 use App\Http\Resources\ProveedorResource;
+use Illuminate\Support\Str;
 
 class ProveedoresController extends Controller
 {
@@ -18,12 +19,12 @@ class ProveedoresController extends Controller
         $q = Proveedor::query();
 
         if ($s = $request->get('search')) {
-            $like = '%' . $s . '%';
+            $like = '%' . Str::lower($s) . '%';
             $q->where(function ($qq) use ($like) {
-                $qq->where('nombre', 'ILIKE', $like)
-                    ->orWhere('email', 'ILIKE', $like)
-                    ->orWhere('ciudad', 'ILIKE', $like)
-                    ->orWhere('sucursal', 'ILIKE', $like);
+                $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(email) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(ciudad) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(sucursal) LIKE ?', [$like]);
             });
         }
 

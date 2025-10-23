@@ -14,6 +14,7 @@ use App\Models\Producto;
 use App\Models\Inventario;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Throwable;
 
 class CashierLegacyController extends Controller
@@ -103,10 +104,10 @@ class CashierLegacyController extends Controller
             $q->where('ident', (int)$barcode);
         }
         if ($s = $request->input('search')) {
-            $like = '%' . $s . '%';
+            $like = '%' . Str::lower($s) . '%';
             $q->where(function ($qq) use ($like) {
-                $qq->where('nombre', 'ILIKE', $like)
-                   ->orWhere('descripcion', 'ILIKE', $like);
+                $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                   ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
             });
         }
         if ($pid = $request->input('proveedor_id')) {

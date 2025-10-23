@@ -8,6 +8,7 @@ use App\Http\Requests\UpdatePromocionRequest;
 use App\Http\Resources\PromocionResource;
 use App\Models\Promocion;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class PromocionesController extends Controller
 {
@@ -40,10 +41,10 @@ class PromocionesController extends Controller
 
         // simple search by names
         if ($s = $request->get('search')) {
-            $like = '%' . $s . '%';
+            $like = '%' . Str::lower($s) . '%';
             $q->where(function ($qq) use ($like) {
-                $qq->whereHas('productoRef', fn($w) => $w->where('nombre', 'ILIKE', $like))
-                    ->orWhereHas('proveedorRef', fn($w) => $w->where('nombre', 'ILIKE', $like));
+                $qq->whereHas('productoRef', fn($w) => $w->whereRaw('LOWER(nombre) LIKE ?', [$like]))
+                    ->orWhereHas('proveedorRef', fn($w) => $w->whereRaw('LOWER(nombre) LIKE ?', [$like]));
             });
         }
 

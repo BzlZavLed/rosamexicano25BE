@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class CashierController extends Controller
 {
@@ -124,9 +125,10 @@ class CashierController extends Controller
         if (is_numeric($q)) {
             $query->where('ident', (int) $q); // barcode
         } else {
-            $like = '%' . $q . '%';
+            $like = '%' . Str::lower($q) . '%';
             $query->where(function ($qq) use ($like) {
-                $qq->where('nombre', 'ILIKE', $like)->orWhere('descripcion', 'ILIKE', $like);
+                $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                   ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
             });
         }
 
