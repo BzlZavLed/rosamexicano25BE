@@ -66,6 +66,8 @@ Route::middleware('auth:sanctum')->group(function () {
         ->whereNumber('proveedor');
 
     // Productos
+    Route::get('/productos/bulk-template', [ProductosController::class, 'bulkTemplate']);
+    Route::post('/productos/bulk-upload', [ProductosController::class, 'bulkUpload']);
     Route::apiResource('productos', ProductosController::class)
         ->parameters(['productos' => 'producto']);
 
