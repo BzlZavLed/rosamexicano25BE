@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\CashierFindRequest;
 use App\Http\Requests\CheckoutLegacyRequest;
 use App\Http\Requests\CajaLegacyRequest;
+use App\Http\Requests\ExpenseLegacyRequest;
 use App\Models\EstadoCaja;
 use App\Models\VentaOld;
 use App\Models\Venta;
@@ -193,17 +194,18 @@ class CashierLegacyController extends Controller
                     $recibo = $total;
                     $cambio = 0.0;
                 }
+                $ie = $request->input('ie', 1); // legacy
 
                 // 5) encabezado de venta (tabla legacy "ventas")
                 $venta = Venta::create([
                     'idventa'    => $nextIdVenta,
                     'totalventa' => $total,
-                    'metodo'     => $method,       // 'cash' | 'debit' | 'credit'
+                    'metodo'     => $method,       // 'efectivo' | 'debit' | 'credit'
                     'recibo'     => $recibo,
                     'cambio'     => $cambio,
                     'vendedor'   => $vendedor,
                     'fecha'      => $fechaHoy,     // "d/m/y" (varchar(10))
-                    'ie'         => 1,
+                    'ie'         => $ie,
                     'concepto'   => 'VENTA MOSTRADOR',
                 ]);
 
@@ -261,6 +263,49 @@ class CashierLegacyController extends Controller
             $msg = $e->getMessage() ?: 'No se pudo finalizar la venta';
             $code = str_contains(strtolower($msg), 'inventario') ? 422 : 500;
             return response()->json(['message' => $msg], $code);
+        }
+    }
+
+    // POST /api/cashier/expenses
+    public function registerExpense(ExpenseLegacyRequest $request)
+    {
+        $fecha = $request->input('fecha') ?: $this->todayStr();
+
+        $caja = EstadoCaja::where('fecha', $fecha)->where('estado', 1)->first();
+        if (!$caja) {
+            return response()->json(['message' => 'Debes abrir caja antes de registrar gastos'], 409);
+        }
+
+        $total = round((float) $request->input('totalventa'), 2);
+        if ($total <= 0) {
+            return response()->json(['message' => 'El total del gasto debe ser mayor a cero'], 422);
+        }
+
+        try {
+            $venta = DB::transaction(function () use ($request, $fecha, $total) {
+                $nextIdVenta = (int) DB::table('ventas')->max('idventa') + 1;
+
+                $method    = $request->input('method') ?: 'efectivo';
+                $concepto  = $request->input('concepto');
+                $vendedor  = $request->input('vendedor') ?: ($request->user()->nombre ?? $request->user()->email ?? 'admin');
+
+                return Venta::create([
+                    'idventa'    => $nextIdVenta,
+                    'totalventa' => $total,
+                    'metodo'     => $method,
+                    'recibo'     => 0,
+                    'cambio'     => 0,
+                    'vendedor'   => $vendedor,
+                    'fecha'      => $fecha,
+                    'ie'         => 0,
+                    'concepto'   => $concepto,
+                ]);
+            });
+
+            return response()->json(['data' => $venta], 201);
+        } catch (Throwable $e) {
+            report($e);
+            return response()->json(['message' => 'No se pudo registrar el gasto'], 500);
         }
     }
 }

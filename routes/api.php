@@ -91,4 +91,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Checkout / vender
     Route::post('/cashier/checkout', [CashierLegacyController::class, 'checkout']);
+
+    // Gastos
+    Route::post('/cashier/expenses', [CashierLegacyController::class, 'registerExpense']);
 });
