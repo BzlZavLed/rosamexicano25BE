@@ -6,6 +6,7 @@ use App\Http\Requests\CashierFindRequest;
 use App\Http\Requests\CheckoutLegacyRequest;
 use App\Http\Requests\CajaLegacyRequest;
 use App\Http\Requests\ExpenseLegacyRequest;
+use App\Http\Requests\SendTicketEmailRequest;
 use App\Models\EstadoCaja;
 use App\Models\VentaOld;
 use App\Models\Venta;
@@ -14,7 +15,12 @@ use App\Models\Producto;
 use App\Models\Inventario;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use App\Mail\TicketMail;
+use App\Models\Mailer;
 use Throwable;
 
 class CashierLegacyController extends Controller
@@ -277,7 +283,7 @@ class CashierLegacyController extends Controller
             return response()->json(['message' => 'Debes abrir caja antes de registrar gastos'], 409);
         }
 
-        $total = round((float) $request->input('totalventa'), 2);
+        $total = round((float) $request->input('total'), 2);
         if ($total <= 0) {
             return response()->json(['message' => 'El total del gasto debe ser mayor a cero'], 422);
         }
@@ -308,5 +314,89 @@ class CashierLegacyController extends Controller
             report($e);
             return response()->json(['message' => 'No se pudo registrar el gasto'], 500);
         }
+    }
+
+    // POST /api/cashier/send-ticket
+    public function emailTicket(SendTicketEmailRequest $request)
+    {
+        $fromEmail = config('mail.from.address');
+        $fromName  = config('mail.from.name', 'Rosa Mexicano');
+        if (!$fromEmail) {
+            return response()->json(['message' => 'Servicio de correo no configurado'], 500);
+        }
+
+        $ventaId  = $request->integer('venta_id');
+        $canal    = $request->input('canal');
+
+        $cliente  = $request->input('cliente', []);
+        $nombre   = $cliente['nombre'] ?? 'Cliente';
+        $email    = isset($cliente['email']) ? trim((string) $cliente['email']) : null;
+        $telefono = $cliente['telefono'] ?? null;
+
+        if (!$email) {
+            return response()->json(['message' => 'El correo del cliente es obligatorio para enviar el ticket.'], 422);
+        }
+
+        $subject  = $request->input('subject') ?: "Ticket de compra - Venta #{$ventaId}";
+        $templateId = $request->input('template_id');
+        $message = $request->input('message', 'Gracias por tu compra.');
+        $logMessage = $request->input('log_message', 'Venta realizada');
+
+        $pdfBase64 = $request->input('ticket_pdf_base64');
+        $decodedPdf = base64_decode($pdfBase64, true);
+        if ($decodedPdf === false) {
+            return response()->json(['message' => 'PDF inválido.'], 422);
+        }
+
+        $storedLink = null;
+        try {
+            $fileName = sprintf('tickets/venta_%s_%s.pdf', $ventaId, now()->format('Ymd_His'));
+            Storage::disk('public')->put($fileName, $decodedPdf);
+            $storedLink = Storage::disk('public')->url($fileName);
+        } catch (Throwable $e) {
+            Log::warning('No se pudo guardar el ticket en almacenamiento', ['error' => $e->getMessage()]);
+        }
+
+        try {
+            $mailable = (new TicketMail(
+                $nombre,
+                $message,
+                $telefono,
+                $canal,
+                $ventaId,
+                $decodedPdf,
+                $subject,
+                $templateId
+            ))->from($fromEmail, $fromName);
+
+            Mail::to($email)->send($mailable);
+        } catch (Throwable $e) {
+            Log::error('No se pudo enviar el correo', [
+                'error' => $e->getMessage(),
+            ]);
+            Log::error('Mail to:'.$email. " Nombre: " .$nombre, [
+                'error' => $e->getMessage(),
+            ]);
+
+            Mailer::create([
+                'mail'    => $storedLink ?? 'ticket-no-guardado',
+                'asunto'  => $subject,
+                'mensaje' => $logMessage . ' (error envío)',
+                'status'  => 0,
+                'fecha'   => now()->toDateString(),
+            ]);
+
+            return response()->json(['message' => 'No se pudo enviar el correo.'], 502);
+        }
+
+        Mailer::create([
+            'mail'    => $storedLink ?? 'ticket-no-guardado',
+            'asunto'  => $subject,
+            'mensaje' => $logMessage,
+            'status'  => 1,
+            'fecha'   => now()->toDateString(),
+        ]);
+
+        return response()->json(['message' => 'Ticket enviado correctamente.']);
     }
 }

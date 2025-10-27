@@ -8,6 +8,9 @@ use App\Http\Controllers\UnifiedAuthController;
 use App\Http\Controllers\AdminUsersController;
 use App\Http\Controllers\CashierController;
 use App\Http\Controllers\CashierLegacyController;
+use App\Http\Controllers\ClientesController;
+use App\Http\Controllers\MailerController;
+use App\Http\Controllers\MensualidadController;
 use App\Models\Usuario;
 
 Route::post('/auth/login', [UnifiedAuthController::class, 'login']);
@@ -72,6 +75,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('productos', ProductosController::class)
         ->parameters(['productos' => 'producto']);
 
+    // Clientes
+    Route::apiResource('clientes', ClientesController::class)
+        ->parameters(['clientes' => 'cliente']);
+
+    Route::apiResource('mailer', MailerController::class)
+        ->parameters(['mailer' => 'mailer']);
+
+    Route::post('/mensualidad/{mensualidad}/pay', [MensualidadController::class, 'pay']);
+    Route::post('/mensualidad/bulk', [MensualidadController::class, 'bulkCreate']);
+    Route::apiResource('mensualidad', MensualidadController::class)
+        ->parameters(['mensualidad' => 'mensualidad']);
+
     // Inventario
     Route::get('/inventario', [InventarioController::class, 'index']);
     Route::post('/inventario/set-stock',    [InventarioController::class, 'setStock']);     // absolute set
@@ -97,4 +112,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Gastos
     Route::post('/cashier/expenses', [CashierLegacyController::class, 'registerExpense']);
+
+    // Tickets
+    Route::post('/cashier/send-ticket', [CashierLegacyController::class, 'emailTicket']);
 });

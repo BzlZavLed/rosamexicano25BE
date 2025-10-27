@@ -78,6 +78,9 @@ return [
         'array' => [
             'transport' => 'array',
         ],
+        'mailgun' => [
+            'transport' => 'mailgun',
+        ],
 
         'failover' => [
             'transport' => 'failover',
