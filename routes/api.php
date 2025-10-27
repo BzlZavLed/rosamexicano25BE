@@ -11,6 +11,7 @@ use App\Http\Controllers\CashierLegacyController;
 use App\Models\Usuario;
 
 Route::post('/auth/login', [UnifiedAuthController::class, 'login']);
+Route::post('/login', [UnifiedAuthController::class, 'login'])->name('api.login');
 
 
 Route::post('/setup/admin', function (\Illuminate\Http\Request $request) {
