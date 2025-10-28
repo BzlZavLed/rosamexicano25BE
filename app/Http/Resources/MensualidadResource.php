@@ -22,6 +22,7 @@ class MensualidadResource extends JsonResource
             'status'   => $this->status,
             'payment_date' => optional($this->payment_date)->toDateString(),
             'receipt_path' => $this->receipt_path,
+            'cobro_path'   => $this->cobro_path,
             'proveedor' => $this->whenLoaded('proveedor', function () {
                 return [
                     'id'     => $this->proveedor->id,

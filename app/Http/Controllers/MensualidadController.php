@@ -232,6 +232,15 @@ class MensualidadController extends Controller
         $providerName = $proveedor->nombre;
         $providerPhone = $proveedor->tel;
 
+        $paymentAmount = max(0, (float) $request->input('cantidad_pago', $mensualidad->importe));
+        $restante = max(0, $mensualidad->importe - $paymentAmount);
+        if ($restante > 0 && !$request->filled('restante')) {
+            return response()->json(['message' => 'Debe especificar el restante cuando el pago es parcial'], 422);
+        }
+        if ($request->filled('restante')) {
+            $restante = max(0, (float) $request->input('restante'));
+        }
+
         $paymentDate = $request->input('payment_date') ?? now()->toDateString();
 
         [$pdfBinary, $storedLink] = $this->storeReceipt(
@@ -274,8 +283,11 @@ class MensualidadController extends Controller
             $mailStatus = 0;
         }
 
-        $mensualidad->status = 'paid';
+        $mensualidad->status = $restante <= 0 ? 'paid' : 'pending';
         $mensualidad->payment_date = $paymentDate;
+        $mensualidad->cantidad_pago = min($mensualidad->importe, $paymentAmount);
+        $mensualidad->restante = $restante;
+        $mensualidad->pago_completo = $restante <= 0;
         $mensualidad->proveedor_id = $proveedor->id;
         $mensualidad->nombre = $proveedor->nombre;
         $mensualidad->save();
@@ -283,8 +295,8 @@ class MensualidadController extends Controller
 
         Mailer::create([
             'mail'    => $storedLink ?? 'recibo-no-guardado',
-            'asunto'  => 'Pago de proveedor',
-            'mensaje' => 'Pago de proveedor registrado',
+            'asunto'  => ($restante <= 0 ? 'Pago de proveedor' : 'Pago parcial de proveedor'),
+            'mensaje' => ($restante <= 0 ? 'Pago de proveedor registrado' : 'Pago parcial registrado'),
             'status'  => $mailStatus,
             'fecha'   => now()->toDateString(),
         ]);
