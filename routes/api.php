@@ -12,7 +12,7 @@ use App\Http\Controllers\ClientesController;
 use App\Http\Controllers\MailerController;
 use App\Http\Controllers\MensualidadController;
 use App\Models\Usuario;
-
+use App\Http\Controllers\MailerTrackController;
 Route::post('/auth/login', [UnifiedAuthController::class, 'login']);
 Route::post('/login', [UnifiedAuthController::class, 'login'])->name('api.login');
 
@@ -117,4 +117,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Tickets
     Route::post('/cashier/send-ticket', [CashierLegacyController::class, 'emailTicket']);
+    //Mailer track
+    Route::get('/mailer-track', [MailerTrackController::class, 'index']);
+
 });
