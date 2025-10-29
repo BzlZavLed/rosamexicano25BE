@@ -395,7 +395,7 @@ class CashierLegacyController extends Controller
             'mensaje' => $logMessage,
             'status'  => 1,
             'fecha'   => now()->toDateString(),
-            'email'    => $email,
+            'email' => $email ?? 'no-email',
         ]);
 
         return response()->json(['message' => 'Ticket enviado correctamente.']);
