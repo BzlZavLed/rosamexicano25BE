@@ -6,6 +6,7 @@ use App\Http\Requests\StoreMensualidadRequest;
 use App\Http\Requests\UpdateMensualidadRequest;
 use App\Http\Requests\MensualidadPayRequest;
 use App\Http\Requests\MensualidadBulkRequest;
+use App\Http\Requests\MensualidadSendChargeRequest;
 use App\Http\Resources\MensualidadResource;
 use App\Mail\MensualidadPaidMail;
 use App\Mail\MensualidadChargeMail;
@@ -36,7 +37,7 @@ class MensualidadController extends Controller
             $like = '%' . Str::lower($search) . '%';
             $query->where(function ($q) use ($like) {
                 $q->whereRaw('LOWER(nombre) LIKE ?', [$like])
-                  ->orWhereRaw('LOWER(concepto) LIKE ?', [$like]);
+                    ->orWhereRaw('LOWER(concepto) LIKE ?', [$like]);
             });
         }
 
@@ -49,21 +50,22 @@ class MensualidadController extends Controller
     {
         $data = $request->validated();
 
-        [$receiptBinary, $receiptLink] = $this->storeReceipt(
+        [$receiptBinary, $cobroLink] = $this->storeReceipt(
             $data['cobro_pdf_base64'] ?? null,
             'cobros',
             sprintf('mensualidad_%s', $data['proveedor_id'])
         );
 
         $mensualidadData = [
-            'fecha'        => $data['fecha_cobro'],
-            'mes_cobro'    => $data['mes_cobro'],
-            'concepto'     => $data['concepto'],
-            'nota'         => $data['nota'] ?? null,
-            'importe'      => $data['importe'],
+            'fecha' => $data['fecha_cobro'],
+            'mes_cobro' => $data['mes_cobro'],
+            'concepto' => $data['concepto'],
+            'nota' => $data['nota'] ?? null,
+            'importe' => $data['importe'],
             'proveedor_id' => $data['proveedor_id'],
-            'status'       => $data['status'] ?? 'pending',
-            'receipt_path' => $receiptLink,
+            'status' => $data['status'] ?? 'pending',
+            'cobro_path' => $cobroLink,
+            'mail_status' => 0,
         ];
 
         if (($mensualidadData['status'] === 'paid') && empty($data['payment_date'])) {
@@ -78,16 +80,39 @@ class MensualidadController extends Controller
         $mensualidad = Mensualidad::create($mensualidadData);
         $mensualidad->load('proveedor');
 
-        $mailStatus = $this->sendChargeEmail($proveedor, $mensualidad, $receiptBinary);
+        $mailStatus = null;
+        if ($proveedor && filled($proveedor->email)) {
+            $mailStatus = $this->sendChargeEmail($proveedor, $mensualidad, $receiptBinary);
+        }
 
-        Mailer::create([
-            'mail'    => $mensualidad->receipt_path ?? 'cobro-sin-comprobante',
-            'asunto'  => 'Cobro creado a proveedor',
-            'mensaje' => $mensualidad->concepto,
-            'status'  => $mailStatus,
-            'fecha'   => now()->toDateString(),
-        ]);
-        return new MensualidadResource($mensualidad);
+        if ($mailStatus !== null) {
+            Mailer::create([
+                'mail' => $mensualidad->cobro_path ?? 'cobro-sin-comprobante',
+                'asunto' => 'Cobro creado a proveedor ' . $proveedor?->nombre,
+                'mensaje' => $mensualidad->concepto,
+                'status' => $mailStatus,
+                'fecha' => now()->toDateString(),
+                'email' => $proveedor->email ?? 'no-email',
+            ]);
+
+            if ($mailStatus === 1) {
+                $mensualidad->mail_status = 1;
+                $mensualidad->save();
+            }
+        } else {
+            $mensualidad->mail_status = 0;
+            $mensualidad->save();
+        }
+
+        $mensualidad->refresh()->load('proveedor');
+
+        return response()->json([
+            'data' => new MensualidadResource($mensualidad),
+            'mail' => [
+                'sent' => $mailStatus === 1,
+                'status' => $mailStatus ?? 'not-sent',
+            ],
+        ], 201);
     }
 
     public function show(Mensualidad $mensualidad)
@@ -116,6 +141,15 @@ class MensualidadController extends Controller
         if (array_key_exists('importe', $data)) {
             $update['importe'] = $data['importe'];
         }
+        if (array_key_exists('cantidad_pago', $data)) {
+            $update['cantidad_pago'] = $data['cantidad_pago'];
+        }
+        if (array_key_exists('restante', $data)) {
+            $update['restante'] = $data['restante'];
+        }
+        if (array_key_exists('pago_completo', $data)) {
+            $update['pago_completo'] = (bool) $data['pago_completo'];
+        }
         if (array_key_exists('status', $data)) {
             $update['status'] = $data['status'];
         }
@@ -130,8 +164,20 @@ class MensualidadController extends Controller
             }
         }
 
-        if (($update['status'] ?? null) === 'paid' && empty($update['payment_date'])) {
-            $update['payment_date'] = now()->toDateString();
+        $importeBase = isset($update['importe']) ? (float) $update['importe'] : (float) $mensualidad->importe;
+        $cantidadBase = isset($update['cantidad_pago']) ? (float) $update['cantidad_pago'] : (float) $mensualidad->cantidad_pago;
+
+        if (($update['status'] ?? $mensualidad->status) === 'paid') {
+            if (empty($update['payment_date'])) {
+                $update['payment_date'] = now()->toDateString();
+            }
+            $update['cantidad_pago'] = $importeBase;
+            $update['restante'] = 0;
+            $update['pago_completo'] = true;
+        } else {
+            $restante = isset($update['restante']) ? (float) $update['restante'] : max($importeBase - $cantidadBase, 0);
+            $update['restante'] = max($restante, 0);
+            $update['pago_completo'] = $update['pago_completo'] ?? ($update['restante'] <= 0);
         }
 
         $mensualidad->update($update);
@@ -158,8 +204,10 @@ class MensualidadController extends Controller
 
         $created = [];
         $skipped = [];
+        $mailSent = 0;
+        $mailFailed = 0;
 
-        DB::transaction(function () use ($cobros, $mesCobro, $fechaCobro, $nota, $concepto, &$created, &$skipped) {
+                DB::transaction(function () use ($cobros, $mesCobro, $fechaCobro, $nota, $concepto, &$created, &$skipped, &$mailSent, &$mailFailed) {
             foreach ($cobros as $cobro) {
                 $prov = Proveedor::find($cobro['proveedor_id']);
                 if (!$prov) {
@@ -177,36 +225,68 @@ class MensualidadController extends Controller
                     continue;
                 }
 
-                [$receiptBinary, $receiptLink] = $this->storeReceipt(
+                [$receiptBinary, $cobroLink] = $this->storeReceipt(
                     $cobro['cobro_pdf_base64'] ?? null,
                     'cobros',
                     sprintf('mensualidad_%s', $prov->id)
                 );
 
+                $importe = (float) $cobro['importe'];
+                $cantidadPago = isset($cobro['cantidad_pago']) ? (float) $cobro['cantidad_pago'] : 0;
+                $restante = isset($cobro['restante']) ? (float) $cobro['restante'] : max($importe - $cantidadPago, 0);
+                $pagoCompleto = $cobro['pago_completo'] ?? ($restante <= 0);
+
                 $mensualidad = Mensualidad::create([
-                    'fecha'        => $fechaCobro,
-                    'nombre'       => $prov->nombre,
-                    'concepto'     => $concepto,
-                    'mes_cobro'    => $mesCobro,
-                    'nota'         => $nota,
-                    'importe'      => $cobro['importe'],
+                    'fecha' => $fechaCobro,
+                    'nombre' => $prov->nombre,
+                    'concepto' => $concepto,
+                    'mes_cobro' => $mesCobro,
+                    'nota' => $nota,
+                    'importe' => $importe,
                     'proveedor_id' => $prov->id,
-                    'status'       => 'pending',
-                    'receipt_path' => $receiptLink,
+                    'status' => $pagoCompleto ? 'paid' : 'pending',
+                    'cantidad_pago' => $pagoCompleto ? $importe : $cantidadPago,
+                    'restante' => $pagoCompleto ? 0 : max($restante, 0),
+                    'pago_completo' => (bool) $pagoCompleto,
+                    'payment_date' => $pagoCompleto ? ($cobro['payment_date'] ?? now()->toDateString()) : null,
+                    'cobro_path' => $cobroLink,
+                    'mail_status' => 0,
                 ]);
 
                 $mensualidad->load('proveedor');
                 $created[] = $mensualidad;
 
-                $mailStatus = $this->sendChargeEmail($prov, $mensualidad, $receiptBinary);
+                $mailStatus = null;
+                if (filled($prov->email)) {
+                    $mailStatus = $this->sendChargeEmail($prov, $mensualidad, $receiptBinary);
+                }
+                if ($mailStatus === 1) {
+                    $mailSent++;
+                } elseif ($mailStatus === 0) {
+                    $mailFailed++;
+                }
+                if ($mailStatus !== null) {
+                    Mailer::create([
+                        'mail' => $cobroLink ?? 'cobro-sin-comprobante',
+                        'asunto' => 'Cobro creado a proveedor ' . $prov->nombre,
+                        'mensaje' => $concepto,
+                        'status' => $mailStatus,
+                        'fecha' => now()->toDateString(),
+                        'email' => $prov->email ?? 'no-email',
+                    ]);
 
-                Mailer::create([
-                    'mail'    => $receiptLink ?? 'cobro-sin-comprobante',
-                    'asunto'  => 'Cobro creado a proveedor',
-                    'mensaje' => $concepto,
-                    'status'  => $mailStatus,
-                    'fecha'   => now()->toDateString(),
-                ]);
+                    if ($mailStatus === 1) {
+                        $mensualidad->mail_status = 1;
+                        $mensualidad->save();
+                    } else {
+                        $mensualidad->mail_status = 0;
+                        $mensualidad->save();
+                    }
+                } else {
+                    $mensualidad->mail_status = 0;
+                    $mensualidad->save();
+                }
+                $mensualidad->refresh()->load('proveedor');
             }
         });
 
@@ -216,7 +296,11 @@ class MensualidadController extends Controller
             'message' => 'Cobros generados.',
             'created' => count($created),
             'skipped' => count($skipped),
-            'data'    => MensualidadResource::collection(collect($created)),
+            'mail' => [
+                'sent' => $mailSent,
+                'failed' => $mailFailed,
+            ],
+            'data' => MensualidadResource::collection(collect($created)),
         ], $statusCode);
     }
 
@@ -228,9 +312,14 @@ class MensualidadController extends Controller
             return response()->json(['message' => 'Proveedor no encontrado'], 404);
         }
 
-        $providerEmail = $proveedor->email;
+        $providerEmail = $request->input('email') ?? $proveedor->email;
         $providerName = $proveedor->nombre;
         $providerPhone = $proveedor->tel;
+
+        if ($request->filled('email') && $proveedor->email !== $providerEmail) {
+            $proveedor->email = $providerEmail;
+            $proveedor->save();
+        }
 
         $paymentAmount = max(0, (float) $request->input('cantidad_pago', $mensualidad->importe));
         $restante = max(0, $mensualidad->importe - $paymentAmount);
@@ -259,28 +348,31 @@ class MensualidadController extends Controller
         $messageText = $request->input('message');
 
         $fromEmail = config('mail.from.address');
-        $fromName  = config('mail.from.name', 'Rosa Mexicano');
+        $fromName = config('mail.from.name', 'Rosa Mexicano');
         if (!$fromEmail) {
             return response()->json(['message' => 'Servicio de correo no configurado'], 500);
         }
 
-        try {
-            $mailable = (new MensualidadPaidMail(
-                $providerName,
-                $messageText,
-                $providerPhone,
-                $mensualidad->concepto,
-                (float) $mensualidad->importe,
-                $paymentDate,
-                $pdfBinary,
-                $subject
-            ))->from($fromEmail, $fromName);
+        $mailStatus = 0;
+        if ($providerEmail) {
+            try {
+                $mailable = (new MensualidadPaidMail(
+                    $providerName,
+                    $messageText,
+                    $providerPhone,
+                    $mensualidad->concepto,
+                    (float) $mensualidad->importe,
+                    $paymentDate,
+                    $pdfBinary,
+                    $subject
+                ))->from($fromEmail, $fromName);
 
-            Mail::to($providerEmail)->send($mailable);
-            $mailStatus = 1;
-        } catch (Throwable $e) {
-            Log::error('No se pudo enviar correo de mensualidad', ['error' => $e->getMessage()]);
-            $mailStatus = 0;
+                Mail::to($providerEmail)->send($mailable);
+                $mailStatus = 1;
+            } catch (Throwable $e) {
+                Log::error('No se pudo enviar correo de mensualidad', ['error' => $e->getMessage()]);
+                $mailStatus = 0;
+            }
         }
 
         $mensualidad->status = $restante <= 0 ? 'paid' : 'pending';
@@ -293,22 +385,89 @@ class MensualidadController extends Controller
         $mensualidad->save();
         $mensualidad->load('proveedor');
 
-        Mailer::create([
-            'mail'    => $storedLink ?? 'recibo-no-guardado',
-            'asunto'  => ($restante <= 0 ? 'Pago de proveedor' : 'Pago parcial de proveedor'),
-            'mensaje' => ($restante <= 0 ? 'Pago de proveedor registrado' : 'Pago parcial registrado'),
-            'status'  => $mailStatus,
-            'fecha'   => now()->toDateString(),
-        ]);
-
-        if ($mailStatus === 0) {
-            return response()->json([
-                'message' => 'Pago registrado, pero el correo no pudo enviarse',
-                'data'    => new MensualidadResource($mensualidad),
-            ], 202);
+        if ($providerEmail) {
+            Mailer::create([
+                'mail' => $storedLink ?? 'recibo-no-guardado',
+                'asunto' => ($restante <= 0 ? 'Pago de proveedor' : 'Pago parcial de proveedor') . ' ' . $proveedor->nombre,
+                'mensaje' => ($restante <= 0 ? 'Pago de proveedor registrado' : 'Pago parcial registrado'),
+                'status' => $mailStatus,
+                'fecha' => now()->toDateString(),
+                'email' => $providerEmail,
+            ]);
         }
 
-        return new MensualidadResource($mensualidad);
+        return response()->json([
+            'message' => $restante <= 0 ? 'Pago registrado.' : 'Pago parcial registrado.',
+            'mail' => [
+                'sent' => $mailStatus === 1,
+                'status' => $mailStatus,
+            ],
+            'data' => new MensualidadResource($mensualidad),
+        ], $mailStatus === 1 ? 200 : 202);
+    }
+
+    public function sendCharge(MensualidadSendChargeRequest $request, Mensualidad $mensualidad)
+    {
+        $mensualidad->load('proveedor');
+
+        $document = $this->getStoredFileFromPublicUrl($mensualidad->cobro_path);
+        if (!$document) {
+            return response()->json(['message' => 'No existe comprobante de cobro para esta mensualidad'], 422);
+        }
+
+        $fromEmail = config('mail.from.address');
+        $fromName = config('mail.from.name', 'Rosa Mexicano');
+        if (!$fromEmail) {
+            return response()->json(['message' => 'Servicio de correo no configurado'], 500);
+        }
+
+        $recipientEmail = $request->input('email');
+        $subject = $request->input('asunto') ?? 'Cobro generado';
+
+        $mailStatus = 0;
+
+        try {
+            $mailable = (new MensualidadChargeMail(
+                $mensualidad->nombre ?? $mensualidad->proveedor->nombre ?? 'PROVEEDOR',
+                $mensualidad->concepto,
+                (float) $mensualidad->importe,
+                optional($mensualidad->fecha)->toDateString(),
+                $mensualidad->nota,
+                $subject
+            ))->from($fromEmail, $fromName);
+
+            $mailable->attachData($document['binary'], $document['name'], ['mime' => 'application/pdf']);
+
+            Mail::to($recipientEmail)->send($mailable);
+            $mailStatus = 1;
+        } catch (Throwable $e) {
+            Log::error('No se pudo reenviar correo de cobro', [
+                'error' => $e->getMessage(),
+                'mensualidad_id' => $mensualidad->id,
+            ]);
+        }
+
+        $mensualidad->mail_status = $mailStatus;
+        $mensualidad->save();
+        $mensualidad->refresh()->load('proveedor');
+
+        Mailer::create([
+            'mail' => $mensualidad->cobro_path ?? 'cobro-sin-comprobante',
+            'email' => $recipientEmail,
+            'asunto' => $subject,
+            'mensaje' => $mensualidad->concepto,
+            'status' => $mailStatus,
+            'fecha' => now()->toDateString(),
+        ]);
+
+        return response()->json([
+            'message' => $mailStatus === 1 ? 'Cobro enviado correctamente.' : 'No se pudo enviar el cobro.',
+            'mail' => [
+                'sent' => $mailStatus === 1,
+                'status' => $mailStatus,
+            ],
+            'data' => new MensualidadResource($mensualidad),
+        ], $mailStatus === 1 ? 200 : 202);
     }
 
     private function sendChargeEmail(?Proveedor $proveedor, Mensualidad $mensualidad, ?string $bulkPdf = null): int
@@ -318,7 +477,7 @@ class MensualidadController extends Controller
         }
 
         $fromEmail = config('mail.from.address');
-        $fromName  = config('mail.from.name', 'Rosa Mexicano');
+        $fromName = config('mail.from.name', 'Rosa Mexicano');
         if (!$fromEmail) {
             return 0;
         }
@@ -346,6 +505,52 @@ class MensualidadController extends Controller
             ]);
             return 0;
         }
+    }
+
+    private function getStoredFileFromPublicUrl(?string $url): ?array
+    {
+        if (empty($url)) {
+            return null;
+        }
+
+        $relativePath = $this->resolveStoragePath($url);
+        if (!$relativePath) {
+            return null;
+        }
+
+        try {
+            $disk = Storage::disk('public');
+            if (!$disk->exists($relativePath)) {
+                return null;
+            }
+
+            return [
+                'path' => $relativePath,
+                'binary' => $disk->get($relativePath),
+                'name' => basename($relativePath) ?: 'cobro.pdf',
+            ];
+        } catch (Throwable $e) {
+            Log::warning('No se pudo obtener comprobante para reenviar', [
+                'error' => $e->getMessage(),
+                'url' => $url,
+            ]);
+            return null;
+        }
+    }
+
+    private function resolveStoragePath(string $url): ?string
+    {
+        $parsedPath = parse_url($url, PHP_URL_PATH) ?? $url;
+        if (!$parsedPath) {
+            return null;
+        }
+
+        $relative = ltrim($parsedPath, '/');
+        if (str_starts_with($relative, 'storage/')) {
+            $relative = substr($relative, strlen('storage/'));
+        }
+
+        return $relative;
     }
 
     private function storeReceipt(?string $base64, string $directory, string $filenamePrefix): array

@@ -79,9 +79,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('clientes', ClientesController::class)
         ->parameters(['clientes' => 'cliente']);
 
+    Route::post('/mailer/resend', [MailerController::class, 'resend']);
     Route::apiResource('mailer', MailerController::class)
         ->parameters(['mailer' => 'mailer']);
 
+    Route::post('/mensualidad/{mensualidad}/send-mail', [MensualidadController::class, 'sendCharge']);
     Route::post('/mensualidad/{mensualidad}/pay', [MensualidadController::class, 'pay']);
     Route::post('/mensualidad/bulk', [MensualidadController::class, 'bulkCreate']);
     Route::apiResource('mensualidad', MensualidadController::class)

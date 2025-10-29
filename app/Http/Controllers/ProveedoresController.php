@@ -47,10 +47,14 @@ class ProveedoresController extends Controller
     }
 
     // PUT/PATCH /api/proveedores/{proveedor}
-    public function update(UpdateProveedorRequest $request, Proveedor $proveedore)
+    public function update(UpdateProveedorRequest $request, Proveedor $proveedor)
     {
-        $proveedore->update($request->validated());
-        return new ProveedorResource($proveedore);
+        $changes = $request->validated();
+        $proveedor->fill($changes);
+        if ($proveedor->isDirty()) {
+            $proveedor->save();
+        }
+        return new ProveedorResource($proveedor->fresh());
     }
 
     // DELETE /api/proveedores/{proveedor}

@@ -19,7 +19,10 @@ class MensualidadPayRequest extends FormRequest
             'message' => ['nullable', 'string', 'max:500'],
             'subject' => ['nullable', 'string', 'max:150'],
             'payment_date' => ['nullable', 'date'],
+            'cantidad_pago' => ['nullable', 'numeric', 'min:0'],
+            'restante' => ['nullable', 'numeric'],
+            'pago_completo' => ['nullable', 'boolean'],
+            'email' => ['nullable', 'email'],
         ];
     }
 }
-

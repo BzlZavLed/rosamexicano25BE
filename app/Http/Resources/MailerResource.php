@@ -16,6 +16,7 @@ class MailerResource extends JsonResource
             'mensaje' => $this->mensaje,
             'status'  => (int) $this->status,
             'fecha'   => $this->fecha,
+            'email' => $this->email,
         ];
     }
 }
