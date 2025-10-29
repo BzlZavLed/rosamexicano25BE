@@ -10,7 +10,11 @@ class MailerTrack extends Model
     protected $table = 'mailer_track';
     protected $primaryKey = 'id';
     public $timestamps = true;
-
+    protected $casts = [
+        'year' => 'integer',
+        'month' => 'integer',
+        'sent_count' => 'integer',
+    ];
     protected $fillable = [
         'year',
         'month',
