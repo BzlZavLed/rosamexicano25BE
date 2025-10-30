@@ -11,6 +11,7 @@ use App\Http\Controllers\CashierLegacyController;
 use App\Http\Controllers\ClientesController;
 use App\Http\Controllers\MailerController;
 use App\Http\Controllers\MensualidadController;
+use App\Http\Controllers\WidgetsController;
 use App\Models\Usuario;
 use App\Http\Controllers\MailerTrackController;
 Route::post('/auth/login', [UnifiedAuthController::class, 'login']);
@@ -88,6 +89,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/mensualidad/bulk', [MensualidadController::class, 'bulkCreate']);
     Route::apiResource('mensualidad', MensualidadController::class)
         ->parameters(['mensualidad' => 'mensualidad']);
+
+    Route::get('/widgets/cashier-summary', [WidgetsController::class, 'cashierSummary']);
+    Route::get('/widgets/top-products', [WidgetsController::class, 'topProducts']);
 
     // Inventario
     Route::get('/inventario', [InventarioController::class, 'index']);
