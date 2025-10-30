@@ -147,16 +147,42 @@ class CashierController extends Controller
         $payload = $request->validated();
 
         return DB::transaction(function () use ($payload, $fecha, $hora) {
-            // Calculate total strictly on server
-            $total = 0;
+            // Calculate totals strictly on server
+            $subtotal = 0;
+            $sanitizedLines = [];
             foreach ($payload['lineas'] as $l) {
-                $line = ($l['pUni'] * $l['cant']) - ($l['totdesc'] ?? 0);
-                $total += $line;
+                $lineBase = (float) $l['pUni'] * (int) $l['cant'];
+                $rawDiscount = $l['product_desc'] ?? $l['totdesc'] ?? 0;
+                $lineDiscount = max(0, (float) $rawDiscount);
+                if ($lineDiscount > $lineBase) {
+                    $lineDiscount = $lineBase;
+                }
+                $lineDiscount = round($lineDiscount, 2);
+                $lineNet = max(0, $lineBase - $lineDiscount);
+                $subtotal += $lineNet;
+                $sanitizedLines[] = [$l, $lineDiscount];
             }
+
+            $descuentoGeneral = isset($payload['descuento_general'])
+                ? max(0, (float) $payload['descuento_general'])
+                : 0.0;
+
+            $subtotal = round($subtotal, 2);
+            $descuentoGeneral = round(min($descuentoGeneral, $subtotal), 2);
+            $baseAfterDiscount = max(0, $subtotal - $descuentoGeneral);
+            $tarjetaCargo = 0.0;
+            if (strtolower($payload['metodo']) === 'tarjeta') {
+                $tarjetaCargo = round($baseAfterDiscount * 0.045, 2);
+            }
+
+            $total = round(max(0, $baseAfterDiscount + $tarjetaCargo), 2);
 
             // Create venta header
             $venta = Venta::create([
                 'idventa' => $payload['idventa'],
+                'subtotal' => $subtotal,
+                'descuento_general' => $descuentoGeneral,
+                'tarjeta_cargo' => $tarjetaCargo,
                 'totalventa' => $total,
                 'metodo' => $payload['metodo'],
                 'recibo' => $payload['recibo'],
@@ -168,7 +194,7 @@ class CashierController extends Controller
             ]);
 
             // Create lines & update inventory
-            foreach ($payload['lineas'] as $l) {
+            foreach ($sanitizedLines as [$l, $lineDiscount]) {
                 $prod = \App\Models\Producto::findOrFail($l['idProd']);
 
                 VentaDesg::create([
@@ -180,7 +206,7 @@ class CashierController extends Controller
                     'pUni' => $l['pUni'],
                     'cant' => $l['cant'],
                     'total' => $l['pUni'] * $l['cant'],
-                    'totdesc' => $l['totdesc'] ?? 0,
+                    'product_desc' => $lineDiscount,
                     'hora' => $hora,
                 ]);
 

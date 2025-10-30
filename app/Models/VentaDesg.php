@@ -11,6 +11,6 @@ class VentaDesg extends Model
     public $timestamps = false;
 
     protected $fillable = [
-        'idventa','fecha','idprod','nombre','proveedor','puni','cant','total','totdesc','hora'
+        'idventa','fecha','idprod','nombre','proveedor','puni','cant','total','product_desc','hora'
     ];
 }

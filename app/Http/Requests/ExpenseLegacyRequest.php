@@ -15,11 +15,10 @@ class ExpenseLegacyRequest extends FormRequest
     {
         return [
             'totalventa'     => ['required', 'numeric', 'min:0.01'],
-            'method'    => ['nullable', 'in:efectivo,debit,credit'],
+            'method'    => ['nullable', 'in:efectivo,tarjeta,transferencia'],
             'concepto'  => ['required', 'string', 'max:255'],
             'fecha'     => ['nullable', 'string', 'max:10'],
             'vendedor'  => ['nullable', 'string', 'max:65'],
         ];
     }
 }
-

@@ -59,8 +59,8 @@ class CashierLegacyController extends Controller
         $row = EstadoCaja::create([
             'fecha'        => $fecha,              // varchar(10) legacy
             'estado'       => 1,                   // 1 = abierta
-            'saldoinicial'        => (float) $request->input('saldo', 0),   // saldo inicial (cash)
-            'saldofinal'        => 0,   // saldo inicial (cash) --- IGNORE ---
+            'saldoinicial'        => (float) $request->input('saldo', 0),   // saldo inicial (efectivo)
+            'saldofinal'        => 0,   // saldo final (efectivo) --- IGNORE ---
             'saldosistema' => 0,                   // se calculará al cerrar
             'usuario'      => $request->user()->nombre ?? $request->user()->email ?? 'admin',
         ]);
@@ -79,13 +79,13 @@ class CashierLegacyController extends Controller
             return response()->json(['message' => 'No hay caja abierta para la fecha indicada'], 409);
         }
 
-        // total en efectivo del día (según ventas.totalventa y ventas.metodo='cash')
+        // total en efectivo del día (según ventas.totalventa y ventas.metodo='efectivo')
         $cashTotal = (float) DB::table('ventas')
             ->where('fecha', $fecha)
-            ->where('metodo', 'cash')
+            ->whereIn('metodo', ['efectivo', 'cash']) // compat: aceptar registros legacy 'cash'
             ->sum('totalventa');
 
-        $row->saldosistema = $row->saldo + $cashTotal; // saldo inicial + ventas en cash
+        $row->saldosistema = $row->saldo + $cashTotal; // saldo inicial + ventas en efectivo
         // si el cliente manda un valor manual en el cierre, lo respetamos
         if ($request->filled('saldosistema')) {
             $row->saldosistema = (float) $request->input('saldosistema');
@@ -140,14 +140,15 @@ class CashierLegacyController extends Controller
 
         $items = $request->input('items', []);
         $discountPercent = (float)($request->input('discount_percent') ?? 0);
-        $method  = $request->input('payment.method');   // 'cash' | 'debit' | 'credit'
-        $received= $request->input('payment.received'); // efectivo entregado (solo cash)
+        $method  = $request->input('payment.method');   // 'efectivo' | 'tarjeta' | 'transferencia'
+        $received= $request->input('payment.received'); // efectivo entregado (solo efectivo)
 
         try {
             $payload = DB::transaction(function () use ($items, $discountPercent, $method, $received, $fechaHoy, $request) {
 
                 $lines = [];
-                $subtotal = 0.0;
+                $grossSubtotal = 0.0;
+                $itemDiscountTotal = 0.0;
 
                 // 1) validar stock + preparar renglones
                 foreach ($items as $it) {
@@ -166,20 +167,51 @@ class CashierLegacyController extends Controller
                     }
 
                     $unit = (float)$producto->precio;
-                    $importe = $unit * $qty;
-                    $subtotal += $importe;
+                    $gross = $unit * $qty;
+                    $grossSubtotal += $gross;
 
-                    $lines[] = compact('producto','inv','qty','unit','importe');
+                    $itemDiscount = 0.0;
+                    if (array_key_exists('product_desc', $it) && $it['product_desc'] !== null) {
+                        $itemDiscount = max(0, (float)$it['product_desc']);
+                    } elseif (array_key_exists('discount_amount', $it) && $it['discount_amount'] !== null) {
+                        $itemDiscount = max(0, (float)$it['discount_amount']);
+                    } elseif (array_key_exists('discount_percent', $it) && $it['discount_percent'] !== null) {
+                        $percent = max(0, min(100, (float)$it['discount_percent']));
+                        $itemDiscount = round($gross * ($percent / 100), 2);
+                    }
+
+                    if ($itemDiscount > $gross) {
+                        $itemDiscount = $gross;
+                    }
+                    $itemDiscount = round($itemDiscount, 2);
+
+                    $itemDiscountTotal += $itemDiscount;
+                    $net = max(0, $gross - $itemDiscount);
+
+                    $lines[] = [
+                        'producto' => $producto,
+                        'inv' => $inv,
+                        'qty' => $qty,
+                        'unit' => $unit,
+                        'gross' => $gross,
+                        'item_discount' => $itemDiscount,
+                        'net' => $net,
+                    ];
                 }
 
                 // 2) descuento y recargo
-                $discountAmount = $discountPercent > 0 ? round($subtotal * ($discountPercent / 100), 2) : 0.0;
-                $afterDiscount  = max(0, $subtotal - $discountAmount);
+                $netSubtotal = max(0, $grossSubtotal - $itemDiscountTotal);
+                $orderDiscountAmount = $discountPercent > 0 ? round($netSubtotal * ($discountPercent / 100), 2) : 0.0;
+                if ($orderDiscountAmount > $netSubtotal) {
+                    $orderDiscountAmount = $netSubtotal;
+                }
 
-                $surchargePercent = $method === 'credit' ? 4.5 : 0.0;
+                $afterDiscount  = max(0, $netSubtotal - $orderDiscountAmount);
+
+                $surchargePercent = $method === 'tarjeta' ? 4.5 : 0.0;
                 $surchargeAmount  = $surchargePercent > 0 ? round($afterDiscount * ($surchargePercent / 100), 2) : 0.0;
 
-                $total = round($afterDiscount + $surchargeAmount, 2);
+                $total = round(max(0, $afterDiscount + $surchargeAmount), 2);
 
                 // 3) ticket consecutivo (idventa)
                 $nextIdVenta = (int) DB::table('ventas')->max('idventa') + 1;
@@ -189,7 +221,7 @@ class CashierLegacyController extends Controller
                 $recibo   = null;
                 $cambio   = null;
 
-                if ($method === 'cash') {
+                if ($method === 'efectivo') {
                     $recib = (float)$received;
                     if ($recib < $total) {
                         throw new \RuntimeException('Efectivo recibido insuficiente');
@@ -197,7 +229,7 @@ class CashierLegacyController extends Controller
                     $recibo = $recib;
                     $cambio = round($recib - $total, 2);
                 } else {
-                    // tarjeta o débito: cobro exacto
+                    // tarjeta o transferencia: cobro exacto
                     $recibo = $total;
                     $cambio = 0.0;
                 }
@@ -206,8 +238,11 @@ class CashierLegacyController extends Controller
                 // 5) encabezado de venta (tabla legacy "ventas")
                 $venta = Venta::create([
                     'idventa'    => $nextIdVenta,
+                    'subtotal'   => round($netSubtotal, 2),
+                    'tarjeta_cargo' => round($surchargeAmount, 2),
+                    'descuento_general' => round($orderDiscountAmount, 2),
                     'totalventa' => $total,
-                    'metodo'     => $method,       // 'efectivo' | 'debit' | 'credit'
+                    'metodo'     => $method,       // 'efectivo' | 'tarjeta' | 'transferencia'
                     'recibo'     => $recibo,
                     'cambio'     => $cambio,
                     'vendedor'   => $vendedor,
@@ -218,9 +253,20 @@ class CashierLegacyController extends Controller
 
                 // 6) renglones (tabla legacy "ventadesg") + actualizar inventario
                 $hora = date('H:i:s'); // ok para time(6)
-                foreach ($lines as $ln) {
-                    $lineProportion = $subtotal > 0 ? ($ln['importe'] / $subtotal) : 0;
-                    $lineDiscount   = round($discountAmount * $lineProportion, 2);
+                $lineCount = count($lines);
+                $remainingOrderDiscount = $orderDiscountAmount;
+                foreach ($lines as $idx => $ln) {
+                    $lineOrderDiscount = 0.0;
+                    if ($orderDiscountAmount > 0 && $netSubtotal > 0) {
+                        if ($idx === $lineCount - 1) {
+                            $lineOrderDiscount = $remainingOrderDiscount;
+                        } else {
+                            $lineOrderDiscount = round($orderDiscountAmount * ($ln['net'] / $netSubtotal), 2);
+                            $remainingOrderDiscount = max(0, $remainingOrderDiscount - $lineOrderDiscount);
+                        }
+                    }
+
+                    $totalLineDiscount = round($ln['item_discount'] + $lineOrderDiscount, 2);
 
                     VentaDesg::create([
                         'idventa'   => $nextIdVenta,
@@ -230,8 +276,8 @@ class CashierLegacyController extends Controller
                         'proveedor' => (int)$ln['producto']->proveedorid,
                         'puni'      => (float)$ln['unit'],
                         'cant'      => (int)$ln['qty'],
-                        'total'     => (float)$ln['importe'],
-                        'totdesc'   => (float)$lineDiscount,
+                        'total'     => (float)$ln['gross'],
+                        'product_desc'   => (float)$totalLineDiscount,
                         'hora'      => $hora,
                     ]);
 
@@ -254,11 +300,16 @@ class CashierLegacyController extends Controller
 
                 return [
                     'venta'             => $venta,
-                    'subtotal'          => $subtotal,
+                    'subtotal'          => $grossSubtotal,
+                    'item_discount_total' => $itemDiscountTotal,
+                    'subtotal_after_item_discounts' => $netSubtotal,
                     'discount_percent'  => $discountPercent,
-                    'discount_amount'   => $discountAmount,
+                    'discount_amount'   => $orderDiscountAmount,
+                    'descuento_general' => $orderDiscountAmount,
+                    'overall_discount_total' => $itemDiscountTotal + $orderDiscountAmount,
                     'surcharge_percent' => $surchargePercent,
                     'surcharge_amount'  => $surchargeAmount,
+                    'tarjeta_cargo'     => round($surchargeAmount, 2),
                     'total'             => $total,
                 ];
             });
@@ -283,7 +334,7 @@ class CashierLegacyController extends Controller
             return response()->json(['message' => 'Debes abrir caja antes de registrar gastos'], 409);
         }
 
-        $total = round((float) $request->input('total'), 2);
+        $total = round((float) $request->input('totalventa'), 2);
         if ($total <= 0) {
             return response()->json(['message' => 'El total del gasto debe ser mayor a cero'], 422);
         }
@@ -292,20 +343,29 @@ class CashierLegacyController extends Controller
             $venta = DB::transaction(function () use ($request, $fecha, $total) {
                 $nextIdVenta = (int) DB::table('ventas')->max('idventa') + 1;
 
-                $method    = $request->input('method') ?: 'efectivo';
-                $concepto  = $request->input('concepto');
-                $vendedor  = $request->input('vendedor') ?: ($request->user()->nombre ?? $request->user()->email ?? 'admin');
+                $method = $request->input('method') ?: 'efectivo';
+                $concepto = $request->input('concepto');
+                $vendedor = $request->input('vendedor') ?: ($request->user()->nombre ?? $request->user()->email ?? 'admin');
 
+                $subtotal = round($total, 2);
+                $descuentoGeneral = 0.0;
+                
+                $totalVenta = $subtotal;
+
+                // Registro de gasto: sólo un encabezado en ventas con totales neutralizados.
                 return Venta::create([
-                    'idventa'    => $nextIdVenta,
-                    'totalventa' => $total,
-                    'metodo'     => $method,
-                    'recibo'     => 0,
-                    'cambio'     => 0,
-                    'vendedor'   => $vendedor,
-                    'fecha'      => $fecha,
-                    'ie'         => 0,
-                    'concepto'   => $concepto,
+                    'idventa' => $nextIdVenta,
+                    'subtotal' => $subtotal,
+                    'descuento_general' => $descuentoGeneral,
+                    'tarjeta_cargo' => 0,
+                    'totalventa' => $totalVenta,
+                    'metodo' => $method,
+                    'recibo' => 0,
+                    'cambio' => 0,
+                    'vendedor' => $vendedor,
+                    'fecha' => $fecha,
+                    'ie' => 0,
+                    'concepto' => $concepto,
                 ]);
             });
 
