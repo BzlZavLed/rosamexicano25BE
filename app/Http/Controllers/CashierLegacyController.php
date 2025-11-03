@@ -11,6 +11,7 @@ use App\Models\EstadoCaja;
 use App\Models\VentaOld;
 use App\Models\Venta;
 use App\Models\VentaDesg;
+use App\Models\Promocion;
 use App\Models\Producto;
 use App\Models\Inventario;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ use Illuminate\Support\Str;
 use App\Mail\TicketMail;
 use App\Models\Mailer;
 use Throwable;
+use Carbon\Carbon;
 
 class CashierLegacyController extends Controller
 {
@@ -57,12 +59,12 @@ class CashierLegacyController extends Controller
         }
 
         $row = EstadoCaja::create([
-            'fecha'        => $fecha,              // varchar(10) legacy
-            'estado'       => 1,                   // 1 = abierta
-            'saldoinicial'        => (float) $request->input('saldo', 0),   // saldo inicial (efectivo)
-            'saldofinal'        => 0,   // saldo final (efectivo) --- IGNORE ---
+            'fecha' => $fecha,              // varchar(10) legacy
+            'estado' => 1,                   // 1 = abierta
+            'saldoinicial' => (float) $request->input('saldo', 0),   // saldo inicial (efectivo)
+            'saldofinal' => 0,   // saldo final (efectivo) --- IGNORE ---
             'saldosistema' => 0,                   // se calculará al cerrar
-            'usuario'      => $request->user()->nombre ?? $request->user()->email ?? 'admin',
+            'usuario' => $request->user()->nombre ?? $request->user()->email ?? 'admin',
         ]);
 
         return response()->json($row, 201);
@@ -94,7 +96,7 @@ class CashierLegacyController extends Controller
         $row->save();
 
         return response()->json([
-            'caja'       => $row,
+            'caja' => $row,
             'cash_today' => $cashTotal,
         ]);
     }
@@ -107,20 +109,20 @@ class CashierLegacyController extends Controller
         $q = Producto::with(['proveedor', 'inventario']);
 
         if ($barcode = $request->input('barcode')) {
-            $q->where('ident', (int)$barcode);
+            $q->where('ident', (int) $barcode);
         }
         if ($s = $request->input('search')) {
             $like = '%' . Str::lower($s) . '%';
             $q->where(function ($qq) use ($like) {
                 $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
-                   ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
+                    ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
             });
         }
         if ($pid = $request->input('proveedor_id')) {
-            $q->where('proveedorid', (int)$pid);
+            $q->where('proveedorid', (int) $pid);
         }
 
-        $per = (int)$request->input('per_page', 25);
+        $per = (int) $request->input('per_page', 25);
         $data = $q->orderBy('nombre')->limit($per)->get();
 
         return response()->json(['data' => $data]);
@@ -139,9 +141,9 @@ class CashierLegacyController extends Controller
         }
 
         $items = $request->input('items', []);
-        $discountPercent = (float)($request->input('discount_percent') ?? 0);
-        $method  = $request->input('payment.method');   // 'efectivo' | 'tarjeta' | 'transferencia'
-        $received= $request->input('payment.received'); // efectivo entregado (solo efectivo)
+        $discountPercent = (float) ($request->input('discount_percent') ?? 0);
+        $method = $request->input('payment.method');    // 'efectivo' | 'tarjeta' | 'transferencia'
+        $received = $request->input('payment.received');  // efectivo entregado (solo efectivo)
 
         try {
             $payload = DB::transaction(function () use ($items, $discountPercent, $method, $received, $fechaHoy, $request) {
@@ -149,11 +151,12 @@ class CashierLegacyController extends Controller
                 $lines = [];
                 $grossSubtotal = 0.0;
                 $itemDiscountTotal = 0.0;
+                $providerLines = [];
 
                 // 1) validar stock + preparar renglones
-                foreach ($items as $it) {
-                    $ident = (int)$it['ident'];
-                    $qty   = (int)$it['qty'];
+                foreach ($items as $index => $it) {
+                    $ident = (int) $it['ident'];
+                    $qty = (int) $it['qty'];
 
                     $producto = Producto::where('ident', $ident)->first();
                     if (!$producto) {
@@ -161,32 +164,34 @@ class CashierLegacyController extends Controller
                     }
 
                     $inv = Inventario::where('ident', $ident)->lockForUpdate()->first();
-                    $exist = (int)($inv?->existencia ?? 0);
+                    $exist = (int) ($inv?->existencia ?? 0);
                     if ($qty > $exist) {
                         throw new \RuntimeException("Inventario insuficiente para {$ident}");
                     }
 
-                    $unit = (float)$producto->precio;
+                    $unit = (float) $producto->precio;
                     $gross = $unit * $qty;
                     $grossSubtotal += $gross;
 
+                    // descuento por producto (monto o porcentaje)
                     $itemDiscount = 0.0;
                     if (array_key_exists('product_desc', $it) && $it['product_desc'] !== null) {
-                        $itemDiscount = max(0, (float)$it['product_desc']);
+                        $itemDiscount = max(0, (float) $it['product_desc']);
                     } elseif (array_key_exists('discount_amount', $it) && $it['discount_amount'] !== null) {
-                        $itemDiscount = max(0, (float)$it['discount_amount']);
+                        $itemDiscount = max(0, (float) $it['discount_amount']);
                     } elseif (array_key_exists('discount_percent', $it) && $it['discount_percent'] !== null) {
-                        $percent = max(0, min(100, (float)$it['discount_percent']));
+                        $percent = max(0, min(100, (float) $it['discount_percent']));
                         $itemDiscount = round($gross * ($percent / 100), 2);
                     }
-
                     if ($itemDiscount > $gross) {
                         $itemDiscount = $gross;
                     }
                     $itemDiscount = round($itemDiscount, 2);
 
                     $itemDiscountTotal += $itemDiscount;
-                    $net = max(0, $gross - $itemDiscount);
+                    $netBeforeOrder = max(0, $gross - $itemDiscount);
+
+                    $providerId = (int) ($producto->proveedorid ?? 0);
 
                     $lines[] = [
                         'producto' => $producto,
@@ -195,34 +200,121 @@ class CashierLegacyController extends Controller
                         'unit' => $unit,
                         'gross' => $gross,
                         'item_discount' => $itemDiscount,
-                        'net' => $net,
+                        'net_before_order' => $netBeforeOrder,
+                        'provider_id' => $providerId,
+                        'provider_charge' => 0.0, // se calcula si método es tarjeta
                     ];
+
+                    $providerLines[$providerId][] = $index;
                 }
 
-                // 2) descuento y recargo
+                // 2) descuento global (porcentaje)
                 $netSubtotal = max(0, $grossSubtotal - $itemDiscountTotal);
-                $orderDiscountAmount = $discountPercent > 0 ? round($netSubtotal * ($discountPercent / 100), 2) : 0.0;
+                $orderDiscountPercent = max(0, min(100, (float) $discountPercent));
+                $orderDiscountAmount = $orderDiscountPercent > 0 ? round($netSubtotal * ($orderDiscountPercent / 100), 2) : 0.0;
                 if ($orderDiscountAmount > $netSubtotal) {
                     $orderDiscountAmount = $netSubtotal;
                 }
 
-                $afterDiscount  = max(0, $netSubtotal - $orderDiscountAmount);
+                $afterDiscount = max(0, $netSubtotal - $orderDiscountAmount);
 
-                $surchargePercent = $method === 'tarjeta' ? 4.5 : 0.0;
-                $surchargeAmount  = $surchargePercent > 0 ? round($afterDiscount * ($surchargePercent / 100), 2) : 0.0;
+                // 3) distribuir descuento global por línea y acumular netos por proveedor
+                $lineCount = count($lines);
+                $remainingOrderDiscount = $orderDiscountAmount;
+                $providerNetTotals = [];
+                foreach ($lines as $idx => &$line) {
+                    $lineOrderDiscount = 0.0;
+                    if ($orderDiscountAmount > 0 && $netSubtotal > 0) {
+                        if ($idx === $lineCount - 1) {
+                            $lineOrderDiscount = $remainingOrderDiscount;
+                        } else {
+                            $lineOrderDiscount = round($orderDiscountAmount * ($line['net_before_order'] / $netSubtotal), 2);
+                            $remainingOrderDiscount = max(0, $remainingOrderDiscount - $lineOrderDiscount);
+                        }
+                    }
 
-                $total = round(max(0, $afterDiscount + $surchargeAmount), 2);
+                    $lineNetAfterOrder = max(0, $line['net_before_order'] - $lineOrderDiscount);
+                    $line['order_discount_part'] = $lineOrderDiscount;
+                    $line['net_after_order'] = $lineNetAfterOrder;
 
-                // 3) ticket consecutivo (idventa)
+                    $pid = $line['provider_id'];
+                    $providerNetTotals[$pid] = ($providerNetTotals[$pid] ?? 0) + $lineNetAfterOrder;
+                }
+                unset($line);
+
+                // 4) recargo a proveedores por tarjeta (4.5%), distribuido proporcionalmente
+                $providerChargeTotal = 0.0;
+                if ($method === 'tarjeta') {
+                    $totalNetAfterOrder = array_sum($providerNetTotals);
+                    if ($totalNetAfterOrder > 0) {
+                        $providerChargeTotal = round($totalNetAfterOrder * 0.045, 2);
+
+                        $providerIds = array_keys($providerNetTotals);
+                        $providerCharges = [];
+                        $remainingChargeTotal = $providerChargeTotal;
+                        $providerCount = count($providerIds);
+
+                        foreach ($providerIds as $pIndex => $providerId) {
+                            $base = $providerNetTotals[$providerId];
+                            if ($base <= 0) {
+                                $providerCharges[$providerId] = 0.0;
+                                continue;
+                            }
+
+                            if ($pIndex === $providerCount - 1) {
+                                $providerCharges[$providerId] = round($remainingChargeTotal, 2);
+                            } else {
+                                $share = $base / $totalNetAfterOrder;
+                                $charge = round($providerChargeTotal * $share, 2);
+                                $providerCharges[$providerId] = $charge;
+                                $remainingChargeTotal -= $charge;
+                            }
+                        }
+
+                        foreach ($providerCharges as $providerId => $charge) {
+                            $indexes = $providerLines[$providerId] ?? [];
+                            if (empty($indexes) || $charge <= 0) {
+                                continue;
+                            }
+
+                            $providerBase = $providerNetTotals[$providerId];
+                            $remainingCharge = $charge;
+                            $lineCountForProvider = count($indexes);
+
+                            foreach ($indexes as $pos => $lineIdx) {
+                                $lineNetAfterOrder = $lines[$lineIdx]['net_after_order'];
+                                if ($providerBase <= 0 || $remainingCharge <= 0) {
+                                    $lineCharge = 0.0;
+                                } elseif ($pos === $lineCountForProvider - 1) {
+                                    $lineCharge = round($remainingCharge, 2);
+                                } else {
+                                    $weight = $lineNetAfterOrder / $providerBase;
+                                    $lineCharge = round($charge * $weight, 2);
+                                    $remainingCharge -= $lineCharge;
+                                }
+
+                                $lines[$lineIdx]['provider_charge'] = round(($lines[$lineIdx]['provider_charge'] ?? 0) + $lineCharge, 2);
+                            }
+                        }
+
+                        $providerChargeTotal = round(array_reduce($lines, function ($carry, $line) {
+                            return $carry + ($line['provider_charge'] ?? 0);
+                        }, 0.0), 2);
+                    }
+                }
+
+                $total = round(max(0, $afterDiscount - $providerChargeTotal), 2);
+
+                // 5) ticket consecutivo (idventa)
                 $nextIdVenta = (int) DB::table('ventas')->max('idventa') + 1;
 
-                // 4) efectivo / cambio
+                // 6) efectivo / cambio
                 $vendedor = $request->user()->nombre ?? $request->user()->email ?? 'admin';
-                $recibo   = null;
-                $cambio   = null;
+                $recibo = null;
+                $cambio = null;
 
                 if ($method === 'efectivo') {
-                    $recib = (float)$received;
+                    $recib = (float) $received;
                     if ($recib < $total) {
                         throw new \RuntimeException('Efectivo recibido insuficiente');
                     }
@@ -235,82 +327,90 @@ class CashierLegacyController extends Controller
                 }
                 $ie = $request->input('ie', 1); // legacy
 
-                // 5) encabezado de venta (tabla legacy "ventas")
+                // 7) encabezado de venta (tabla legacy "ventas")
                 $venta = Venta::create([
-                    'idventa'    => $nextIdVenta,
-                    'subtotal'   => round($netSubtotal, 2),
-                    'tarjeta_cargo' => round($surchargeAmount, 2),
+                    'idventa' => $nextIdVenta,
+                    'subtotal' => round($grossSubtotal, 2),
+                    'tarjeta_cargo' => round($providerChargeTotal, 2),
                     'descuento_general' => round($orderDiscountAmount, 2),
+                    'descuento_general_porcentaje' => $orderDiscountPercent,
                     'totalventa' => $total,
-                    'metodo'     => $method,       // 'efectivo' | 'tarjeta' | 'transferencia'
-                    'recibo'     => $recibo,
-                    'cambio'     => $cambio,
-                    'vendedor'   => $vendedor,
-                    'fecha'      => $fechaHoy,     // "d/m/y" (varchar(10))
-                    'ie'         => $ie,
-                    'concepto'   => 'VENTA MOSTRADOR',
+                    'metodo' => $method,       // 'efectivo' | 'tarjeta' | 'transferencia'
+                    'recibo' => $recibo,
+                    'cambio' => $cambio,
+                    'vendedor' => $vendedor,
+                    'fecha' => $fechaHoy,     // "d/m/y" (varchar(10))
+                    'ie' => $ie,
+                    'concepto' => 'VENTA MOSTRADOR',
                 ]);
 
-                // 6) renglones (tabla legacy "ventadesg") + actualizar inventario
+                // 8) renglones (tabla legacy "ventadesg") + actualizar inventario
                 $hora = date('H:i:s'); // ok para time(6)
-                $lineCount = count($lines);
-                $remainingOrderDiscount = $orderDiscountAmount;
-                foreach ($lines as $idx => $ln) {
-                    $lineOrderDiscount = 0.0;
-                    if ($orderDiscountAmount > 0 && $netSubtotal > 0) {
-                        if ($idx === $lineCount - 1) {
-                            $lineOrderDiscount = $remainingOrderDiscount;
-                        } else {
-                            $lineOrderDiscount = round($orderDiscountAmount * ($ln['net'] / $netSubtotal), 2);
-                            $remainingOrderDiscount = max(0, $remainingOrderDiscount - $lineOrderDiscount);
-                        }
+                $percentLabel = rtrim(rtrim(number_format($orderDiscountPercent, 2, '.', ''), '0'), '.');
+
+                foreach ($lines as $ln) {
+                    $lineItemDiscount = round($ln['item_discount'], 2);
+                    $lineOrderDiscount = $ln['order_discount_part'] ?? 0.0;
+                    $lineProviderCharge = round($ln['provider_charge'] ?? 0.0, 2);
+
+                    // Etiqueta de promoción: NO considerar el recargo como "descuento"
+                    $promotionFlag = 'normal';
+                    if ($lineOrderDiscount > 0 && $orderDiscountPercent > 0) {
+                        $promotionFlag = 'descuento - ' . ($percentLabel !== '' ? $percentLabel : '0') . '%';
+                    } elseif ($lineItemDiscount > 0) {
+                        $promotionFlag = 'descuento - producto';
                     }
 
-                    $totalLineDiscount = round($ln['item_discount'] + $lineOrderDiscount, 2);
+                    if ($bundleLabel = $this->detectPromotionLabel($ln['producto'], (int) ($ln['qty'] ?? 0))) {
+                        $promotionFlag = $bundleLabel;
+                    }
 
                     VentaDesg::create([
-                        'idventa'   => $nextIdVenta,
-                        'fecha'     => $fechaHoy,
-                        'idprod'    => (int)$ln['producto']->ident, // barcode
-                        'nombre'    => (string)$ln['producto']->nombre,
-                        'proveedor' => (int)$ln['producto']->proveedorid,
-                        'puni'      => (float)$ln['unit'],
-                        'cant'      => (int)$ln['qty'],
-                        'total'     => (float)$ln['gross'],
-                        'product_desc'   => (float)$totalLineDiscount,
-                        'hora'      => $hora,
+                        'idventa' => $nextIdVenta,
+                        'fecha' => $fechaHoy,
+                        'idprod' => (int) $ln['producto']->ident, // barcode
+                        'nombre' => (string) $ln['producto']->nombre,
+                        'proveedor' => (int) $ln['producto']->proveedorid,
+                        'puni' => (float) $ln['unit'],
+                        'cant' => (int) $ln['qty'],
+                        'total' => (float) $ln['gross'],
+                        // Solo el descuento manual por producto aquí
+                        'descuento_producto' => $lineItemDiscount,
+                        // Nuevo: recargo por tarjeta al proveedor separado
+                        'cargo_tarjeta_proveedor' => ($lineProviderCharge > 0 ? $lineProviderCharge : null),
+                        'promotion' => $promotionFlag,
+                        'hora' => $hora,
                     ]);
 
                     // disminuir inventario
                     $inv = $ln['inv'];
                     if (!$inv) {
                         $inv = new Inventario();
-                        $inv->ident = (int)$ln['producto']->ident;
+                        $inv->ident = (int) $ln['producto']->ident;
                         $inv->existencia = 0;
                         $inv->importe = 0;
-                        $inv->provee = (int)$ln['producto']->proveedorid;
-                        $inv->precio_individual = (float)$ln['unit'];
+                        $inv->provee = (int) $ln['producto']->proveedorid;
+                        $inv->precio_individual = (float) $ln['unit'];
                     }
-                    $inv->existencia = max(0, (int)$inv->existencia - (int)$ln['qty']);
-                    $inv->importe    = max(0, (float)$inv->importe - ((int)$ln['qty'] * (float)$ln['unit']));
+                    $inv->existencia = max(0, (int) $inv->existencia - (int) $ln['qty']);
+                    $inv->importe = max(0, (float) $inv->importe - ((int) $ln['qty'] * (float) $ln['unit']));
                     $inv->save();
                 }
 
                 $venta->load('lineas');
 
                 return [
-                    'venta'             => $venta,
-                    'subtotal'          => $grossSubtotal,
+                    'venta' => $venta,
+                    'subtotal' => $grossSubtotal,
                     'item_discount_total' => $itemDiscountTotal,
                     'subtotal_after_item_discounts' => $netSubtotal,
-                    'discount_percent'  => $discountPercent,
-                    'discount_amount'   => $orderDiscountAmount,
-                    'descuento_general' => $orderDiscountAmount,
-                    'overall_discount_total' => $itemDiscountTotal + $orderDiscountAmount,
-                    'surcharge_percent' => $surchargePercent,
-                    'surcharge_amount'  => $surchargeAmount,
-                    'tarjeta_cargo'     => round($surchargeAmount, 2),
-                    'total'             => $total,
+                    'discount_percent' => $orderDiscountPercent,
+                    'discount_amount' => $orderDiscountAmount,
+                    'overall_discount_total' => $itemDiscountTotal + $orderDiscountAmount + $providerChargeTotal,
+                    'surcharge_percent' => $method === 'tarjeta' ? 4.5 : 0.0,
+                    'surcharge_amount' => $providerChargeTotal,
+                    'tarjeta_cargo' => round($providerChargeTotal, 2),
+                    'total' => $total,
                 ];
             });
 
@@ -323,6 +423,7 @@ class CashierLegacyController extends Controller
             return response()->json(['message' => $msg], $code);
         }
     }
+
 
     // POST /api/cashier/expenses
     public function registerExpense(ExpenseLegacyRequest $request)
@@ -349,7 +450,8 @@ class CashierLegacyController extends Controller
 
                 $subtotal = round($total, 2);
                 $descuentoGeneral = 0.0;
-                
+                $descuentoPercent = 0.0;
+                $tarjetaCargo = 0.0;
                 $totalVenta = $subtotal;
 
                 // Registro de gasto: sólo un encabezado en ventas con totales neutralizados.
@@ -357,7 +459,8 @@ class CashierLegacyController extends Controller
                     'idventa' => $nextIdVenta,
                     'subtotal' => $subtotal,
                     'descuento_general' => $descuentoGeneral,
-                    'tarjeta_cargo' => 0,
+                    'descuento_general_porcentaje' => $descuentoPercent,
+                    'tarjeta_cargo' => $tarjetaCargo,
                     'totalventa' => $totalVenta,
                     'metodo' => $method,
                     'recibo' => 0,
@@ -380,24 +483,24 @@ class CashierLegacyController extends Controller
     public function emailTicket(SendTicketEmailRequest $request)
     {
         $fromEmail = config('mail.from.address');
-        $fromName  = config('mail.from.name', 'Rosa Mexicano');
+        $fromName = config('mail.from.name', 'Rosa Mexicano');
         if (!$fromEmail) {
             return response()->json(['message' => 'Servicio de correo no configurado'], 500);
         }
 
-        $ventaId  = $request->integer('venta_id');
-        $canal    = $request->input('canal');
+        $ventaId = $request->integer('venta_id');
+        $canal = $request->input('canal');
 
-        $cliente  = $request->input('cliente', []);
-        $nombre   = $cliente['nombre'] ?? 'Cliente';
-        $email    = isset($cliente['email']) ? trim((string) $cliente['email']) : null;
+        $cliente = $request->input('cliente', []);
+        $nombre = $cliente['nombre'] ?? 'Cliente';
+        $email = isset($cliente['email']) ? trim((string) $cliente['email']) : null;
         $telefono = $cliente['telefono'] ?? null;
 
         if (!$email) {
             return response()->json(['message' => 'El correo del cliente es obligatorio para enviar el ticket.'], 422);
         }
 
-        $subject  = $request->input('subject') ?: "Ticket de compra - Venta #{$ventaId}";
+        $subject = $request->input('subject') ?: "Ticket de compra - Venta #{$ventaId}";
         $templateId = $request->input('template_id');
         $message = $request->input('message', 'Gracias por tu compra.');
         $logMessage = $request->input('log_message', 'Venta realizada');
@@ -434,30 +537,124 @@ class CashierLegacyController extends Controller
             Log::error('No se pudo enviar el correo', [
                 'error' => $e->getMessage(),
             ]);
-            Log::error('Mail to:'.$email. " Nombre: " .$nombre, [
+            Log::error('Mail to:' . $email . " Nombre: " . $nombre, [
                 'error' => $e->getMessage(),
             ]);
 
             Mailer::create([
-                'mail'    => $storedLink ?? 'ticket-no-guardado',
-                'asunto'  => $subject,
+                'mail' => $storedLink ?? 'ticket-no-guardado',
+                'asunto' => $subject,
                 'mensaje' => $logMessage . ' (error envío)',
-                'status'  => 0,
-                'fecha'   => now()->toDateString(),
+                'status' => 0,
+                'fecha' => now()->toDateString(),
             ]);
 
             return response()->json(['message' => 'No se pudo enviar el correo.'], 502);
         }
 
         Mailer::create([
-            'mail'    => $storedLink ?? 'ticket-no-guardado',
-            'asunto'  => $subject,
+            'mail' => $storedLink ?? 'ticket-no-guardado',
+            'asunto' => $subject,
             'mensaje' => $logMessage,
-            'status'  => 1,
-            'fecha'   => now()->toDateString(),
+            'status' => 1,
+            'fecha' => now()->toDateString(),
             'email' => $email ?? 'no-email',
         ]);
 
         return response()->json(['message' => 'Ticket enviado correctamente.']);
     }
+    private function detectPromotionLabel(?Producto $producto, int $quantity): ?string
+    {
+        if (!$producto || $quantity <= 0) {
+            return null;
+        }
+
+        $productIdent = (int) ($producto->ident ?? 0);
+        $providerIdent = (int) ($producto->proveedorid ?? 0);
+        if ($productIdent === 0 && $providerIdent === 0) {
+            return null;
+        }
+
+        // Cache key includes date because validity depends on "inicia"/"vence"
+        static $cache = [];
+        $today = Carbon::today()->toDateString(); // 'YYYY-MM-DD'
+        $cacheKey = $productIdent . ':' . $providerIdent . ':' . $quantity . ':' . $today;
+        if (array_key_exists($cacheKey, $cache)) {
+            return $cache[$cacheKey];
+        }
+
+        // Base query: active + within date window (open-ended allowed)
+        $query = Promocion::query()
+            ->where('estado', true)
+            ->where(function ($q) use ($today) {
+                $q->whereNull('inicia')->orWhereDate('inicia', '<=', $today);
+            })
+            ->where(function ($q) use ($today) {
+                $q->whereNull('vence')->orWhereDate('vence', '>=', $today);
+            })
+            ->whereIn('tipo', ['bundle', 'gratis', 'descuento']);
+
+        // Scope by product or provider (same logic as your bundle detector)
+        if ($productIdent) {
+            $query->where(function ($q) use ($productIdent, $providerIdent) {
+                $q->where('producto', $productIdent);
+                if ($providerIdent) {
+                    $q->orWhere(function ($inner) use ($providerIdent) {
+                        $inner->whereNull('producto')->where('proveedor', $providerIdent);
+                    });
+                }
+            });
+        } elseif ($providerIdent) {
+            $query->whereNull('producto')->where('proveedor', $providerIdent);
+        } else {
+            return $cache[$cacheKey] = null;
+        }
+
+        // Pull candidates and filter by mincompra + field presence
+        $candidates = $query->get()->filter(function (Promocion $promo) use ($quantity) {
+            if ($promo->mincompra && $quantity < (int) $promo->mincompra) {
+                return false;
+            }
+            if (in_array($promo->tipo, ['bundle', 'gratis'], true)) {
+                return (int) ($promo->gratis ?? 0) > 0;
+            }
+            if ($promo->tipo === 'descuento') {
+                return (float) ($promo->descuento ?? 0) > 0;
+            }
+            return false;
+        });
+
+        if ($candidates->isEmpty()) {
+            return $cache[$cacheKey] = null;
+        }
+
+        // Choose best: prefer bundle/gratis (max gratis), else highest % discount
+        $bestBundleGratis = $candidates
+            ->whereIn('tipo', ['bundle', 'gratis'])
+            ->sortByDesc(fn($p) => (int) $p->gratis)
+            ->first();
+
+        if ($bestBundleGratis) {
+            return $cache[$cacheKey] = sprintf('%d gratis', (int) $bestBundleGratis->gratis);
+        }
+
+        $bestPct = $candidates
+            ->where('tipo', 'descuento')
+            ->sortByDesc(fn($p) => (float) $p->descuento)
+            ->first();
+
+        if ($bestPct) {
+            $pct = (float) $bestPct->descuento;
+            $pctLabel = rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.'); // e.g., 12.5 -> "12.5"
+            return $cache[$cacheKey] = 'descuento - promotion - ' . $pctLabel . '%';
+        }
+
+        return $cache[$cacheKey] = null;
+    }
 }
+
+
+// Undefined column: 7 ERROR: column "activa" does not exist LINE 1: ...lect * from "promociones" where "estado" = $1 and "activa" =... ^ 
+// (Connection: pgsql, SQL: select * from "promociones" where "estado" = 1 and "activa" = 1 and ("inicia" is null or "inicia"::date <= 2025-11-03) 
+// and ("vence" is null or "vence"::date >= 2025-11-03) and "tipo" in (bundle, gratis, descuento) and ("producto" = 614173 or
+// ("producto" is null and "proveedor" = 481633)))

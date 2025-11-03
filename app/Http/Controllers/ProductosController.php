@@ -33,10 +33,16 @@ class ProductosController extends Controller
         }
 
         if ($s = $request->get('search')) {
-            $like = '%' . Str::lower($s) . '%';
-            $q->where(function ($qq) use ($like) {
+            $normalized = Str::lower($s);
+            $like = '%'.$normalized.'%';
+            $q->where(function ($qq) use ($normalized, $like) {
                 $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
-                    ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
+                    ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like])
+                    ->orWhere('ident', 'LIKE', '%'.$normalized.'%')
+                    ->orWhereHas('proveedor', function ($qp) use ($like, $normalized) {
+                        $qp->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                            ->orWhere('ident', 'LIKE', '%'.$normalized.'%');
+                    });
             });
         }
 
@@ -53,10 +59,16 @@ class ProductosController extends Controller
         $q = $proveedor->productos()->with('proveedor');
 
         if ($s = $request->get('search')) {
-            $like = '%' . Str::lower($s) . '%';
-            $q->where(function ($qq) use ($like) {
+            $normalized = Str::lower($s);
+            $like = '%' . $normalized . '%';
+            $q->where(function ($qq) use ($normalized, $like) {
                 $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
-                    ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
+                    ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like])
+                    ->orWhere('ident', 'LIKE', '%'.$normalized.'%')
+                    ->orWhereHas('proveedor', function ($qp) use ($normalized, $like) {
+                        $qp->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                            ->orWhere('ident', 'LIKE', '%'.$normalized.'%');
+                    });
             });
         }
 

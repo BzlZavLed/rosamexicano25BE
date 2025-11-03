@@ -11,6 +11,7 @@ use App\Models\Inventario;
 use App\Models\Producto;
 use App\Models\Venta;
 use App\Models\VentaDesg;
+use App\Models\Promocion;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -147,42 +148,163 @@ class CashierController extends Controller
         $payload = $request->validated();
 
         return DB::transaction(function () use ($payload, $fecha, $hora) {
-            // Calculate totals strictly on server
-            $subtotal = 0;
-            $sanitizedLines = [];
-            foreach ($payload['lineas'] as $l) {
-                $lineBase = (float) $l['pUni'] * (int) $l['cant'];
-                $rawDiscount = $l['product_desc'] ?? $l['totdesc'] ?? 0;
-                $lineDiscount = max(0, (float) $rawDiscount);
-                if ($lineDiscount > $lineBase) {
-                    $lineDiscount = $lineBase;
+            $grossSubtotal = 0;
+            $itemDiscountTotal = 0;
+            $lines = [];
+            $providerLines = [];
+
+            foreach ($payload['lineas'] as $index => $line) {
+                $producto = \App\Models\Producto::findOrFail($line['idProd']);
+
+                $lineBase = (float) $line['pUni'] * (int) $line['cant'];
+                $rawDiscount = $line['product_desc'] ?? $line['totdesc'] ?? 0;
+                $lineItemDiscount = max(0, (float) $rawDiscount);
+                if ($lineItemDiscount > $lineBase) {
+                    $lineItemDiscount = $lineBase;
                 }
-                $lineDiscount = round($lineDiscount, 2);
-                $lineNet = max(0, $lineBase - $lineDiscount);
-                $subtotal += $lineNet;
-                $sanitizedLines[] = [$l, $lineDiscount];
+                $lineItemDiscount = round($lineItemDiscount, 2);
+                $lineNetBeforeOrder = max(0, $lineBase - $lineItemDiscount);
+
+                $grossSubtotal += $lineBase;
+                $itemDiscountTotal += $lineItemDiscount;
+
+                $providerId = (int) ($producto->proveedorid ?? 0);
+
+                $lines[] = [
+                    'producto' => $producto,
+                    'data' => $line,
+                    'line_base' => $lineBase,
+                    'item_discount' => $lineItemDiscount,
+                    'net_before_order' => $lineNetBeforeOrder,
+                    'provider_id' => $providerId,
+                    'provider_charge' => 0.0,
+                ];
+
+                $providerLines[$providerId][] = $index;
+
+                $inv = \App\Models\Inventario::where('ident', $producto->ident)->lockForUpdate()->first();
+                if (!$inv) {
+                    $inv = new \App\Models\Inventario([
+                        'ident' => $producto->ident,
+                        'existencia' => 0,
+                        'importe' => 0,
+                        'provee' => (int) $producto->proveedorid,
+                    ]);
+                }
+
+                if ($inv->existencia < $line['cant']) {
+                    throw new \RuntimeException("Stock insuficiente para producto {$producto->nombre}");
+                }
+
+                $inv->existencia -= (int) $line['cant'];
+                $inv->importe = $inv->existencia * (float) $producto->precio;
+                $inv->provee = (int) $producto->proveedorid;
+                $inv->save();
             }
 
-            $descuentoGeneral = isset($payload['descuento_general'])
-                ? max(0, (float) $payload['descuento_general'])
+            $netSubtotal = max(0, $grossSubtotal - $itemDiscountTotal);
+            $orderDiscountPercent = isset($payload['descuento_general'])
+                ? max(0, min(100, (float) $payload['descuento_general']))
                 : 0.0;
-
-            $subtotal = round($subtotal, 2);
-            $descuentoGeneral = round(min($descuentoGeneral, $subtotal), 2);
-            $baseAfterDiscount = max(0, $subtotal - $descuentoGeneral);
-            $tarjetaCargo = 0.0;
-            if (strtolower($payload['metodo']) === 'tarjeta') {
-                $tarjetaCargo = round($baseAfterDiscount * 0.045, 2);
+            $orderDiscountAmount = $orderDiscountPercent > 0
+                ? round($netSubtotal * ($orderDiscountPercent / 100), 2)
+                : 0.0;
+            if ($orderDiscountAmount > $netSubtotal) {
+                $orderDiscountAmount = $netSubtotal;
             }
 
-            $total = round(max(0, $baseAfterDiscount + $tarjetaCargo), 2);
+            $afterDiscount = max(0, $netSubtotal - $orderDiscountAmount);
 
-            // Create venta header
+            $lineCount = count($lines);
+            $remainingOrderDiscount = $orderDiscountAmount;
+            $providerNetTotals = [];
+            foreach ($lines as $idx => &$line) {
+                $lineOrderDiscount = 0.0;
+                if ($orderDiscountAmount > 0 && $netSubtotal > 0) {
+                    if ($idx === $lineCount - 1) {
+                        $lineOrderDiscount = $remainingOrderDiscount;
+                    } else {
+                        $lineOrderDiscount = round($orderDiscountAmount * ($line['net_before_order'] / $netSubtotal), 2);
+                        $remainingOrderDiscount = max(0, $remainingOrderDiscount - $lineOrderDiscount);
+                    }
+                }
+
+                $lineNetAfterOrder = max(0, $line['net_before_order'] - $lineOrderDiscount);
+                $line['order_discount_part'] = $lineOrderDiscount;
+                $line['net_after_order'] = $lineNetAfterOrder;
+                $providerId = $line['provider_id'];
+                $providerNetTotals[$providerId] = ($providerNetTotals[$providerId] ?? 0) + $lineNetAfterOrder;
+            }
+            unset($line);
+
+            $providerChargeTotal = 0.0;
+            if (strtolower($payload['metodo']) === 'tarjeta') {
+                $totalNetAfterOrder = array_sum($providerNetTotals);
+                if ($totalNetAfterOrder > 0) {
+                    $providerChargeTotal = round($totalNetAfterOrder * 0.045, 2);
+
+                    $providerIds = array_keys($providerNetTotals);
+                    $providerCharges = [];
+                    $remainingChargeTotal = $providerChargeTotal;
+                    $providerCount = count($providerIds);
+
+                    foreach ($providerIds as $pIndex => $providerId) {
+                        $base = $providerNetTotals[$providerId];
+                        if ($base <= 0) {
+                            $providerCharges[$providerId] = 0.0;
+                            continue;
+                        }
+
+                        if ($pIndex === $providerCount - 1) {
+                            $providerCharges[$providerId] = round($remainingChargeTotal, 2);
+                        } else {
+                            $share = $base / $totalNetAfterOrder;
+                            $charge = round($providerChargeTotal * $share, 2);
+                            $providerCharges[$providerId] = $charge;
+                            $remainingChargeTotal -= $charge;
+                        }
+                    }
+
+                    foreach ($providerCharges as $providerId => $charge) {
+                        $indexes = $providerLines[$providerId] ?? [];
+                        if (empty($indexes) || $charge <= 0) {
+                            continue;
+                        }
+
+                        $providerBase = $providerNetTotals[$providerId];
+                        $remainingCharge = $charge;
+                        $lineCountForProvider = count($indexes);
+
+                        foreach ($indexes as $pos => $lineIdx) {
+                            $lineNetAfterOrder = $lines[$lineIdx]['net_after_order'];
+                            if ($providerBase <= 0 || $remainingCharge <= 0) {
+                                $lineCharge = 0.0;
+                            } elseif ($pos === $lineCountForProvider - 1) {
+                                $lineCharge = round($remainingCharge, 2);
+                            } else {
+                                $weight = $lineNetAfterOrder / $providerBase;
+                                $lineCharge = round($charge * $weight, 2);
+                                $remainingCharge -= $lineCharge;
+                            }
+
+                            $lines[$lineIdx]['provider_charge'] = round(($lines[$lineIdx]['provider_charge'] ?? 0) + $lineCharge, 2);
+                        }
+                    }
+
+                    $providerChargeTotal = round(array_reduce($lines, function ($carry, $lineData) {
+                        return $carry + ($lineData['provider_charge'] ?? 0);
+                    }, 0.0), 2);
+                }
+            }
+
+            $total = round(max(0, $afterDiscount - $providerChargeTotal), 2);
+
             $venta = Venta::create([
                 'idventa' => $payload['idventa'],
-                'subtotal' => $subtotal,
-                'descuento_general' => $descuentoGeneral,
-                'tarjeta_cargo' => $tarjetaCargo,
+                'subtotal' => round($grossSubtotal, 2),
+                'descuento_general' => round($orderDiscountAmount, 2),
+                'descuento_general_porcentaje' => $orderDiscountPercent,
+                'tarjeta_cargo' => $providerChargeTotal,
                 'totalventa' => $total,
                 'metodo' => $payload['metodo'],
                 'recibo' => $payload['recibo'],
@@ -193,45 +315,172 @@ class CashierController extends Controller
                 'concepto' => $payload['concepto'] ?? '',
             ]);
 
-            // Create lines & update inventory
-            foreach ($sanitizedLines as [$l, $lineDiscount]) {
-                $prod = \App\Models\Producto::findOrFail($l['idProd']);
+            $percentLabel = rtrim(rtrim(number_format($orderDiscountPercent, 2, '.', ''), '0'), '.');
+
+            foreach ($lines as $line) {
+                $lineData = $line['data'];
+                $prod = $line['producto'];
+
+                $lineItemDiscount = round($line['item_discount'], 2);
+                $lineOrderDiscount = $line['order_discount_part'] ?? 0.0;
+                $lineProviderCharge = round($line['provider_charge'] ?? 0.0, 2);
+                $totalProductDiscount = round($lineItemDiscount + $lineProviderCharge, 2);
+
+                $promotionFlag = 'normal';
+                if ($lineOrderDiscount > 0 && $orderDiscountPercent > 0) {
+                    $promotionFlag = 'descuento - ' . ($percentLabel !== '' ? $percentLabel : '0') . '%';
+                } elseif ($totalProductDiscount > 0) {
+                    $promotionFlag = 'descuento - producto';
+                }
+
+                if ($bundleLabel = $this->detectBundlePromotion($prod, (int) ($lineData['cant'] ?? 0))) {
+                    $promotionFlag = $bundleLabel;
+                }
 
                 VentaDesg::create([
                     'idventa' => $payload['idventa'],
                     'fecha' => $fecha,
                     'idProd' => $prod->id,
-                    'nombre' => $l['nombre'],
-                    'proveedor' => $l['proveedor'],
-                    'pUni' => $l['pUni'],
-                    'cant' => $l['cant'],
-                    'total' => $l['pUni'] * $l['cant'],
-                    'product_desc' => $lineDiscount,
+                    'nombre' => $lineData['nombre'],
+                    'proveedor' => $lineData['proveedor'],
+                    'pUni' => $lineData['pUni'],
+                    'cant' => $lineData['cant'],
+                    'total' => $line['line_base'],
+                    'descuento_producto' => $totalProductDiscount,
+                    'promotion' => $promotionFlag,
                     'hora' => $hora,
                 ]);
-
-                // Inventory (by barcode ident)
-                $inv = \App\Models\Inventario::where('ident', $prod->ident)->lockForUpdate()->first();
-                if (!$inv) {
-                    $inv = new \App\Models\Inventario([
-                        'ident' => $prod->ident,
-                        'existencia' => 0,
-                        'importe' => 0,
-                        'provee' => (int) $prod->proveedorid,
-                    ]);
-                }
-
-                if ($inv->existencia < $l['cant']) {
-                    throw new \RuntimeException("Stock insuficiente para producto {$prod->nombre}");
-                }
-
-                $inv->existencia -= (int) $l['cant'];
-                $inv->importe = $inv->existencia * (float) $prod->precio; // money equivalent
-                $inv->provee = (int) $prod->proveedorid;
-                $inv->save();
             }
 
-            return $venta->load('lineas');
+            $venta->load('lineas');
+
+            return [
+                'venta' => $venta,
+                'subtotal' => $grossSubtotal,
+                'item_discount_total' => $itemDiscountTotal,
+                'subtotal_after_item_discounts' => $netSubtotal,
+                'discount_percent' => $orderDiscountPercent,
+                'discount_amount' => $orderDiscountAmount,
+                'overall_discount_total' => $itemDiscountTotal + $orderDiscountAmount + $providerChargeTotal,
+                'surcharge_percent' => strtolower($payload['metodo']) === 'tarjeta' ? 4.5 : 0.0,
+                'surcharge_amount' => $providerChargeTotal,
+                'tarjeta_cargo' => $providerChargeTotal,
+                'total' => $total,
+            ];
         });
     }
+
+    private function detectBundlePromotion(?Producto $producto, int $quantity): ?string
+    {
+        if (!$producto || $quantity <= 0) {
+            return null;
+        }
+
+        $productIdent = (int) ($producto->ident ?? 0);
+        $providerIdent = (int) ($producto->proveedorid ?? 0);
+        if ($productIdent === 0 && $providerIdent === 0) {
+            return null;
+        }
+
+        static $cache = [];
+        $cacheKey = $productIdent . ':' . $providerIdent . ':' . $quantity;
+        if (array_key_exists($cacheKey, $cache)) {
+            return $cache[$cacheKey];
+        }
+
+        $query = Promocion::query()
+            ->whereIn('tipo', ['bundle', 'gratis'])
+            ->where('estado', true);
+
+        if ($productIdent) {
+            $query->where(function ($q) use ($productIdent, $providerIdent) {
+                $q->where('producto', $productIdent);
+                if ($providerIdent) {
+                    $q->orWhere(function ($inner) use ($providerIdent) {
+                        $inner->whereNull('producto')->where('proveedor', $providerIdent);
+                    });
+                }
+            });
+        } elseif ($providerIdent) {
+            $query->whereNull('producto')->where('proveedor', $providerIdent);
+        } else {
+            return $cache[$cacheKey] = null;
+        }
+
+        $promo = $query->orderByDesc('mincompra')
+            ->get()
+            ->filter(function (Promocion $promo) use ($quantity) {
+                if (!$promo->activa) {
+                    return false;
+                }
+                if ($promo->mincompra && $quantity < (int) $promo->mincompra) {
+                    return false;
+                }
+                return ($promo->gratis ?? 0) > 0;
+            })
+            ->first();
+
+        if (!$promo) {
+            return $cache[$cacheKey] = null;
+        }
+
+        return $cache[$cacheKey] = sprintf('%d gratis', (int) $promo->gratis);
+    }
 }
+
+    private function detectBundlePromotion(?Producto $producto, int $quantity): ?string
+    {
+        if (!$producto || $quantity <= 0) {
+            return null;
+        }
+
+        $productIdent = (int) ($producto->ident ?? 0);
+        $providerIdent = (int) ($producto->proveedorid ?? 0);
+
+        if ($productIdent === 0 && $providerIdent === 0) {
+            return null;
+        }
+
+        static $cache = [];
+        $cacheKey = $productIdent . ':' . $providerIdent . ':' . $quantity;
+        if (array_key_exists($cacheKey, $cache)) {
+            return $cache[$cacheKey];
+        }
+
+        $query = Promocion::query()
+            ->whereIn('tipo', ['bundle', 'gratis'])
+            ->where('estado', true);
+
+        if ($productIdent) {
+            $query->where(function ($q) use ($productIdent, $providerIdent) {
+                $q->where('producto', $productIdent);
+                if ($providerIdent) {
+                    $q->orWhere(function ($inner) use ($providerIdent) {
+                        $inner->whereNull('producto')->where('proveedor', $providerIdent);
+                    });
+                }
+            });
+        } elseif ($providerIdent) {
+            $query->whereNull('producto')->where('proveedor', $providerIdent);
+        } else {
+            return $cache[$cacheKey] = null;
+        }
+
+        $promo = $query->orderByDesc('mincompra')->get()
+            ->filter(function (Promocion $promo) use ($quantity) {
+                if (!$promo->activa) {
+                    return false;
+                }
+                if ($promo->mincompra && $quantity < (int) $promo->mincompra) {
+                    return false;
+                }
+                return ($promo->gratis ?? 0) > 0;
+            })
+            ->first();
+
+        if (!$promo) {
+            return $cache[$cacheKey] = null;
+        }
+
+        return $cache[$cacheKey] = sprintf('%d gratis', (int) $promo->gratis);
+    }

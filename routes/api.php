@@ -12,6 +12,7 @@ use App\Http\Controllers\ClientesController;
 use App\Http\Controllers\MailerController;
 use App\Http\Controllers\MensualidadController;
 use App\Http\Controllers\WidgetsController;
+use App\Http\Controllers\ReportController;
 use App\Models\Usuario;
 use App\Http\Controllers\MailerTrackController;
 Route::post('/auth/login', [UnifiedAuthController::class, 'login']);
@@ -92,6 +93,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/widgets/cashier-summary', [WidgetsController::class, 'cashierSummary']);
     Route::get('/widgets/top-products', [WidgetsController::class, 'topProducts']);
+    
+    //Reports
+    Route::get('/reports/caja', [ReportController::class, 'caja']);
+    Route::get('/reports/productos', [ReportController::class, 'productos']);
+    Route::get('/reports/inventario', [ReportController::class, 'inventario']);
 
     // Inventario
     Route::get('/inventario', [InventarioController::class, 'index']);
