@@ -108,6 +108,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/inventario/adjust-stock', [InventarioController::class, 'adjustStock']);  // relative delta
 
     // Admin users (admins only — enforced in controller)
+    Route::get('/admin/users/backup', [AdminUsersController::class, 'backup']);
     Route::apiResource('admin/users', AdminUsersController::class)
         ->parameters(['users' => 'usuario']);
     //Promociones

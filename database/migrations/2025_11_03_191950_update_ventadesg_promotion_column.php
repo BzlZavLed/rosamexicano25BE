@@ -13,8 +13,16 @@ return new class extends Migration
         }
 
         Schema::table('ventadesg', function (Blueprint $table) {
+            if (!Schema::hasColumn('ventadesg', 'descuento_producto')) {
+                $table->decimal('descuento_producto', 10, 2)->default(0)->after('total');
+            }
+
             if (!Schema::hasColumn('ventadesg', 'promotion')) {
-                $table->string('promotion', 50)->default('normal')->after('descuento_producto');
+                if (Schema::hasColumn('ventadesg', 'descuento_producto')) {
+                    $table->string('promotion', 50)->default('normal')->after('descuento_producto');
+                } else {
+                    $table->string('promotion', 50)->default('normal');
+                }
             }
         });
 
@@ -32,8 +40,8 @@ return new class extends Migration
         }
 
         Schema::table('ventadesg', function (Blueprint $table) {
-            if (!Schema::hasColumn('ventadesg', 'product_desc')) {
-                $table->decimal('product_desc', 10, 2)->default(0)->after('descuento_producto');
+            if (Schema::hasColumn('ventadesg', 'descuento_producto')) {
+                $table->dropColumn('descuento_producto');
             }
         });
 
