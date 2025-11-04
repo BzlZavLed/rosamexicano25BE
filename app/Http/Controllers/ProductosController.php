@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Producto;
 use App\Models\Proveedor;
+use App\Models\Inventario;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use App\Http\Requests\StoreProductoRequest;
 use App\Http\Requests\UpdateProductoRequest;
@@ -21,34 +23,125 @@ class ProductosController extends Controller
     public function index(Request $request)
     {
         $perPage = (int) $request->get('per_page', 20);
+        if ($perPage <= 0) {
+            $perPage = 20;
+        }
 
-        $q = Producto::with(['proveedor', 'inventario']); // ← add 'inventario'
+        $page = (int) $request->get('page', 1);
+        if ($page <= 0) {
+            $page = 1;
+        }
+
+        $query = $this->buildProductosQuery($request);
+
+        return ProductoResource::collection($query->paginate($perPage, ['*'], 'page', $page));
+    }
+
+    // GET /api/productos/export
+    public function export(Request $request)
+    {
+        $query = $this->buildProductosQuery($request);
+        $filename = 'productos-' . date('Ymd_His') . '.csv';
+        $headers = [
+            'Content-Type' => 'text/csv',
+        ];
+
+        return response()->streamDownload(function () use ($query) {
+            $handle = fopen('php://output', 'w');
+            if ($handle === false) {
+                return;
+            }
+
+            fputcsv($handle, ['ident', 'nombre', 'descripcion', 'proveedor', 'existencia', 'precio']);
+
+            foreach ($query->get() as $producto) {
+                $inventario = $producto->inventario;
+                $proveedor = $producto->proveedor;
+
+                fputcsv($handle, [
+                    $producto->ident,
+                    $producto->nombre,
+                    $producto->descripcion,
+                    $proveedor ? $proveedor->nombre : '',
+                    $inventario ? $inventario->existencia : '',
+                    $producto->precio !== null ? $producto->precio : '',
+                ]);
+            }
+
+            fclose($handle);
+        }, $filename, $headers);
+    }
+
+    protected function buildProductosQuery(Request $request): Builder
+    {
+        $sort = Str::lower((string) $request->get('sort', 'nombre'));
+        $direction = Str::lower((string) $request->get('direction', 'asc')) === 'desc' ? 'desc' : 'asc';
+
+        $allowedSorts = ['nombre', 'proveedor', 'existencia'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'nombre';
+        }
+
+        $query = Producto::with(['proveedor', 'inventario']);
 
         if ($barcode = $request->get('barcode')) {
-            $q->where('ident', (int) $barcode);
+            $query->where('ident', (int) $barcode);
         }
 
         if ($prov = $request->get('proveedor_id')) {
-            $q->where('proveedorid', (int) $prov);
+            $query->where('proveedorid', (int) $prov);
         }
 
         if ($s = $request->get('search')) {
             $normalized = Str::lower($s);
-            $like = '%'.$normalized.'%';
-            $q->where(function ($qq) use ($normalized, $like) {
+            $like = '%' . $normalized . '%';
+            $query->where(function ($qq) use ($normalized, $like) {
                 $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(descripcion) LIKE ?', [$like])
-                    ->orWhere('ident', 'LIKE', '%'.$normalized.'%')
+                    ->orWhere('ident', 'LIKE', '%' . $normalized . '%')
                     ->orWhereHas('proveedor', function ($qp) use ($like, $normalized) {
                         $qp->whereRaw('LOWER(nombre) LIKE ?', [$like])
-                            ->orWhere('ident', 'LIKE', '%'.$normalized.'%');
+                            ->orWhere('ident', 'LIKE', '%' . $normalized . '%');
                     });
             });
         }
 
-        $q->orderBy('nombre');
+        $hasInventory = Str::lower((string) $request->get('has_inventory'));
+        if ($hasInventory === 'with') {
+            $query->whereHas('inventario', function ($qi) {
+                $qi->where('existencia', '>', 0);
+            });
+        } elseif ($hasInventory === 'without') {
+            $query->where(function ($qq) {
+                $qq->whereDoesntHave('inventario')
+                    ->orWhereHas('inventario', function ($qi) {
+                        $qi->where('existencia', '<=', 0);
+                    });
+            });
+        }
 
-        return ProductoResource::collection($q->paginate($perPage));
+        switch ($sort) {
+            case 'proveedor':
+                $query->orderBy(
+                    Proveedor::select('nombre')
+                        ->whereColumn('proveedores.ident', 'producto.proveedorid')
+                        ->limit(1),
+                    $direction
+                );
+                break;
+            case 'existencia':
+                $query->orderBy(
+                    Inventario::select('existencia')
+                        ->whereColumn('inventario.ident', 'producto.ident')
+                        ->limit(1),
+                    $direction
+                );
+                break;
+            default:
+                $query->orderBy('nombre', $direction);
+        }
+
+        return $query;
     }
 
     // GET /api/proveedores/{proveedor}/productos

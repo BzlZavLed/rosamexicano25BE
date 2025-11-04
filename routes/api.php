@@ -74,6 +74,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Productos
     Route::get('/productos/bulk-template', [ProductosController::class, 'bulkTemplate']);
     Route::post('/productos/bulk-upload', [ProductosController::class, 'bulkUpload']);
+    Route::get('/productos/export', [ProductosController::class, 'export']);
     Route::apiResource('productos', ProductosController::class)
         ->parameters(['productos' => 'producto']);
 
@@ -98,6 +99,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reports/caja', [ReportController::class, 'caja']);
     Route::get('/reports/productos', [ReportController::class, 'productos']);
     Route::get('/reports/inventario', [ReportController::class, 'inventario']);
+    Route::get('/reports/entradas', [ReportController::class, 'entradas']);
+    Route::get('/reports/caja-proveedores', [ReportController::class, 'cajaPorProveedor']);
 
     // Inventario
     Route::get('/inventario', [InventarioController::class, 'index']);

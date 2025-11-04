@@ -7,8 +7,11 @@ use App\Http\Resources\InventarioResource;
 use App\Models\Inventario;
 use App\Models\Producto;
 use App\Models\Proveedor;
+use App\Models\Entrada;
 use Illuminate\Http\Request;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 use Throwable;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -22,8 +25,40 @@ class InventarioController extends Controller
     public function index(Request $request)
     {
         $perPage = (int) $request->get('per_page', 20);
+        if ($perPage <= 0) {
+            $perPage = 20;
+        }
 
-        $q = DB::table('inventario')
+        $page = (int) $request->get('page', 1);
+        if ($page <= 0) {
+            $page = 1;
+        }
+
+        $query = $this->buildInventarioQuery($request);
+
+        return InventarioResource::collection($query->paginate($perPage, ['*'], 'page', $page));
+    }
+
+    /**
+     * Provider-scoped inventory listing.
+     * GET /api/proveedores/{proveedor}/inventario
+     */
+    public function byProveedor(Proveedor $proveedor, Request $request)
+    {
+        $request->merge(['proveedor_id' => $proveedor->id]);
+        return $this->index($request);
+    }
+
+    protected function buildInventarioQuery(Request $request): Builder
+    {
+        $sort = Str::lower((string) $request->get('sort', 'nombre'));
+        $direction = Str::lower((string) $request->get('direction', 'asc')) === 'desc' ? 'desc' : 'asc';
+        $allowedSorts = ['nombre', 'proveedor', 'existencia', 'puni'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'nombre';
+        }
+
+        $query = DB::table('inventario')
             ->selectRaw("
                 inventario.*,
                 producto.id as producto_id,
@@ -36,31 +71,33 @@ class InventarioController extends Controller
             ->join('proveedores', 'proveedores.id', '=', 'producto.proveedorid');
 
         if ($prov = $request->get('proveedor_id')) {
-            $q->where('producto.proveedorid', (int) $prov);
+            $query->where('producto.proveedorid', (int) $prov);
         }
 
         if ($ident = $request->get('ident')) {
-            $q->where('inventario.ident', (int) $ident);
+            $query->where('inventario.ident', (int) $ident);
         }
 
         if ($s = $request->get('search')) {
             $like = '%' . Str::lower($s) . '%';
-            $q->whereRaw('LOWER(producto.nombre) LIKE ?', [$like]);
+            $query->whereRaw('LOWER(producto.nombre) LIKE ?', [$like]);
         }
 
-        $q->orderBy('producto.nombre');
+        switch ($sort) {
+            case 'proveedor':
+                $query->orderBy('proveedores.nombre', $direction);
+                break;
+            case 'existencia':
+                $query->orderBy('inventario.existencia', $direction);
+                break;
+            case 'puni':
+                $query->orderBy('inventario.precio_individual', $direction);
+                break;
+            default:
+                $query->orderBy('producto.nombre', $direction);
+        }
 
-        return InventarioResource::collection($q->paginate($perPage));
-    }
-
-    /**
-     * Provider-scoped inventory listing.
-     * GET /api/proveedores/{proveedor}/inventario
-     */
-    public function byProveedor(Proveedor $proveedor, Request $request)
-    {
-        $request->merge(['proveedor_id' => $proveedor->id]);
-        return $this->index($request);
+        return $query;
     }
 
     /**
@@ -84,6 +121,7 @@ class InventarioController extends Controller
                 $unitPrice = (float) $product->precio;
 
                 $inv = Inventario::where('ident', $ident)->lockForUpdate()->first();
+                $previousExistence = $inv ? (int) $inv->existencia : 0;
 
                 if (!$inv) {
                     $inv = new Inventario();
@@ -112,6 +150,14 @@ class InventarioController extends Controller
 
                 $inv->save();
                 $inv->load(['producto', 'producto.proveedor']);
+
+                $delta = $mode === 'set'
+                    ? (int) $inv->existencia - $previousExistence
+                    : $amt;
+
+                if ($delta !== 0) {
+                    $this->recordEntrada($product, $delta, $mode, $request->user());
+                }
 
                 return new InventarioResource($inv);
             });
@@ -188,5 +234,38 @@ class InventarioController extends Controller
 
             return (new InventarioResource((object) $row));
         });
+    }
+
+    protected function recordEntrada(Producto $product, int $delta, string $mode, ?object $user = null): void
+    {
+        Entrada::create([
+            'prodnombre' => $product->nombre,
+            'prodid' => (string) $product->ident,
+            'provid' => (string) $product->proveedorid,
+            'ingreal' => $delta,
+            'fecha' => now()->format('Y-m-d'),
+            'accion' => $this->resolveEntradaAccion($mode),
+            'usuario' => $this->resolveEntradaUsuario($user),
+        ]);
+    }
+
+    protected function resolveEntradaAccion(string $mode): int
+    {
+        return $mode === 'set' ? 2 : 1;
+    }
+
+    protected function resolveEntradaUsuario(?object $user = null): string
+    {
+        if (!$user) {
+            $user = Auth::user();
+        }
+
+        if (!$user) {
+            return 'system';
+        }
+
+        $name = $user->nombre ?? $user->name ?? $user->email ?? (string) $user->getAuthIdentifier() ?? 'system';
+
+        return Str::limit((string) $name, 85, '');
     }
 }
