@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -13,51 +13,48 @@ return new class extends Migration
             return;
         }
 
-        $driver = DB::getDriverName();
-        if (!in_array($driver, ['mysql', 'mariadb'])) {
-            return;
-        }
-
-        // Rename saldo -> saldoinicial and ensure proper type
         if (Schema::hasColumn('estadocaja', 'saldo') && !Schema::hasColumn('estadocaja', 'saldoinicial')) {
-            DB::statement('ALTER TABLE estadocaja CHANGE COLUMN saldo saldoinicial DECIMAL(11,2) NOT NULL');
-        } elseif (Schema::hasColumn('estadocaja', 'saldoinicial')) {
-            DB::statement('ALTER TABLE estadocaja MODIFY COLUMN saldoinicial DECIMAL(11,2) NOT NULL');
+            Schema::table('estadocaja', function (Blueprint $table) {
+                $table->renameColumn('saldo', 'saldoinicial');
+            });
         }
 
-        // Ensure estado is VARCHAR(10) NOT NULL
-        if (Schema::hasColumn('estadocaja', 'estado')) {
-            DB::statement('ALTER TABLE estadocaja MODIFY COLUMN estado VARCHAR(10) NOT NULL');
+        if (Schema::hasColumn('estadocaja', 'saldoinicial')) {
+            Schema::table('estadocaja', function (Blueprint $table) {
+                $table->decimal('saldoinicial', 11, 2)->default(0)->change();
+            });
         }
 
-        // Add saldofinal if missing
         if (!Schema::hasColumn('estadocaja', 'saldofinal')) {
             Schema::table('estadocaja', function (Blueprint $table) {
-                $table->decimal('saldofinal', 11, 2)->default(0)->after('saldoinicial');
+                $table->decimal('saldofinal', 11, 2)->default(0);
             });
 
-            // Initialize saldofinal with saldoinicial for existing rows
             DB::table('estadocaja')->update([
                 'saldofinal' => DB::raw('COALESCE(saldofinal, saldoinicial)')
             ]);
 
-            DB::statement('ALTER TABLE estadocaja MODIFY COLUMN saldofinal DECIMAL(11,2) NOT NULL');
+            Schema::table('estadocaja', function (Blueprint $table) {
+                $table->decimal('saldofinal', 11, 2)->default(0)->change();
+            });
         }
 
-        // Ensure saldosistema is numeric(11,2) NOT NULL
+        if (Schema::hasColumn('estadocaja', 'estado')) {
+            Schema::table('estadocaja', function (Blueprint $table) {
+                $table->string('estado', 10)->nullable(false)->change();
+            });
+        }
+
         if (Schema::hasColumn('estadocaja', 'saldosistema')) {
-            DB::statement('ALTER TABLE estadocaja MODIFY COLUMN saldosistema DECIMAL(11,2) NOT NULL');
+            Schema::table('estadocaja', function (Blueprint $table) {
+                $table->decimal('saldosistema', 11, 2)->default(0)->change();
+            });
         }
     }
 
     public function down(): void
     {
         if (!Schema::hasTable('estadocaja')) {
-            return;
-        }
-
-        $driver = DB::getDriverName();
-        if (!in_array($driver, ['mysql', 'mariadb'])) {
             return;
         }
 
@@ -68,11 +65,15 @@ return new class extends Migration
         }
 
         if (Schema::hasColumn('estadocaja', 'saldoinicial') && !Schema::hasColumn('estadocaja', 'saldo')) {
-            DB::statement('ALTER TABLE estadocaja CHANGE COLUMN saldoinicial saldo DECIMAL(11,2) NOT NULL');
+            Schema::table('estadocaja', function (Blueprint $table) {
+                $table->renameColumn('saldoinicial', 'saldo');
+            });
         }
 
         if (Schema::hasColumn('estadocaja', 'estado')) {
-            DB::statement('ALTER TABLE estadocaja MODIFY COLUMN estado INT NOT NULL');
+            Schema::table('estadocaja', function (Blueprint $table) {
+                $table->integer('estado')->nullable(false)->default(0)->change();
+            });
         }
     }
 };
