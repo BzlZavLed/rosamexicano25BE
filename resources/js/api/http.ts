@@ -1,4 +1,4 @@
-// src/api/http.ts
+// resources/js/api/http.ts
 import axios from 'axios';
 import { useAuthStore } from '../stores/auth';
 
