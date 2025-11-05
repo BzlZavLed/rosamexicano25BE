@@ -22,8 +22,9 @@ const links = computed(() => {
     } else if (auth.isProvider) {
         return [
             { to: { name: 'provider-dashboard' }, label: 'Inicio' },
-            { to: { path: '/provider/productos' }, label: 'Mis productos' },
-            { to: { path: '/provider/inventario' }, label: 'Mi inventario' },
+            { to: { path: '/provider/catalogo' }, label: 'Productos e inventario' },
+            { to: { path: '/provider/reportes' }, label: 'Reportes' },
+            { to: { path: '/provider/perfil' }, label: 'Perfil' },
         ];
     }
     return [];

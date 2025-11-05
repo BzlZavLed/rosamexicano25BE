@@ -88,7 +88,7 @@ onMounted(() => {
 
                     <!-- Helper tip for providers -->
                     <p class="text-xs text-gray-500 text-center">
-                        ¿Proveedor nuevo? Tu primera contraseña es tu <b>ID de proveedor</b>.
+                        ¿Proveedor? Tu contraseña es tu <b>IDENT</b> (número de proveedor).
                     </p>
                 </div>
             </div>

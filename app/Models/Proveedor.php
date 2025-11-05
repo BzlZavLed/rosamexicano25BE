@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Support\Facades\Hash;
 
 class Proveedor extends Authenticatable
 {
@@ -37,6 +38,27 @@ class Proveedor extends Authenticatable
     public function productos()
     {
         return $this->hasMany(Producto::class, 'proveedorid', 'id');
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $model) {
+            if ($model->ident !== null && ($model->isDirty('ident') || empty($model->passhash))) {
+                $model->passhash = Hash::make((string) $model->ident);
+            }
+        });
+    }
+
+    public function setTelAttribute($value): void
+    {
+        if ($value === null) {
+            $this->attributes['tel'] = null;
+            return;
+        }
+
+        $digits = preg_replace('/\D+/', '', (string) $value);
+        $digits = $digits !== null ? trim($digits) : '';
+        $this->attributes['tel'] = $digits !== '' ? $digits : null;
     }
 
     // Providers log in with phone number

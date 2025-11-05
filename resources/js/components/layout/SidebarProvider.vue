@@ -6,15 +6,9 @@ import SidebarItem from './SidebarItem.vue';
   <nav class="space-y-2">
     <div class="px-3 pt-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Mi panel</div>
 
-    <SidebarItem :to="{ path: '/provider/productos' }" label="Mis productos">
+    <SidebarItem :to="{ path: '/provider/catalogo' }" label="Productos e inventario">
       <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
         <path d="M21 16V8a2 2 0 0 0-1-1.73L13 2.27a2 2 0 0 0-2 0L4 6.27A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-      </svg>
-    </SidebarItem>
-
-    <SidebarItem :to="{ path: '/provider/inventario' }" label="Mi inventario">
-      <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
       </svg>
     </SidebarItem>
 

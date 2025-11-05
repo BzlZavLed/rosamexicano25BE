@@ -6,6 +6,7 @@ use App\Models\Venta;
 use App\Models\Producto;
 use App\Models\Inventario;
 use App\Models\Entrada;
+use App\Models\Proveedor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -14,10 +15,18 @@ use Illuminate\Support\Str;
 
 class ReportController extends Controller
 {
+    protected function currentProvider(Request $request): ?Proveedor
+    {
+        $user = $request->user();
+        return $user instanceof Proveedor ? $user : null;
+    }
+
     public function caja(Request $request)
     {
         $fechaInicio = $request->input('from_date');
         $fechaFin = $request->input('to_date');
+        $provider = $this->currentProvider($request);
+        $provider = $this->currentProvider($request);
 
         if (!$fechaInicio) {
             return response()->json(['message' => 'Debe proporcionar al menos from_date.'], 422);
@@ -54,12 +63,22 @@ class ReportController extends Controller
         };
 
         $ventasQuery = Venta::with([
-            'lineas' => function ($query) use ($dateFilter) {
+            'lineas' => function ($query) use ($dateFilter, $provider) {
                 $dateFilter($query);
+                if ($provider) {
+                    $query->where('proveedor', $provider->ident);
+                }
             }
         ]);
 
         $dateFilter($ventasQuery);
+
+        if ($provider) {
+            $ventasQuery->whereHas('lineas', function ($query) use ($dateFilter, $provider) {
+                $dateFilter($query);
+                $query->where('proveedor', $provider->ident);
+            });
+        }
 
         if ($driver === 'pgsql') {
             $ventasQuery->orderByRaw("to_date(fecha, 'DD/MM/YY')");
@@ -73,18 +92,49 @@ class ReportController extends Controller
 
         $ventas = $ventasQuery->get();
 
-        $mapped = $ventas->map(function (Venta $venta) {
-            $subtotal = (float) $venta->subtotal;
-            $amount = (float) ($venta->descuento_general ?? 0);
-            $percent = (float) ($venta->descuento_general_porcentaje ?? 0);
-            if ($percent <= 0 && $amount > 0 && $subtotal > 0) {
-                $percent = round(($amount / $subtotal) * 100, 2);
-            }
-            $tarjetaCargo = (float) $venta->tarjeta_cargo;
-            $lineDiscountTotal = (float) $venta->lineas->sum(function ($linea) {
+        if ($provider) {
+            $ventas = $ventas->filter(function (Venta $venta) use ($provider) {
+                $filtered = $venta->lineas->where('proveedor', $provider->ident)->values();
+                $venta->setRelation('lineas', $filtered);
+                return $filtered->isNotEmpty();
+            })->values();
+        }
+
+        $mapped = $ventas->map(function (Venta $venta) use ($provider) {
+            $lineas = $venta->lineas;
+            $lineDiscountTotal = (float) $lineas->sum(function ($linea) {
                 return (float) ($linea->descuento_producto ?? 0);
             });
-            $overallDiscount = $amount + $lineDiscountTotal + $tarjetaCargo;
+            $lineCardCharges = (float) $lineas->sum(function ($linea) {
+                return (float) ($linea->cargo_tarjeta_proveedor ?? 0);
+            });
+
+            if ($provider) {
+                $gross = (float) $lineas->sum(function ($linea) {
+                    $unit = (float) ($linea->puni ?? 0);
+                    $qty = (int) ($linea->cant ?? 0);
+                    return round($unit * $qty, 2);
+                });
+                $net = (float) $lineas->sum(function ($linea) {
+                    return (float) ($linea->total ?? 0);
+                });
+                $overallDiscount = round($lineDiscountTotal + $lineCardCharges, 2);
+                $tarjetaCargo = round($lineCardCharges, 2);
+                $amount = 0.0;
+                $percent = $gross > 0 ? round(($overallDiscount / $gross) * 100, 2) : 0.0;
+                $subtotal = round($gross, 2);
+                $totalventa = round($net, 2);
+            } else {
+                $subtotal = (float) $venta->subtotal;
+                $amount = (float) ($venta->descuento_general ?? 0);
+                $percent = (float) ($venta->descuento_general_porcentaje ?? 0);
+                if ($percent <= 0 && $amount > 0 && $subtotal > 0) {
+                    $percent = round(($amount / $subtotal) * 100, 2);
+                }
+                $tarjetaCargo = (float) $venta->tarjeta_cargo;
+                $overallDiscount = $amount + $lineDiscountTotal + $tarjetaCargo;
+                $totalventa = (float) $venta->totalventa;
+            }
 
             return [
                 'idventa' => $venta->idventa,
@@ -96,13 +146,13 @@ class ReportController extends Controller
                 'tarjeta_cargo' => $tarjetaCargo,
                 'descuento_lineas' => $lineDiscountTotal,
                 'descuento_total' => $overallDiscount,
-                'totalventa' => (float) $venta->totalventa,
+                'totalventa' => $totalventa,
                 'ie' => (int) $venta->ie,
                 'concepto' => $venta->concepto,
                 'recibo' => (float) $venta->recibo,
                 'cambio' => (float) $venta->cambio,
                 'vendedor' => $venta->vendedor,
-                'lineas' => $venta->lineas->map(function ($linea) {
+                'lineas' => $lineas->map(function ($linea) {
                     return [
                         'idprod' => (int) $linea->idprod,
                         'nombre' => $linea->nombre,
@@ -111,6 +161,7 @@ class ReportController extends Controller
                         'cant' => (int) $linea->cant,
                         'total' => (float) $linea->total,
                         'descuento_producto' => (float) ($linea->descuento_producto ?? 0),
+                        'cargo_tarjeta_proveedor' => (float) ($linea->cargo_tarjeta_proveedor ?? 0),
                         'promotion' => $linea->promotion ?? 'normal',
                     ];
                 }),
@@ -248,6 +299,7 @@ class ReportController extends Controller
         if ($perPage <= 0 || $perPage > 200) {
             $perPage = 25; // sane default / upper bound
         }
+        $provider = $this->currentProvider($request);
 
         $query = Producto::query()
             ->with(['proveedor:ident,id,nombre']);
@@ -263,6 +315,10 @@ class ReportController extends Controller
                             ->orWhere('ident', 'LIKE', "%{$search}%");
                     });
             });
+        }
+
+        if ($provider) {
+            $query->where('proveedorid', $provider->ident);
         }
 
         // Sort by product name as a reasonable default
@@ -310,6 +366,7 @@ class ReportController extends Controller
         if ($perPage <= 0 || $perPage > 200) {
             $perPage = 25;
         }
+        $provider = $this->currentProvider($request);
 
         $sort = strtolower((string) $request->input('sort', 'producto'));
         $direction = strtolower((string) $request->input('direction', 'asc')) === 'desc' ? 'desc' : 'asc';
@@ -332,6 +389,10 @@ class ReportController extends Controller
                     ->orWhere('pr.ident', 'LIKE', "%{$search}%")
                     ->orWhereRaw('LOWER(pr.nombre) LIKE ?', [$like]);
             });
+        }
+
+        if ($provider) {
+            $query->where('pr.ident', '=', $provider->ident);
         }
 
         switch ($sort) {
@@ -392,6 +453,7 @@ class ReportController extends Controller
     {
         $fechaInicio = $request->input('from_date');
         $fechaFin = $request->input('to_date');
+        $provider = $this->currentProvider($request);
 
         if (!$fechaInicio) {
             return response()->json(['message' => 'Debe proporcionar al menos from_date.'], 422);
@@ -449,6 +511,10 @@ class ReportController extends Controller
             ])
             ->leftJoin('ventas as v', 'v.idventa', '=', 'vd.idventa')
             ->leftJoin('proveedores as p', 'p.ident', '=', 'vd.proveedor');
+
+        if ($provider) {
+            $rows->where('vd.proveedor', '=', $provider->ident);
+        }
 
         $applyDateFilter($rows);
 
@@ -694,6 +760,11 @@ class ReportController extends Controller
             'proveedores' => $providers,
             'descuento_general_total' => $generalDiscountTotal,
             'cargos_tarjeta_total' => $totales['cargos_tarjeta'],
+            'provider' => $provider ? [
+                'id' => $provider->id,
+                'ident' => $provider->ident,
+                'nombre' => $provider->nombre,
+            ] : null,
         ]);
     }
 
@@ -747,6 +818,10 @@ class ReportController extends Controller
                 $builder->whereBetween('entradas.fecha', [$inicioIso, $finIso]);
             }
         };
+
+        if ($provider) {
+            $query->where('entradas.provid', '=', (string) $provider->ident);
+        }
 
         $dateFilter($query);
 

@@ -4,7 +4,7 @@ import { login as apiLogin, me as apiMe, logout as apiLogout } from '../api/auth
 
 type Role = 'admin' | 'provider';
 type AdminUser = { id: number; nombre?: string; email?: string };
-type ProviderUser = { id: number; nombre: string; tel: string };
+type ProviderUser = { id: number; ident: number; nombre: string; tel: string; email?: string | null };
 
 export const useAuthStore = defineStore('auth', {
     state: () => ({

@@ -16,7 +16,7 @@ class UnifiedAuthController extends Controller
      * Rule:
      * - If identifier is an email => try admin (usuarios.email).
      * - Otherwise => try provider (proveedores.tel).
-     * - Providers: prefer passhash; if empty, accept provider ID as temporary password and upgrade to passhash.
+     * - Providers: prefer passhash; fallback to proveedor.ident (and legacy proveedor.id) to bootstrap.
      */
     public function login(Request $request)
     {
@@ -43,33 +43,62 @@ class UnifiedAuthController extends Controller
         }
 
         // Provider path (phone)
-        $prov = Proveedor::where('tel', $id)->first();
+        $normalizedPhone = preg_replace('/\D+/', '', $id);
+        if ($normalizedPhone === '') {
+            return response()->json(['message' => 'Invalid credentials'], 401);
+        }
+
+        $prov = Proveedor::where('tel', $normalizedPhone)->first();
+        if (!$prov && $normalizedPhone !== $id) {
+            $prov = Proveedor::where('tel', $id)->first();
+        }
+        if (!$prov) {
+            $prov = Proveedor::whereRaw(
+                "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(tel, ' ', ''), '-', ''), '(', ''), ')', ''), '+', '') = ?",
+                [$normalizedPhone]
+            )->first();
+        }
         if (!$prov) {
             return response()->json(['message'=>'Invalid credentials'], 401);
         }
 
+        $expectedPassword = (string) $prov->ident;
         $ok = false;
-        if (!empty($prov->passhash)) {
-            $ok = Hash::check($pw, $prov->passhash);
-        } else {
-            // back-compat: provider ID as temporary password
-            $ok = ((string)$pw === (string)$prov->id);
-            if ($ok) {
-                // upgrade to hash for future logins
-                $prov->passhash = Hash::make($pw);
-                $prov->save();
-            }
+
+        if (!empty($prov->passhash) && Hash::check($pw, $prov->passhash)) {
+            $ok = true;
+        } elseif ((string) $pw === $expectedPassword) {
+            // First time login or hash drift; rotate to hashed ident
+            $prov->passhash = Hash::make($expectedPassword);
+            $prov->save();
+            $ok = true;
+        } elseif ((string) $pw === (string) $prov->id) {
+            // Legacy fallback: old credential was the internal ID; rotate to ident-based password
+            $prov->passhash = Hash::make($expectedPassword);
+            $prov->save();
+            $ok = true;
         }
 
         if (!$ok) {
             return response()->json(['message'=>'Invalid credentials'], 401);
         }
 
+        if ($prov->tel !== $normalizedPhone) {
+            $prov->tel = $normalizedPhone;
+            $prov->save();
+        }
+
         $token = $prov->createToken('pos-provider', ['role:provider'])->plainTextToken;
         return response()->json([
             'token'    => $token,
             'role'     => 'provider',
-            'provider' => ['id'=>$prov->id,'nombre'=>$prov->nombre,'tel'=>$prov->tel],
+            'provider' => [
+                'id'     => $prov->id,
+                'ident'  => $prov->ident,
+                'nombre' => $prov->nombre,
+                'tel'    => $prov->tel,
+                'email'  => $prov->email,
+            ],
         ]);
     }
 
@@ -81,6 +110,7 @@ class UnifiedAuthController extends Controller
             'role' => $isProvider ? 'provider' : 'admin',
             $isProvider ? 'provider' : 'user' => [
                 'id'     => $u->id,
+                'ident'  => $isProvider ? $u->ident : null,
                 'nombre' => $u->nombre ?? null,
                 'email'  => $u->email ?? null,
                 'tel'    => $u->tel ?? null,

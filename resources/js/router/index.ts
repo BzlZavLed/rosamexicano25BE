@@ -6,6 +6,9 @@ import { useAuthStore } from "../stores/auth";
 const LoginView = () => import("../views/LoginView.vue");
 const AdminDashboard = () => import("../views/AdminDashboard.vue");
 const ProviderDashboard = () => import("../views/ProvidersDashboard.vue");
+const ProviderCatalogView = () => import("../views/ProviderCatalogView.vue");
+const ProviderReportsView = () => import("../views/ProviderReportsView.vue");
+const ProviderProfileView = () => import("../views/ProviderProfileView.vue");
 const AdminProductosForm = () => import("../views/AdminProductosForm.vue");
 const AdminProveedoresForm = () => import("../views/AdminProveedoresForm.vue");
 const AdminInventarioEntrada = () => import("../views/AdminInventarioEntrada.vue");
@@ -39,6 +42,24 @@ const routes: RouteRecordRaw[] = [
         path: "/provider",
         name: "provider-dashboard",
         component: ProviderDashboard,
+        meta: { requiresAuth: true, role: "provider" },
+    },
+    {
+        path: "/provider/catalogo",
+        name: "provider-catalog",
+        component: ProviderCatalogView,
+        meta: { requiresAuth: true, role: "provider" },
+    },
+    {
+        path: "/provider/reportes",
+        name: "provider-reports",
+        component: ProviderReportsView,
+        meta: { requiresAuth: true, role: "provider" },
+    },
+    {
+        path: "/provider/perfil",
+        name: "provider-profile",
+        component: ProviderProfileView,
         meta: { requiresAuth: true, role: "provider" },
     },
 
