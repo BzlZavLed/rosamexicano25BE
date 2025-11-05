@@ -19,3 +19,6 @@ Route::get('/dashboard', function () {
     }
     return view('dashboard');
 })->name('dashboard');
+
+
+Route::view('/{any}', 'app')->where('any', '.*');
