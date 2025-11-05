@@ -3,7 +3,8 @@ import axios from 'axios';
 import { useAuthStore } from '../stores/auth';
 
 const http = axios.create({
-    baseURL: import.meta.env.VITE_API_BASE_URL
+    // Default to the Laravel API prefix when an explicit base URL isn't provided.
+    baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
 });
 
 http.interceptors.request.use((config) => {
