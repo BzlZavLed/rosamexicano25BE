@@ -63,6 +63,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Proveedores
     Route::apiResource('proveedores', ProveedoresController::class)
         ->parameters(['proveedores' => 'proveedor']);
+    Route::post('/proveedores/import', [ProveedoresController::class, 'import']);
     Route::get('/proveedores/{proveedor}/productos', [ProductosController::class, 'byProveedor'])
         ->whereNumber('proveedor');
     Route::get('/proveedores/{proveedor}/inventario', [InventarioController::class, 'byProveedor'])

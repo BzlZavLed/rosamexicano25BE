@@ -47,3 +47,17 @@ export async function listProveedoresAll() {
     // Laravel Resource: { data:[...], links, meta } OR plain array
     return Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
 }
+
+export type ProveedorImportSummary = {
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: Array<{ line: number; message: string }>;
+};
+
+export async function importProveedoresCsv(payload: FormData) {
+    const { data } = await http.post<ProveedorImportSummary>('/proveedores/import', payload, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+}

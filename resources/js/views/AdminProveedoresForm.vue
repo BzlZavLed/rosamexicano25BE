@@ -2,11 +2,18 @@
 import { ref, reactive, onMounted, watch, computed } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
 import {
-    listProveedores, createProveedor, updateProveedor, deleteProveedor, type Proveedor
+    listProveedores,
+    createProveedor,
+    updateProveedor,
+    deleteProveedor,
+    importProveedoresCsv,
+    type Proveedor,
+    type ProveedorImportSummary,
 } from '../api/proveedores';
 
 const loading = ref(false);
 const saving = ref(false);
+const importing = ref(false);
 const message = ref('');
 const error = ref('');
 
@@ -49,6 +56,21 @@ const pageInfo = computed(() => {
     const start = (pagination.page - 1) * pagination.perPage + 1;
     const end = Math.min(start + pagination.perPage - 1, pagination.total);
     return { start, end };
+});
+
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const importResult = ref<ProveedorImportSummary | null>(null);
+const importOptions = reactive({
+    updateExisting: true,
+});
+const MAX_IMPORT_ERRORS = 20;
+const displayedImportErrors = computed(() => {
+    if (!importResult.value) return [];
+    return importResult.value.errors.slice(0, MAX_IMPORT_ERRORS);
+});
+const hiddenImportErrorCount = computed(() => {
+    if (!importResult.value) return 0;
+    return Math.max(0, importResult.value.errors.length - MAX_IMPORT_ERRORS);
 });
 
 type FormT = {
@@ -191,6 +213,56 @@ async function removeProveedor() {
     }
 }
 
+function openImportDialog() {
+    importResult.value = null;
+    if (fileInputRef.value) {
+        fileInputRef.value.value = '';
+        fileInputRef.value.click();
+    }
+}
+
+async function handleImportFile(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (!importOptions.updateExisting) {
+        formData.append('update_existing', '0');
+    }
+
+    importing.value = true;
+    message.value = '';
+    error.value = '';
+
+    try {
+        const result = await importProveedoresCsv(formData);
+        importResult.value = result;
+        message.value = `Importación completada: ${result.created} nuevos, ${result.updated} actualizados, ${result.skipped} omitidos.`;
+        if (result.errors.length) {
+            error.value = `Se encontraron ${result.errors.length} filas con errores. Revisa el detalle debajo.`;
+        }
+        pagination.page = 1;
+        await loadList();
+    } catch (e: any) {
+        importResult.value = null;
+        error.value = e?.response?.data?.errors?.file?.[0]
+            || e?.response?.data?.message
+            || 'No se pudo importar el archivo CSV.';
+    } finally {
+        importing.value = false;
+    }
+}
+
+async function onImportChange(event: Event) {
+    const input = event.target as HTMLInputElement | null;
+    const file = input?.files?.[0];
+    if (!file) return;
+
+    await handleImportFile(file);
+
+    if (input) {
+        input.value = '';
+    }
+}
+
 watch(q, () => { pagination.page = 1; loadList(); });
 
 watch(() => pagination.perPage, (newVal, oldVal) => {
@@ -230,11 +302,23 @@ onMounted(async () => {
                         <p class="text-xs text-gray-500 mt-1">Captura la información del proveedor y mantenla actualizada
                             con la ficha inferior.</p>
                     </div>
-                    <button type="button" @click="resetForm"
-                        class="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium uppercase tracking-wide hover:bg-gray-50">
-                        Limpiar formulario
-                    </button>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" @click="openImportDialog" :disabled="importing"
+                            class="inline-flex items-center justify-center rounded-lg border border-[#E4007C] px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-[#E4007C] hover:bg-[#E4007C]/10 disabled:opacity-60 disabled:cursor-not-allowed">
+                            {{ importing ? 'Importando…' : 'Importar CSV' }}
+                        </button>
+                        <label class="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600">
+                            <input type="checkbox" v-model="importOptions.updateExisting"
+                                class="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900">
+                            <span>Actualizar existentes</span>
+                        </label>
+                        <button type="button" @click="resetForm"
+                            class="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-xs font-medium uppercase tracking-wide hover:bg-gray-50">
+                            Limpiar formulario
+                        </button>
+                    </div>
                 </div>
+                <input ref="fileInputRef" type="file" accept=".csv,text/csv" class="hidden" @change="onImportChange">
 
                 <div v-if="message"
                     class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-2 text-sm">
@@ -243,6 +327,18 @@ onMounted(async () => {
                 <div v-if="error"
                     class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-2 text-sm">
                     {{ error }}
+                </div>
+                <div v-if="importResult && importResult.errors.length"
+                    class="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-xs space-y-1">
+                    <p class="font-semibold">Errores en la importación (mostrando {{ displayedImportErrors.length }} de {{ importResult.errors.length }}):</p>
+                    <ul class="list-disc list-inside space-y-1">
+                        <li v-for="err in displayedImportErrors" :key="`${err.line}-${err.message}`">
+                            Fila {{ err.line }}: {{ err.message }}
+                        </li>
+                    </ul>
+                    <p v-if="hiddenImportErrorCount > 0" class="text-amber-700">
+                        …y {{ hiddenImportErrorCount }} errores adicionales.
+                    </p>
                 </div>
 
                 <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">

@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Proveedor;
-use Illuminate\Http\Request;
 use App\Http\Requests\StoreProveedorRequest;
 use App\Http\Requests\UpdateProveedorRequest;
 use App\Http\Resources\ProveedorResource;
+use App\Models\Proveedor;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 
 class ProveedoresController extends Controller
@@ -62,5 +65,221 @@ class ProveedoresController extends Controller
     {
         $proveedore->delete();
         return response()->noContent();
+    }
+
+    // POST /api/proveedores/import
+    public function import(Request $request)
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:csv,txt', 'max:5120'],
+            'delimiter' => ['nullable', 'string', 'max:1'],
+            'update_existing' => ['nullable', 'boolean'],
+        ]);
+
+        $delimiter = $request->input('delimiter', ',');
+        if ($delimiter === '\\t') {
+            $delimiter = "\t";
+        } elseif ($delimiter === '') {
+            $delimiter = ',';
+        }
+
+        $updateExisting = $request->boolean('update_existing', true);
+        $handle = fopen($request->file('file')->getRealPath(), 'r');
+
+        if ($handle === false) {
+            throw ValidationException::withMessages([
+                'file' => 'No se pudo leer el archivo CSV proporcionado.',
+            ]);
+        }
+
+        $headerRow = fgetcsv($handle, 0, $delimiter);
+        if ($headerRow === false) {
+            fclose($handle);
+            throw ValidationException::withMessages([
+                'file' => 'El archivo CSV está vacío.',
+            ]);
+        }
+
+        $columnMap = [
+            'ident'        => 'ident',
+            'identificador'=> 'ident',
+            'nombre'       => 'nombre',
+            'razon_social' => 'nombre',
+            'fecha'        => 'fecha',
+            'fecha_alta'   => 'fecha',
+            'tel'          => 'tel',
+            'telefono'     => 'tel',
+            'telefono_contacto' => 'tel',
+            'email'        => 'email',
+            'correo'       => 'email',
+            'calle'        => 'calle',
+            'direccion'    => 'calle',
+            'bancaria'     => 'bancaria',
+            'cuenta_bancaria' => 'bancaria',
+            'clabe'        => 'bancaria',
+            'ciudad'       => 'ciudad',
+            'municipio'    => 'ciudad',
+            'importe'      => 'importe',
+            'monto_mensual'=> 'importe',
+            'sucursal'     => 'sucursal',
+            'banco'        => 'sucursal',
+        ];
+
+        $mappedHeader = [];
+        foreach ($headerRow as $column) {
+            $normalized = Str::of($column)->lower()->replaceMatches('/[^a-z0-9]+/i', '_')->trim('_')->__toString();
+            $mappedHeader[] = $columnMap[$normalized] ?? null;
+        }
+
+        $requiredColumns = ['ident', 'nombre', 'fecha'];
+        foreach ($requiredColumns as $required) {
+            if (!in_array($required, $mappedHeader, true)) {
+                fclose($handle);
+                throw ValidationException::withMessages([
+                    'file' => "La columna requerida '{$required}' no se encuentra en el encabezado del CSV.",
+                ]);
+            }
+        }
+
+        $rules = (new StoreProveedorRequest())->rules();
+
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
+        $errors = [];
+        $lineNumber = 1; // header
+
+        while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+            $lineNumber++;
+
+            if ($row === [null] || count(array_filter($row, fn ($value) => trim((string) ($value ?? '')) !== '')) === 0) {
+                $skipped++;
+                continue;
+            }
+
+            $payload = [];
+            foreach ($mappedHeader as $index => $field) {
+                if ($field === null) {
+                    continue;
+                }
+                $value = $row[$index] ?? null;
+                if (is_string($value)) {
+                    $value = trim($value);
+                }
+                $payload[$field] = ($value === '') ? null : $value;
+            }
+
+            // Ensure required keys exist
+            if (!array_key_exists('ident', $payload) || $payload['ident'] === null) {
+                $errors[] = [
+                    'line' => $lineNumber,
+                    'message' => 'La columna "ident" no puede estar vacía.',
+                ];
+                $skipped++;
+                continue;
+            }
+            if (!array_key_exists('nombre', $payload) || !$payload['nombre']) {
+                $errors[] = [
+                    'line' => $lineNumber,
+                    'message' => 'La columna "nombre" no puede estar vacía.',
+                ];
+                $skipped++;
+                continue;
+            }
+            if (!array_key_exists('fecha', $payload) || !$payload['fecha']) {
+                $errors[] = [
+                    'line' => $lineNumber,
+                    'message' => 'La columna "fecha" no puede estar vacía.',
+                ];
+                $skipped++;
+                continue;
+            }
+
+            // Cast and normalize values.
+            $payload['ident'] = (int) $payload['ident'];
+
+            if (isset($payload['importe']) && $payload['importe'] !== null) {
+                $importeRaw = preg_replace('/[^\d\.\-]/', '', (string) $payload['importe']);
+                $payload['importe'] = $importeRaw === '' ? null : (float) $importeRaw;
+            }
+
+            if (isset($payload['tel']) && $payload['tel'] !== null) {
+                $payload['tel'] = preg_replace('/\D+/', '', (string) $payload['tel']);
+                if ($payload['tel'] === '') {
+                    $payload['tel'] = null;
+                }
+            }
+
+            if (!empty($payload['fecha'])) {
+                $fecha = $payload['fecha'];
+                try {
+                    if (preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $fecha)) {
+                        $payload['fecha'] = Carbon::createFromFormat('d/m/Y', $fecha)->format('Y-m-d');
+                    } elseif (preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) {
+                        // already in ISO format
+                        $payload['fecha'] = $fecha;
+                    } else {
+                        $payload['fecha'] = Carbon::parse($fecha)->format('Y-m-d');
+                    }
+                } catch (\Exception $e) {
+                    $errors[] = [
+                        'line' => $lineNumber,
+                        'message' => 'Formato de fecha inválido, se esperaba YYYY-MM-DD o DD/MM/YYYY.',
+                    ];
+                    $skipped++;
+                    continue;
+                }
+            }
+
+            $validator = Validator::make($payload, $rules);
+
+            try {
+                $validated = $validator->validate();
+            } catch (ValidationException $e) {
+                $errors[] = [
+                    'line' => $lineNumber,
+                    'message' => implode(' ', $e->validator->errors()->all()),
+                ];
+                $skipped++;
+                continue;
+            }
+
+            $existing = Proveedor::where('ident', $validated['ident'])->first();
+            if (!$existing) {
+                $existing = Proveedor::whereRaw('LOWER(nombre) = ?', [Str::lower($validated['nombre'])])->first();
+            }
+
+            // Align numeric casting & nullables
+            $attributes = $validated;
+            if (array_key_exists('importe', $attributes) && $attributes['importe'] !== null) {
+                $attributes['importe'] = (float) $attributes['importe'];
+            }
+
+            if ($existing) {
+                if (!$updateExisting) {
+                    $skipped++;
+                    continue;
+                }
+                $existing->fill($attributes);
+                if ($existing->isDirty()) {
+                    $existing->save();
+                    $updated++;
+                } else {
+                    $skipped++;
+                }
+            } else {
+                Proveedor::create($attributes);
+                $created++;
+            }
+        }
+
+        fclose($handle);
+
+        return response()->json([
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'errors' => $errors,
+        ]);
     }
 }
