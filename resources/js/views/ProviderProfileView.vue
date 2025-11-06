@@ -1,10 +1,17 @@
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
 import { storeToRefs } from 'pinia';
 import { useAuthStore } from '../stores/auth';
 
 const auth = useAuthStore();
 const { provider } = storeToRefs(auth);
+
+onMounted(async () => {
+    if (!auth.provider) {
+        await auth.hydrateFromToken();
+    }
+});
 </script>
 
 <template>

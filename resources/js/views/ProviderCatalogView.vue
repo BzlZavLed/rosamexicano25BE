@@ -164,12 +164,12 @@ const totalExistencia = computed(() => catalogRows.value.reduce((acc, row) => ac
                                     <span v-else class="text-gray-400">—</span>
                                 </td>
                                 <td class="px-4 py-3 text-right text-gray-700">{{ row.existencia }}</td>
-                                <td class="px-4 py-3 text-right text-gray-700">
-                                    <span v-if="row.costo_inventario !== null">
-                                        ${{ row.costo_inventario.toFixed(2) }}
-                                    </span>
-                                    <span v-else class="text-gray-400">—</span>
-                                </td>
+<td class="px-4 py-3 text-right text-gray-700">
+    <span v-if="row.costo_inventario !== null">
+        {{ new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(row.costo_inventario) }}
+    </span>
+    <span v-else class="text-gray-400">—</span>
+</td>
                             </tr>
                         </tbody>
                     </table>

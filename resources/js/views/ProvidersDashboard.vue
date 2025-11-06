@@ -22,7 +22,7 @@ async function doLogout() { await logout(); auth.logout(); router.push({ name: '
                     <button @click="doLogout" class="border px-3 py-1 rounded">Salir</button>
                 </div>
             </div>
-            <p>Aquí verás tus productos e inventario (endpoints /proveedores/{id}/productos e /inventario).</p>
+            <p>Aquí verás tus productos e inventario</p>
         </div>
     </AppLayout>
 

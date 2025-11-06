@@ -53,14 +53,8 @@ class ReportController extends Controller
         $driver = $connection->getDriverName();
         $connection->enableQueryLog();
 
-        $dateFilter = function ($query) use ($driver, $inicioIso, $finIso, $inicioString, $finString) {
-            if ($driver === 'pgsql') {
-                $query->whereRaw("to_date(fecha, 'DD/MM/YY') BETWEEN ? AND ?", [$inicioIso, $finIso]);
-            } elseif ($driver === 'mysql') {
-                $query->whereRaw("STR_TO_DATE(fecha, '%d/%m/%y') BETWEEN ? AND ?", [$inicioIso, $finIso]);
-            } else {
-                $query->whereBetween('fecha', [$inicioString, $finString]);
-            }
+        $dateFilter = function ($query) use ($inicioIso, $finIso) {
+            $query->whereBetween('fecha', [$inicioIso, $finIso]);
         };
 
         $ventasQuery = Venta::with([
@@ -81,15 +75,7 @@ class ReportController extends Controller
             });
         }
 
-        if ($driver === 'pgsql') {
-            $ventasQuery->orderByRaw("to_date(fecha, 'DD/MM/YY')");
-        } elseif ($driver === 'mysql') {
-            $ventasQuery->orderByRaw("STR_TO_DATE(fecha, '%d/%m/%y')");
-        } else {
-            $ventasQuery->orderBy('fecha');
-        }
-
-        $ventasQuery->orderBy('idventa');
+        $ventasQuery->orderBy('fecha')->orderBy('idventa');
 
         $ventas = $ventasQuery->get();
 
@@ -471,20 +457,8 @@ class ReportController extends Controller
             return response()->json(['message' => 'from_date no puede ser mayor a to_date.'], 422);
         }
 
-        $inicioString = $inicioCarbon->format('d/m/y');
-        $finString = $finCarbon->format('d/m/y');
         $inicioIso = $inicioCarbon->toDateString();
         $finIso = $finCarbon->toDateString();
-
-        $connection = DB::connection();
-        $driver = $connection->getDriverName();
-        $connection->enableQueryLog();
-
-        $applyDateFilter = function ($builder) use ($driver, $inicioString, $finString) {
-            $builder->whereBetween('vd.fecha', [$inicioString, $finString]);
-        };
-
-        $today = Carbon::today();
 
         $rows = DB::table('ventadesg as vd')
             ->select([
@@ -519,8 +493,7 @@ class ReportController extends Controller
             $rows->where('vd.proveedor', '=', $provider->ident);
         }
 
-        $applyDateFilter($rows);
-
+        $rows->whereBetween('vd.fecha', [$inicioIso, $finIso]);
         $rows->orderBy('vd.fecha')->orderBy('vd.id');
 
         $collection = collect($rows->get());
@@ -567,25 +540,15 @@ class ReportController extends Controller
                 $lineNet = round($lineGross - $lineDiscountTotal, 2);
 
                 $fechaRaw = $row->venta_fecha ?? $row->linea_fecha;
-                $fechaDisplay = $fechaRaw;
-                $fechaIso = null;
-
-                try {
-                    if ($fechaRaw !== null && $fechaRaw !== '') {
-                        $parsed = $controller->parseDateInput($fechaRaw);
-                        $fechaDisplay = $fechaRaw;
-                        $fechaIso = $parsed->toDateString();
-                    }
-                } catch (\Throwable $e) {
-                    // keep raw values
-                }
+                $fecha = $row->venta_fecha ?? $row->linea_fecha;
+                $fechaIso = $fecha ? Carbon::parse($fecha)->toDateString() : null;
 
                 return [
                     'ventadesg_id' => (int) $row->id,
                     'idventa' => (int) $row->idventa,
                     'venta_id' => $row->venta_id ? (int) $row->venta_id : null,
-                    'fecha' => $fechaDisplay,
-                    'fecha_raw' => $fechaRaw,
+                    'fecha' => $fechaIso,
+                    'fecha_raw' => $fechaIso,
                     'fecha_iso' => $fechaIso,
                     'producto_ident' => (string) $row->idprod,
                     'producto_nombre' => $row->producto_nombre,
@@ -641,15 +604,15 @@ class ReportController extends Controller
         if ($request->boolean('download')) {
             $filename = sprintf(
                 'reporte_caja_proveedores_%s_%s.csv',
-                Str::of($inicioString)->replace('/', '-'),
-                Str::of($finString)->replace('/', '-')
+                Str::of($inicioIso)->replace('-', ''),
+                Str::of($finIso)->replace('-', '')
             );
 
-            return response()->streamDownload(function () use ($providers, $totales, $inicioString, $finString, $generalDiscountTotal) {
+            return response()->streamDownload(function () use ($providers, $totales, $inicioIso, $finIso, $generalDiscountTotal) {
                 $handle = fopen('php://output', 'w');
 
                 fputcsv($handle, ['Reporte caja por proveedor']);
-                fputcsv($handle, ['Desde', $inicioString, 'Hasta', $finString]);
+                fputcsv($handle, ['Desde', $inicioIso, 'Hasta', $finIso]);
                 fputcsv($handle, []);
                 fputcsv($handle, ['Resumen']);
                 fputcsv($handle, ['Ventas brutas', $totales['ventas_brutas']]);
@@ -743,8 +706,8 @@ class ReportController extends Controller
         }
 
         return response()->json([
-            'from_date' => $inicioString,
-            'to_date' => $finString,
+            'from_date' => $inicioIso,
+            'to_date' => $finIso,
             'resumen' => $totales,
             'proveedores' => $providers,
             'descuento_general_total' => $generalDiscountTotal,
@@ -794,15 +757,15 @@ class ReportController extends Controller
             [$fromDate, $toDate] = [$toDate, $fromDate];
         }
 
-        $fromFormatted = $fromDate->format('d/m/y');
-        $toFormatted = $toDate->format('d/m/y');
+        $fromIso = $fromDate->format('Y-m-d');
+        $toIso = $toDate->format('Y-m-d');
 
         Log::info('providerTrends: rango normalizado', [
-            'from' => $fromFormatted,
-            'to' => $toFormatted,
+            'from' => $fromIso,
+            'to' => $toIso,
         ]);
 
-        $rows = DB::table('ventadesg as vd')
+        $query = DB::table('ventadesg as vd')
             ->select([
                 'vd.idprod',
                 'vd.nombre as producto_nombre',
@@ -812,8 +775,10 @@ class ReportController extends Controller
                 'vd.cargo_tarjeta_proveedor',
                 'vd.fecha',
             ])
-            ->where('vd.proveedor', '=', $provider->ident)
-            ->whereBetween('vd.fecha', [$fromFormatted, $toFormatted])
+            ->where('vd.proveedor', '=', $provider->ident);
+
+        $rows = $query
+            ->whereBetween('vd.fecha', [$fromIso, $toIso])
             ->orderBy('vd.fecha')
             ->get();
 
@@ -825,27 +790,18 @@ class ReportController extends Controller
         $dateBuckets = [];
         $period = CarbonPeriod::create($fromDate, $toDate);
         foreach ($period as $cursor) {
-            $dateBuckets[$cursor->format('d/m/y')] = 0.0;
+            $dateBuckets[$cursor->toDateString()] = 0.0;
         }
 
         $topProducts = [];
 
         foreach ($rows as $row) {
-            try {
-                $rowDate = $this->parseDateInput($row->fecha);
-            } catch (\Throwable $e) {
-                Log::debug('providerTrends: fecha descartada', [
-                    'fecha' => $row->fecha ?? null,
-                    'error' => $e->getMessage(),
-                ]);
-                continue;
-            }
-
+            $rowDate = Carbon::parse($row->fecha);
             if ($rowDate->lt($fromDate) || $rowDate->gt($toDate)) {
                 continue;
             }
 
-            $dateKey = $rowDate->format('d/m/y');
+            $dateKey = $rowDate->toDateString();
             if (!array_key_exists($dateKey, $dateBuckets)) {
                 $dateBuckets[$dateKey] = 0.0;
             }
@@ -896,8 +852,8 @@ class ReportController extends Controller
 
         Log::info('providerTrends: salida final', [
             'range' => [
-                'start' => $fromDate->format('d/m/y'),
-                'end' => $toDate->format('d/m/y'),
+                'start' => $fromIso,
+                'end' => $toIso,
             ],
             'top_products' => $topProducts,
             'earnings' => $earnings,
@@ -905,8 +861,8 @@ class ReportController extends Controller
 
         return response()->json([
             'range' => [
-                'start' => $fromDate->format('d/m/y'),
-                'end' => $toDate->format('d/m/y'),
+                'start' => $fromIso,
+                'end' => $toIso,
             ],
             'top_products' => $topProducts,
             'earnings' => $earnings,
@@ -955,14 +911,8 @@ class ReportController extends Controller
                 }
             });
 
-        $dateFilter = function ($builder) use ($driver, $inicioIso, $finIso) {
-            if ($driver === 'pgsql') {
-                $builder->whereRaw("COALESCE(to_date(entradas.fecha, 'YYYY-MM-DD'), to_date(entradas.fecha, 'DD/MM/YYYY'), to_date(entradas.fecha, 'DD/MM/YY')) BETWEEN ? AND ?", [$inicioIso, $finIso]);
-            } elseif ($driver === 'mysql') {
-                $builder->whereRaw("COALESCE(STR_TO_DATE(entradas.fecha, '%Y-%m-%d'), STR_TO_DATE(entradas.fecha, '%d/%m/%Y'), STR_TO_DATE(entradas.fecha, '%d/%m/%y')) BETWEEN ? AND ?", [$inicioIso, $finIso]);
-            } else {
-                $builder->whereBetween('entradas.fecha', [$inicioIso, $finIso]);
-            }
+        $dateFilter = function ($builder) use ($inicioIso, $finIso) {
+            $builder->whereBetween('entradas.fecha', [$inicioIso, $finIso]);
         };
 
         if ($provider) {
@@ -971,15 +921,7 @@ class ReportController extends Controller
 
         $dateFilter($query);
 
-        if ($driver === 'pgsql') {
-            $query->orderByRaw("COALESCE(to_date(entradas.fecha, 'YYYY-MM-DD'), to_date(entradas.fecha, 'DD/MM/YYYY'), to_date(entradas.fecha, 'DD/MM/YY'))")
-                ->orderBy('entradas.id');
-        } elseif ($driver === 'mysql') {
-            $query->orderByRaw("COALESCE(STR_TO_DATE(entradas.fecha, '%Y-%m-%d'), STR_TO_DATE(entradas.fecha, '%d/%m/%Y'), STR_TO_DATE(entradas.fecha, '%d/%m/%y'))")
-                ->orderBy('entradas.id');
-        } else {
-            $query->orderBy('entradas.fecha')->orderBy('entradas.id');
-        }
+        $query->orderBy('entradas.fecha')->orderBy('entradas.id');
 
         $entradas = $query->get();
 

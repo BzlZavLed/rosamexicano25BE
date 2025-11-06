@@ -8,14 +8,6 @@ import {
     type CajaProveedorGroup,
     type ProviderTrendsResponse,
 } from '../api/reports';
-import { use } from 'echarts/core';
-import { CanvasRenderer } from 'echarts/renderers';
-import { BarChart, LineChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components';
-import VChart from 'vue-echarts';
-
-use([CanvasRenderer, BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent]);
-
 const loading = ref(false);
 const downloading = ref(false);
 const error = ref('');
@@ -78,7 +70,7 @@ const earningsOption = computed(() => {
         grid: { left: '3%', right: '4%', bottom: '5%', containLabel: true },
         xAxis: {
             type: 'category',
-            data: list.map((item) => item.date),
+            data: list.map((item) => item.date?.slice(5) ?? ''),
             axisLabel: { rotate: 30 },
         },
         yAxis: { type: 'value', name: 'Ganancia' },
@@ -92,6 +84,67 @@ const earningsOption = computed(() => {
                 areaStyle: { color: 'rgba(45,104,196,0.15)' },
             },
         ],
+    };
+});
+
+function formatCurrency(value: number | string | null | undefined): string {
+    const num = typeof value === 'string' ? Number(value) : value;
+    if (!Number.isFinite(num)) return '$0.00';
+    return Number(num).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+}
+
+const topProductsBars = computed(() => {
+    const list = trends.value?.top_products ?? [];
+    if (!list.length) return [];
+    const maxQty = Math.max(...list.map((item) => item.cantidad), 0);
+    return list.map((item) => {
+        const percentRaw = maxQty > 0 ? (item.cantidad / maxQty) * 100 : 0;
+        const percent =
+            maxQty > 0 ? Math.min(Math.max(percentRaw, 4), 100) : 0;
+        return {
+            ...item,
+            percent,
+            totalFormatted: formatCurrency(item.total ?? 0),
+        };
+    });
+});
+
+const earningsChart = computed(() => {
+    const list = trends.value?.earnings ?? [];
+    if (!list.length) return null;
+
+    const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
+    const amounts = sorted.map((item) => item.amount);
+    const max = Math.max(...amounts);
+    const min = Math.min(...amounts);
+    const range = max - min || 1;
+
+    const points = sorted.map((item, idx) => {
+        const x = sorted.length === 1 ? 0 : (idx / (sorted.length - 1)) * 100;
+        const y = range === 0 ? 50 : 100 - ((item.amount - min) / range) * 100;
+        return {
+            x,
+            y,
+            label: item.date,
+            dateDisplay: (() => {
+                const d = new Date(item.date);
+                const day = String(d.getDate()).padStart(2, '0');
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                return `${day}-${month}`;
+            })(),
+            amount: item.amount,
+        };
+    });
+
+    const polyline = points.map((p) => `${p.x},${p.y}`).join(' ');
+    const areaPoints = `0,100 ${polyline} 100,100`;
+
+    return {
+        points,
+        polyline,
+        areaPoints,
+        min,
+        max,
     };
 });
 
@@ -112,7 +165,7 @@ async function fetchReport() {
         } else {
             report.value = data;
             const total = data?.resumen?.ganancias ?? 0;
-            success.value = `Reporte del ${data.from_date} al ${data.to_date} listo. Ganancia estimada: $${total.toFixed(2)}.`;
+            success.value = `Reporte del ${fromDate} al ${toDate} listo. Ganancia estimada: $${total.toFixed(2)}.`;
         }
     } catch (err: any) {
         error.value = err?.response?.data?.message || 'No se pudo generar el reporte.';
@@ -179,11 +232,11 @@ function computeRange() {
     const endDate = new Date(selectedDate.value);
     const startDateObj = new Date(endDate);
     startDateObj.setDate(endDate.getDate() - 9);
-    const formatDate = (d: Date) =>
-        `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
+    const formatIso = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     return {
-        fromDate: formatDate(startDateObj),
-        toDate: formatDate(endDate),
+        fromDate: formatIso(startDateObj),
+        toDate: formatIso(endDate),
     };
 }
 </script>
@@ -357,17 +410,79 @@ function computeRange() {
                     No hay datos suficientes para mostrar tendencias en los últimos diez días.
                 </div>
                 <div v-else class="space-y-6">
-                    <section class="space-y-3">
+                    <section class="space-y-3" style="min-height: 320px;">
                         <h3 class="text-sm font-semibold text-gray-800">Productos más vendidos</h3>
-                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                            <VChart :option="topProductsOption" autoresize class="h-72" />
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-2">
+                            <template v-if="topProductsBars.length">
+                                <div
+                                    v-for="item in topProductsBars"
+                                    :key="item.ident"
+                                    class="space-y-1"
+                                >
+                                    <div class="flex items-center justify-between text-sm">
+                                        <span class="font-medium text-gray-800">{{ item.nombre }}</span>
+                                        <span class="text-xs text-gray-500">Cantidad: {{ item.cantidad }}</span>
+                                    </div>
+                                    <div class="h-3 rounded bg-gray-200 overflow-hidden">
+                                        <div
+                                            class="h-full rounded bg-[#E4007C]"
+                                            :style="{ width: item.percent + '%' }"
+                                        ></div>
+                                    </div>
+                                    <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                        <span>ID producto: {{ item.ident }}</span>
+                                        <span>Total: {{ item.totalFormatted }}</span>
+                                    </div>
+                                </div>
+                            </template>
+                            <p v-else class="text-sm text-gray-500">Sin datos suficientes para graficar.</p>
                         </div>
                     </section>
 
-                    <section class="space-y-3">
+                    <section class="space-y-3" style="min-height: 320px;">
                         <h3 class="text-sm font-semibold text-gray-800">Ganancia por día</h3>
-                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                            <VChart :option="earningsOption" autoresize class="h-72" />
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                            <template v-if="earningsChart">
+                                <div class="flex gap-3">
+                                    <div class="flex flex-col justify-between text-[11px] text-gray-500">
+                                        <span>{{ formatCurrency(earningsChart.max) }}</span>
+                                        <span>{{ formatCurrency((earningsChart.max + earningsChart.min) / 2) }}</span>
+                                        <span>{{ formatCurrency(earningsChart.min) }}</span>
+                                    </div>
+                                    <div class="relative flex-1 h-48">
+                                        <svg viewBox="0 0 100 100" class="absolute inset-0 w-full h-full" preserveAspectRatio="none">
+                                            <g stroke="#e5e7eb" stroke-width="0.5">
+                                                <line v-for="n in 5" :key="n" :y1="(n - 1) * 25" :x2="100" :y2="(n - 1) * 25" />
+                                            </g>
+                                            <polygon :points="earningsChart.areaPoints" fill="rgba(45, 104, 196, 0.15)" />
+                                            <polyline
+                                                :points="earningsChart.polyline"
+                                                fill="none"
+                                                stroke="#2D68C4"
+                                                stroke-width="1.5"
+                                                stroke-linejoin="round"
+                                                stroke-linecap="round"
+                                            />
+                                            <template v-for="point in earningsChart.points" :key="point.label">
+                                                <circle :cx="point.x" :cy="point.y" r="1.2" fill="#2D68C4" />
+                                            </template>
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="flex justify-between text-[11px] text-gray-500 px-2">
+                                    <span
+                                        v-for="point in earningsChart.points"
+                                        :key="point.label"
+                                        :style="{
+                                            width: `${100 / earningsChart.points.length}%`,
+                                            textAlign: 'center',
+                                        }"
+                                    >
+                                        {{ point.dateDisplay }}
+                                    </span>
+                                </div>
+                            </template>
+                            <p v-else class="text-sm text-gray-500">Sin datos suficientes para graficar.</p>
                         </div>
                     </section>
                 </div>
