@@ -12,6 +12,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Carbon\CarbonPeriod;
 
 class ReportController extends Controller
 {
@@ -376,8 +377,8 @@ class ReportController extends Controller
             ->leftJoin('producto as p', 'p.ident', '=', 'inventario.ident')
             ->leftJoin('proveedores as pr', 'pr.ident', '=', 'p.proveedorid')
             ->with([
-                'producto' => fn ($q) => $q->select('id', 'ident', 'nombre', 'precio', 'proveedorid'),
-                'producto.proveedor' => fn ($q) => $q->select('id', 'ident', 'nombre'),
+                'producto' => fn($q) => $q->select('id', 'ident', 'nombre', 'precio', 'proveedorid'),
+                'producto.proveedor' => fn($q) => $q->select('id', 'ident', 'nombre'),
             ]);
 
         if ($search !== '') {
@@ -482,6 +483,8 @@ class ReportController extends Controller
         $applyDateFilter = function ($builder) use ($driver, $inicioString, $finString) {
             $builder->whereBetween('vd.fecha', [$inicioString, $finString]);
         };
+
+        $today = Carbon::today();
 
         $rows = DB::table('ventadesg as vd')
             ->select([
@@ -625,29 +628,15 @@ class ReportController extends Controller
             ];
         })->values();
 
-        $totalLineaDescuentos = round($providers->sum(fn ($row) => $row['descuentos']), 2);
+        $totalLineaDescuentos = round($providers->sum(fn($row) => $row['descuentos']), 2);
 
         $totales = [
-            'ventas_brutas' => round($providers->sum(fn ($row) => $row['ventas_brutas']), 2),
+            'ventas_brutas' => round($providers->sum(fn($row) => $row['ventas_brutas']), 2),
             'descuentos' => $totalLineaDescuentos,
-            'cargos_tarjeta' => round($providers->sum(fn ($row) => $row['cargos_tarjeta']), 2),
+            'cargos_tarjeta' => round($providers->sum(fn($row) => $row['cargos_tarjeta']), 2),
             'descuento_general' => $generalDiscountTotal,
-            'ganancias' => round($providers->sum(fn ($row) => $row['ganancia_total']), 2),
+            'ganancias' => round($providers->sum(fn($row) => $row['ganancia_total']), 2),
         ];
-
-        Log::info('Reporte de caja por proveedor generado', [
-            'from' => $inicioString,
-            'to' => $finString,
-            'total_proveedores' => $providers->count(),
-        ]);
-
-        foreach (DB::getQueryLog() as $entry) {
-            Log::debug('Consulta de reporte caja por proveedor', [
-                'sql' => $entry['query'],
-                'bindings' => $entry['bindings'],
-                'time_ms' => $entry['time'] ?? null,
-            ]);
-        }
 
         if ($request->boolean('download')) {
             $filename = sprintf(
@@ -768,10 +757,167 @@ class ReportController extends Controller
         ]);
     }
 
+    public function providerTrends(Request $request)
+    {
+        $provider = $this->currentProvider($request);
+        if (!$provider) {
+            return response()->json(['message' => 'Solo disponible para proveedores'], 403);
+        }
+
+        $maxDays = 10;
+        $defaultEnd = Carbon::today();
+        $defaultStart = $defaultEnd->copy()->subDays($maxDays - 1);
+
+        $fromInput = $request->input('from_date');
+        $toInput = $request->input('to_date');
+
+        Log::info('providerTrends: inicio', [
+            'provider_id' => $provider->id,
+            'provider_ident' => $provider->ident,
+            'from_input' => $fromInput,
+            'to_input' => $toInput,
+        ]);
+
+        try {
+            $fromDate = $fromInput ? $this->parseDateInput($fromInput) : $defaultStart;
+            $toDate = $toInput ? $this->parseDateInput($toInput) : $defaultEnd;
+        } catch (\Throwable $e) {
+            Log::warning('providerTrends: formato de fecha inválido', [
+                'from' => $fromInput,
+                'to' => $toInput,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['message' => 'Formato de fecha inválido.'], 422);
+        }
+
+        if ($fromDate->gt($toDate)) {
+            [$fromDate, $toDate] = [$toDate, $fromDate];
+        }
+
+        $fromFormatted = $fromDate->format('d/m/y');
+        $toFormatted = $toDate->format('d/m/y');
+
+        Log::info('providerTrends: rango normalizado', [
+            'from' => $fromFormatted,
+            'to' => $toFormatted,
+        ]);
+
+        $rows = DB::table('ventadesg as vd')
+            ->select([
+                'vd.idprod',
+                'vd.nombre as producto_nombre',
+                'vd.cant',
+                'vd.total',
+                'vd.descuento_producto',
+                'vd.cargo_tarjeta_proveedor',
+                'vd.fecha',
+            ])
+            ->where('vd.proveedor', '=', $provider->ident)
+            ->whereBetween('vd.fecha', [$fromFormatted, $toFormatted])
+            ->orderBy('vd.fecha')
+            ->get();
+
+        Log::info('providerTrends: registros obtenidos', [
+            'count' => $rows->count(),
+            'rows' => $rows,
+        ]);
+
+        $dateBuckets = [];
+        $period = CarbonPeriod::create($fromDate, $toDate);
+        foreach ($period as $cursor) {
+            $dateBuckets[$cursor->format('d/m/y')] = 0.0;
+        }
+
+        $topProducts = [];
+
+        foreach ($rows as $row) {
+            try {
+                $rowDate = $this->parseDateInput($row->fecha);
+            } catch (\Throwable $e) {
+                Log::debug('providerTrends: fecha descartada', [
+                    'fecha' => $row->fecha ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+                continue;
+            }
+
+            if ($rowDate->lt($fromDate) || $rowDate->gt($toDate)) {
+                continue;
+            }
+
+            $dateKey = $rowDate->format('d/m/y');
+            if (!array_key_exists($dateKey, $dateBuckets)) {
+                $dateBuckets[$dateKey] = 0.0;
+            }
+
+            $cantidad = (int) ($row->cant ?? 0);
+            $bruto = (float) ($row->total ?? 0);
+            $descuento = (float) ($row->descuento_producto ?? 0);
+            $cargoTarjeta = (float) ($row->cargo_tarjeta_proveedor ?? 0);
+            $neto = $bruto - $descuento - $cargoTarjeta;
+            $dateBuckets[$dateKey] += $neto;
+
+            $productoKey = (string) ($row->idprod ?? 'sin_ident');
+            if (!isset($topProducts[$productoKey])) {
+                $topProducts[$productoKey] = [
+                    'ident' => $productoKey,
+                    'nombre' => $row->producto_nombre ?: "Producto {$productoKey}",
+                    'cantidad' => 0,
+                    'total' => 0.0,
+                ];
+            }
+
+            $topProducts[$productoKey]['cantidad'] += $cantidad;
+            $topProducts[$productoKey]['total'] += $bruto;
+        }
+
+        Log::info('providerTrends: acumulados', [
+            'date_buckets' => $dateBuckets,
+            'top_products_raw' => $topProducts,
+        ]);
+
+        $topProducts = collect($topProducts)
+            ->sortByDesc(fn ($item) => $item['cantidad'])
+            ->take(5)
+            ->map(function ($item) {
+                $item['total'] = round((float) $item['total'], 2);
+                return $item;
+            })
+            ->values()
+            ->all();
+
+        $earnings = [];
+        foreach ($dateBuckets as $date => $amount) {
+            $earnings[] = [
+                'date' => $date,
+                'amount' => round($amount, 2),
+            ];
+        }
+
+        Log::info('providerTrends: salida final', [
+            'range' => [
+                'start' => $fromDate->format('d/m/y'),
+                'end' => $toDate->format('d/m/y'),
+            ],
+            'top_products' => $topProducts,
+            'earnings' => $earnings,
+        ]);
+
+        return response()->json([
+            'range' => [
+                'start' => $fromDate->format('d/m/y'),
+                'end' => $toDate->format('d/m/y'),
+            ],
+            'top_products' => $topProducts,
+            'earnings' => $earnings,
+        ]);
+    }
+
     public function entradas(Request $request)
     {
         $fechaInicio = $request->input('from_date');
         $fechaFin = $request->input('to_date');
+        $provider = $this->currentProvider($request);
 
         if (!$fechaInicio) {
             return response()->json(['message' => 'Debe proporcionar al menos from_date.'], 422);
@@ -939,10 +1085,21 @@ class ReportController extends Controller
     {
         $value = trim($value);
 
-        try {
-            return Carbon::createFromFormat('d/m/y', $value, config('app.timezone'));
-        } catch (\Throwable $e) {
-            // fall-through
+        $formats = [
+            'd/m/y',
+            'd/m/Y',
+            'Y-m-d',
+            'Y/m/d',
+            'm/d/Y',
+            'm-d-Y',
+        ];
+
+        foreach ($formats as $format) {
+            try {
+                return Carbon::createFromFormat($format, $value, config('app.timezone'));
+            } catch (\Throwable $e) {
+                continue;
+            }
         }
 
         return Carbon::parse($value);

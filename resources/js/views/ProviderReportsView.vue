@@ -1,7 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
-import { getCajaProveedoresReport, type CajaProveedoresResponse, type CajaProveedorGroup } from '../api/reports';
+import {
+    getCajaProveedoresReport,
+    getProviderTrends,
+    type CajaProveedoresResponse,
+    type CajaProveedorGroup,
+    type ProviderTrendsResponse,
+} from '../api/reports';
+import { use } from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
+import { BarChart, LineChart } from 'echarts/charts';
+import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components';
+import VChart from 'vue-echarts';
+
+use([CanvasRenderer, BarChart, LineChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent]);
 
 const loading = ref(false);
 const downloading = ref(false);
@@ -9,6 +22,12 @@ const error = ref('');
 const success = ref('');
 const report = ref<CajaProveedoresResponse | null>(null);
 const selectedDate = ref(new Date().toISOString().slice(0, 10));
+const activeTab = ref<'summary' | 'trends'>('summary');
+
+const trends = ref<ProviderTrendsResponse | null>(null);
+const trendsLoading = ref(false);
+const trendsError = ref('');
+const trendsLoaded = ref(false);
 
 const providerGroup = computed<CajaProveedorGroup | null>(() => {
     const groups: CajaProveedorGroup[] = report.value?.proveedores ?? [];
@@ -30,6 +49,52 @@ const providerTotals = computed(() => {
     return { cantidad, precioPromedio, total, descuentos, ganancia };
 });
 
+const topProductsOption = computed(() => {
+    const list = trends.value?.top_products ?? [];
+    return {
+        tooltip: { trigger: 'axis' },
+        grid: { left: '3%', right: '4%', bottom: '5%', containLabel: true },
+        xAxis: {
+            type: 'category',
+            data: list.map((item) => item.nombre),
+            axisLabel: { rotate: 30 },
+        },
+        yAxis: { type: 'value', name: 'Cantidad vendida' },
+        series: [
+            {
+                type: 'bar',
+                data: list.map((item) => item.cantidad),
+                itemStyle: { color: '#E4007C' },
+                barMaxWidth: 40,
+            },
+        ],
+    };
+});
+
+const earningsOption = computed(() => {
+    const list = trends.value?.earnings ?? [];
+    return {
+        tooltip: { trigger: 'axis' },
+        grid: { left: '3%', right: '4%', bottom: '5%', containLabel: true },
+        xAxis: {
+            type: 'category',
+            data: list.map((item) => item.date),
+            axisLabel: { rotate: 30 },
+        },
+        yAxis: { type: 'value', name: 'Ganancia' },
+        series: [
+            {
+                name: 'Ganancia',
+                type: 'line',
+                smooth: true,
+                data: list.map((item) => item.amount),
+                itemStyle: { color: '#2D68C4' },
+                areaStyle: { color: 'rgba(45,104,196,0.15)' },
+            },
+        ],
+    };
+});
+
 async function fetchReport() {
     if (!selectedDate.value) return;
     loading.value = true;
@@ -37,16 +102,17 @@ async function fetchReport() {
     success.value = '';
     report.value = null;
     try {
+        const { fromDate, toDate } = computeRange();
         const data = await getCajaProveedoresReport({
-            from_date: selectedDate.value,
-            to_date: selectedDate.value,
+            from_date: fromDate,
+            to_date: toDate,
         });
         if (data instanceof Blob) {
             success.value = 'El reporte se generó correctamente. Revisa tu carpeta de descargas.';
         } else {
             report.value = data;
             const total = data?.resumen?.ganancias ?? 0;
-            success.value = `Reporte del ${data.from_date} listo. Ganancia estimada: $${total.toFixed(2)}.`;
+            success.value = `Reporte del ${data.from_date} al ${data.to_date} listo. Ganancia estimada: $${total.toFixed(2)}.`;
         }
     } catch (err: any) {
         error.value = err?.response?.data?.message || 'No se pudo generar el reporte.';
@@ -60,15 +126,16 @@ async function downloadReport() {
     downloading.value = true;
     error.value = '';
     try {
+        const { fromDate, toDate } = computeRange();
         const blob = await getCajaProveedoresReport({
-            from_date: selectedDate.value,
-            to_date: selectedDate.value,
+            from_date: fromDate,
+            to_date: toDate,
             download: true,
         });
         if (!(blob instanceof Blob)) {
             throw new Error('El servidor no devolvió un archivo para descargar.');
         }
-        const filename = `reporte_caja_proveedor_${selectedDate.value}.csv`;
+        const filename = `reporte_caja_proveedor_${fromDate}_al_${toDate}.csv`;
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -86,6 +153,39 @@ async function downloadReport() {
 }
 
 onMounted(fetchReport);
+
+async function fetchTrends() {
+    const { fromDate, toDate } = computeRange();
+    trendsLoading.value = true;
+    trendsError.value = '';
+    try {
+        trends.value = await getProviderTrends({ from_date: fromDate, to_date: toDate });
+        trendsLoaded.value = true;
+    } catch (err: any) {
+        trendsError.value = err?.response?.data?.message || err?.message || 'No se pudieron cargar las tendencias.';
+    } finally {
+        trendsLoading.value = false;
+    }
+}
+
+function selectTab(tab: 'summary' | 'trends') {
+    activeTab.value = tab;
+    if (tab === 'trends' && !trendsLoaded.value) {
+        fetchTrends();
+    }
+}
+
+function computeRange() {
+    const endDate = new Date(selectedDate.value);
+    const startDateObj = new Date(endDate);
+    startDateObj.setDate(endDate.getDate() - 9);
+    const formatDate = (d: Date) =>
+        `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
+    return {
+        fromDate: formatDate(startDateObj),
+        toDate: formatDate(endDate),
+    };
+}
 </script>
 
 <template>
@@ -97,9 +197,26 @@ onMounted(fetchReport);
                     Genera un resumen rápido de ventas por proveedor para la fecha actual. Para periodos más amplios
                     contacta al equipo administrativo.
                 </p>
-            </header>
 
-            <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+            </header>
+            <div class="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
+                <button type="button"
+                    class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-[#E4007C]/80"
+                    :class="activeTab === 'summary' ? 'text-[#E4007C] border-[#E4007C] bg-white shadow-sm' : ''"
+                    @click="selectTab('summary')">
+                    Resumen diario
+                </button>
+                <button type="button"
+                    class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-[#E4007C]/80"
+                    :class="activeTab === 'trends' ? 'text-[#E4007C] border-[#E4007C] bg-white shadow-sm' : ''"
+                    @click="selectTab('trends')">
+                    Tendencias (10 días)
+                </button>
+            </div>
+
+
+            <div v-if="activeTab === 'summary'"
+                class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
                 <div>
                     <h2 class="text-base font-semibold text-gray-800">Reporte diario</h2>
                     <p class="text-sm text-gray-500">
@@ -110,26 +227,17 @@ onMounted(fetchReport);
                 <div class="flex flex-wrap items-center gap-3">
                     <label class="text-sm text-gray-700 flex items-center gap-2">
                         <span>Fecha</span>
-                        <input
-                            type="date"
-                            v-model="selectedDate"
-                            class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]"
-                        >
+                        <input type="date" v-model="selectedDate"
+                            class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]">
                     </label>
-                    <button
-                        type="button"
+                    <button type="button"
                         class="rounded-lg bg-[#E4007C] px-4 py-2 text-sm font-medium text-white hover:bg-[#cc006f] disabled:opacity-60 disabled:cursor-not-allowed"
-                        :disabled="loading"
-                        @click="fetchReport"
-                    >
+                        :disabled="loading" @click="fetchReport">
                         {{ loading ? 'Generando…' : 'Generar resumen' }}
                     </button>
-                    <button
-                        type="button"
+                    <button type="button"
                         class="rounded-lg border border-[#E4007C] px-4 py-2 text-sm font-medium text-[#E4007C] hover:bg-[#E4007C]/10 disabled:opacity-60 disabled:cursor-not-allowed"
-                        :disabled="downloading"
-                        @click="downloadReport"
-                    >
+                        :disabled="downloading" @click="downloadReport">
                         {{ downloading ? 'Descargando…' : 'Descargar CSV' }}
                     </button>
                     <p class="text-xs text-gray-500">
@@ -140,7 +248,8 @@ onMounted(fetchReport);
                 <p v-if="error" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                     {{ error }}
                 </p>
-                <p v-if="success" class="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                <p v-if="success"
+                    class="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
                     {{ success }}
                 </p>
 
@@ -187,14 +296,18 @@ onMounted(fetchReport);
                                             No se registraron ventas para la fecha seleccionada.
                                         </td>
                                     </tr>
-                                    <tr v-for="item in providerGroup.items" :key="item.ventadesg_id" class="hover:bg-gray-50">
+                                    <tr v-for="item in providerGroup.items" :key="item.ventadesg_id"
+                                        class="hover:bg-gray-50">
                                         <td class="px-4 py-2 text-gray-600">{{ item.fecha }}</td>
                                         <td class="px-4 py-2 font-medium text-gray-900">{{ item.producto_nombre }}</td>
                                         <td class="px-4 py-2 text-right text-gray-700">{{ item.cantidad }}</td>
-                                        <td class="px-4 py-2 text-right text-gray-700">${{ item.precio_unitario.toFixed(2) }}</td>
+                                        <td class="px-4 py-2 text-right text-gray-700">${{
+                                            item.precio_unitario.toFixed(2) }}</td>
                                         <td class="px-4 py-2 text-right text-gray-700">${{ item.total.toFixed(2) }}</td>
-                                        <td class="px-4 py-2 text-right text-gray-700">${{ item.descuento_total.toFixed(2) }}</td>
-                                        <td class="px-4 py-2 text-right text-gray-700">${{ item.ganancia.toFixed(2) }}</td>
+                                        <td class="px-4 py-2 text-right text-gray-700">${{
+                                            item.descuento_total.toFixed(2) }}</td>
+                                        <td class="px-4 py-2 text-right text-gray-700">${{ item.ganancia.toFixed(2) }}
+                                        </td>
                                     </tr>
                                 </tbody>
                                 <tfoot v-if="providerTotals">
@@ -223,10 +336,48 @@ onMounted(fetchReport);
                 </div>
             </div>
 
+            <div v-else class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+                <div>
+                    <h2 class="text-base font-semibold text-gray-800">Tendencias de los últimos 10 días</h2>
+                    <p class="text-sm text-gray-500">
+                        Visualiza los productos más vendidos y la evolución de tus ganancias durante los últimos diez
+                        días.
+                    </p>
+                </div>
+
+                <div v-if="trendsError"
+                    class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {{ trendsError }}
+                </div>
+                <div v-else-if="trendsLoading" class="text-sm text-gray-500 px-3 py-2">
+                    Cargando tendencias…
+                </div>
+                <div v-else-if="trends && trends.top_products.length === 0 && trends.earnings.every((e) => e.amount === 0)"
+                    class="text-sm text-gray-500 px-3 py-2">
+                    No hay datos suficientes para mostrar tendencias en los últimos diez días.
+                </div>
+                <div v-else class="space-y-6">
+                    <section class="space-y-3">
+                        <h3 class="text-sm font-semibold text-gray-800">Productos más vendidos</h3>
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                            <VChart :option="topProductsOption" autoresize class="h-72" />
+                        </div>
+                    </section>
+
+                    <section class="space-y-3">
+                        <h3 class="text-sm font-semibold text-gray-800">Ganancia por día</h3>
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                            <VChart :option="earningsOption" autoresize class="h-72" />
+                        </div>
+                    </section>
+                </div>
+            </div>
+
             <div class="rounded-xl border border-dashed border-gray-300 bg-white/60 p-5 text-sm text-gray-600">
                 <p class="font-medium text-gray-800 mb-1">¿Necesitas reportes personalizados?</p>
                 <p>
-                    El panel de administrador puede descargar reportes detallados con filtros de fechas y descargar a CSV.
+                    El panel de administrador puede descargar reportes detallados con filtros de fechas y descargar a
+                    CSV.
                     Solicita el periodo que necesitas para recibirlos en tu correo.
                 </p>
             </div>

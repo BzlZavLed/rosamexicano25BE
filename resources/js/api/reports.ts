@@ -191,6 +191,24 @@ export interface CajaProveedoresResponse {
     proveedores: CajaProveedorGroup[];
 }
 
+export interface ProviderTrendProduct {
+    ident: string;
+    nombre: string;
+    cantidad: number;
+    total: number;
+}
+
+export interface ProviderTrendEarning {
+    date: string;
+    amount: number;
+}
+
+export interface ProviderTrendsResponse {
+    range: { start: string; end: string };
+    top_products: ProviderTrendProduct[];
+    earnings: ProviderTrendEarning[];
+}
+
 // --- Productos API call (standardized to `http`) ---
 export async function getProductosReport(opts: {
     q?: string;
@@ -244,5 +262,10 @@ export async function getCajaProveedoresReport(params: { from_date: string; to_d
         return data as Blob;
     }
     const { data } = await http.get<CajaProveedoresResponse>('/reports/caja-proveedores', { params: query });
+    return data;
+}
+
+export async function getProviderTrends(params: { from_date: string; to_date: string }) {
+    const { data } = await http.get<ProviderTrendsResponse>('/reports/provider/trends', { params });
     return data;
 }

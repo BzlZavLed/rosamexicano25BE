@@ -68,6 +68,7 @@ Route::middleware('auth:sanctum')->group(function () {
         ->whereNumber('proveedor');
     Route::get('/proveedores/{proveedor}/inventario', [InventarioController::class, 'byProveedor'])
         ->whereNumber('proveedor');
+    Route::get('/reports/provider/trends', [ReportController::class, 'providerTrends']);
 
     // Productos
     Route::get('/productos/bulk-template', [ProductosController::class, 'bulkTemplate']);
