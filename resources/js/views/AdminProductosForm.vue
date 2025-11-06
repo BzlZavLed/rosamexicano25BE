@@ -262,6 +262,7 @@ async function loadList() {
     try {
         const params = buildListParams();
         const resp = await listProductos(params);
+        console.log('Productos response:', resp);
         const rows = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : []);
         productos.value = rows;
 
@@ -759,7 +760,7 @@ onMounted(async () => {
                                     <span v-if="p.proveedor?.nombre">{{ p.proveedor.nombre }}</span>
                                     <span v-else class="text-rose-600 font-medium">No proveedor definido</span>
                                 </td>
-                                <td class="px-3 py-2 text-right">{{ p.existencia ?? 0 }}</td>
+                                <td class="px-3 py-2 text-right">{{ p.inventario?.existencia ?? 0 }}</td>
                                 <td class="px-3 py-2 text-right">{{ displayMoney(p.precio) }}</td>
                             </tr>
                             <tr v-if="!loading && productos.length === 0">
@@ -825,7 +826,7 @@ onMounted(async () => {
                     </button>
                 </div>
                 <input type="file" accept=".csv"
-                    @change="e => csvFile = (e.target as HTMLInputElement).files?.[0] || null"
+                    @change="(e: { target: HTMLInputElement; }) => csvFile = (e.target as HTMLInputElement).files?.[0] || null"
                     class="block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border file:border-gray-300 file:bg-white file:px-3 file:py-2 file:text-sm hover:file:bg-gray-50" />
                 <button :disabled="!csvFile || saving" @click="uploadCSV"
                     class="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
 import {
     getProductosReport,
@@ -499,6 +499,7 @@ const prodPerPage = ref<number>(25);
 const prodItems = ref<ProductoRow[]>([]);
 const prodPagination = ref<ProductosPagination | null>(null);
 const prodError = ref<string | null>(null);
+let prodSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function loadProductos() {
     prodLoading.value = true;
@@ -677,6 +678,18 @@ watch(
         }
     }
 );
+
+watch(prodQ, () => {
+    if (prodSearchTimer) clearTimeout(prodSearchTimer);
+    prodSearchTimer = setTimeout(() => {
+        prodPage.value = 1;
+        if (selected.value === 'productos') loadProductos();
+    }, 300);
+});
+
+onBeforeUnmount(() => {
+    if (prodSearchTimer) clearTimeout(prodSearchTimer);
+});
 
 
 
@@ -904,10 +917,7 @@ watch(
                                     </select>
                                 </div>
 
-                                <button class="border rounded px-4 py-2" @click="prodSubmitSearch"
-                                    :disabled="prodLoading">
-                                    Buscar
-                                </button>
+                            
                             </div>
 
                             <!-- Alerts/States -->

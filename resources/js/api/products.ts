@@ -11,6 +11,9 @@ export type Producto = {
     proveedorid: number;
     fecha?: string;              // 'YYYY-MM-DD'
     existencia?: number | null;
+    inventario: {
+        existencia: number | null;
+    } | null;
 };
 
 export type Proveedor = { ident: number; nombre: string };
