@@ -41,51 +41,6 @@ const providerTotals = computed(() => {
     return { cantidad, precioPromedio, total, descuentos, ganancia };
 });
 
-const topProductsOption = computed(() => {
-    const list = trends.value?.top_products ?? [];
-    return {
-        tooltip: { trigger: 'axis' },
-        grid: { left: '3%', right: '4%', bottom: '5%', containLabel: true },
-        xAxis: {
-            type: 'category',
-            data: list.map((item) => item.nombre),
-            axisLabel: { rotate: 30 },
-        },
-        yAxis: { type: 'value', name: 'Cantidad vendida' },
-        series: [
-            {
-                type: 'bar',
-                data: list.map((item) => item.cantidad),
-                itemStyle: { color: '#E4007C' },
-                barMaxWidth: 40,
-            },
-        ],
-    };
-});
-
-const earningsOption = computed(() => {
-    const list = trends.value?.earnings ?? [];
-    return {
-        tooltip: { trigger: 'axis' },
-        grid: { left: '3%', right: '4%', bottom: '5%', containLabel: true },
-        xAxis: {
-            type: 'category',
-            data: list.map((item) => item.date?.slice(5) ?? ''),
-            axisLabel: { rotate: 30 },
-        },
-        yAxis: { type: 'value', name: 'Ganancia' },
-        series: [
-            {
-                name: 'Ganancia',
-                type: 'line',
-                smooth: true,
-                data: list.map((item) => item.amount),
-                itemStyle: { color: '#2D68C4' },
-                areaStyle: { color: 'rgba(45,104,196,0.15)' },
-            },
-        ],
-    };
-});
 
 function formatCurrency(value: number | string | null | undefined): string {
     const num = typeof value === 'string' ? Number(value) : value;
