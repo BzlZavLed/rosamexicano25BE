@@ -666,6 +666,7 @@ async function doSearch() {
     try {
         const isBarcode = /^\d+$/.test(query.value.trim());
         const data = await findProduct(isBarcode ? { barcode: Number(query.value) } : { search: query.value, per_page: 20 });
+        console.log('Search results:', data);
         results.value = data;
         SHOW_RESULTS.value = true;
     } catch (e: any) {
