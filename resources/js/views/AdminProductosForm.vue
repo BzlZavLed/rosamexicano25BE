@@ -371,6 +371,13 @@ async function remove() {
 const csvFile = ref<File | null>(null);
 const downloadingTemplate = ref(false);
 const downloadingCSV = ref(false);
+
+function onCsvFileChange(event: Event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    csvFile.value = target.files?.[0] ?? null;
+}
+
 async function uploadCSV() {
     if (!csvFile.value) return;
     saving.value = true; error.value = ''; message.value = '';
@@ -826,7 +833,7 @@ onMounted(async () => {
                     </button>
                 </div>
                 <input type="file" accept=".csv"
-                    @change="(e: { target: HTMLInputElement; }) => csvFile = (e.target as HTMLInputElement).files?.[0] || null"
+                    @change="onCsvFileChange"
                     class="block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border file:border-gray-300 file:bg-white file:px-3 file:py-2 file:text-sm hover:file:bg-gray-50" />
                 <button :disabled="!csvFile || saving" @click="uploadCSV"
                     class="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60">
