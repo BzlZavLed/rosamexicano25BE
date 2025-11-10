@@ -59,3 +59,25 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Project Setup Notes
+
+### Mailgun transport dependency
+
+If you see `Class "Symfony\\Component\\Mailer\\Bridge\\Mailgun\\Transport\\MailgunTransportFactory" not found` while sending mail (for example when mailing `benjaminzavala74@gmail.com`), install the Mailgun mailer bridge and HTTP client:
+
+```bash
+composer require symfony/mailgun-mailer symfony/http-client
+# or via NPM script:
+npm run composer:http-client && composer require symfony/mailgun-mailer
+```
+
+### Clean configuration cache
+
+After installing the dependencies or changing mail configuration, clear and rebuild Laravel's cached config to pick up the new settings:
+
+```bash
+php artisan config:clear
+php artisan cache:clear
+php artisan config:cache
+```

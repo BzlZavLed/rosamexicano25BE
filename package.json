@@ -8,7 +8,10 @@
         "build": "vue-tsc -b && vite build",
         "preview": "vite preview",
         "serve": "vite",
-        "start": "vite"
+        "start": "vite",
+        "composer:mailgun": "composer require symfony/http-client symfony/mailgun-mailer",
+        "artisan:config-refresh": "php artisan config:clear && php artisan cache:clear && php artisan config:cache",
+        "postinstall": "npm run composer:mailgun && npm run artisan:config-refresh"
     },
     "dependencies": {
         "axios": "^1.12.2",
