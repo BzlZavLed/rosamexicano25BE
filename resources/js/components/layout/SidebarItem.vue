@@ -14,10 +14,8 @@ function go() { router.push(props.to); emit('navigate'); }
 
 <template>
     <a href="#" @click.prevent="go" :class="[
-        'group flex items-center gap-3 rounded-xl px-3 py-2 text-sm',
-        isActive()
-            ? 'bg-[#E4007C] text-white'
-            : 'text-gray-700 hover:bg-gray-100'
+        'group flex items-center gap-3 rounded-xl px-3 py-2 text-sm sidebar-item',
+        isActive() ? 'sidebar-item--active' : 'sidebar-item--inactive'
     ]">
         <slot />
         <span class="truncate">{{ label }}</span>

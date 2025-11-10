@@ -1,0 +1,13 @@
+:root[data-theme='azul-pacifico'] {
+    --brand-primary: #0050b3;
+    --brand-secondary: #7fbcff;
+    --brand-surface: #f5f8ff;
+    --brand-surface-subtle: #e6f0ff;
+    --brand-muted: #0a2742;
+    --sidebar-active-bg: var(--brand-primary);
+    --sidebar-active-text: #eff6ff;
+    --sidebar-active-shadow: 0 8px 28px rgba(0, 80, 179, 0.35);
+    --sidebar-hover-bg: #d8e7ff;
+    --sidebar-hover-text: #0f172a;
+    --sidebar-text-color: #0a2742;
+}

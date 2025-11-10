@@ -1,0 +1,13 @@
+:root[data-theme='rosa-mexicano'] {
+    --brand-primary: #e4007c;
+    --brand-secondary: #ffb4d3;
+    --brand-surface: #ffffff;
+    --brand-surface-subtle: #fff5f9;
+    --brand-muted: #a21caf;
+    --sidebar-active-bg: var(--brand-primary);
+    --sidebar-active-text: #ffffff;
+    --sidebar-active-shadow: 0 8px 28px rgba(228, 0, 124, 0.35);
+    --sidebar-hover-bg: #ffe1f0;
+    --sidebar-hover-text: #9d174d;
+    --sidebar-text-color: #3f0a2c;
+}

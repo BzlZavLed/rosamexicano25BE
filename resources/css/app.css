@@ -11,3 +11,51 @@
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
 }
+
+:root {
+    --brand-primary: #e4007c;
+    --brand-secondary: #f48642;
+    --brand-surface: #ffffff;
+    --brand-surface-subtle: #f9fafb;
+    --brand-muted: #6b7280;
+    --sidebar-active-bg: var(--brand-primary);
+    --sidebar-active-text: #ffffff;
+    --sidebar-active-shadow: 0 8px 20px rgba(228, 0, 124, 0.18);
+    --sidebar-hover-bg: #f3f4f6;
+    --sidebar-hover-text: #111827;
+    --sidebar-text-color: #374151;
+}
+
+body {
+    background-color: var(--brand-surface);
+    color: #111827;
+    font-family: var(--font-sans);
+}
+
+nav {
+    color: inherit;
+}
+
+.sidebar-item {
+    color: var(--sidebar-text-color);
+    transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sidebar-item svg {
+    color: inherit;
+}
+
+.sidebar-item--active {
+    background-color: var(--sidebar-active-bg);
+    color: var(--sidebar-active-text);
+    box-shadow: var(--sidebar-active-shadow);
+}
+
+.sidebar-item--inactive {
+    color: var(--sidebar-text-color);
+}
+
+.sidebar-item--inactive:hover {
+    background-color: var(--sidebar-hover-bg);
+    color: var(--sidebar-hover-text);
+}

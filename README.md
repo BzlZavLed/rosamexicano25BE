@@ -69,7 +69,7 @@ If you see `Class "Symfony\\Component\\Mailer\\Bridge\\Mailgun\\Transport\\Mailg
 ```bash
 composer require symfony/mailgun-mailer symfony/http-client
 # or via NPM script:
-npm run composer:http-client && composer require symfony/mailgun-mailer
+npm run composer:mailgun
 ```
 
 ### Clean configuration cache
@@ -81,3 +81,13 @@ php artisan config:clear
 php artisan cache:clear
 php artisan config:cache
 ```
+
+### Multi-tenant branding
+
+Front-end themes are selected at build time through the `VITE_APP_THEME` key in `.env`. Available themes out of the box:
+
+- `rosa-mexicano` (default)
+- `verde-lima`
+- `azul-pacifico`
+
+Set the desired key in `.env` / `.env.example`, run `npm install` or `npm run build`, and the corresponding stylesheet will be bundled automatically. To add a new theme, drop a CSS file inside `resources/css/themes` (the filename becomes the key) and define the CSS variables you want to override—`resources/js/theme.ts` will pick it up automatically.

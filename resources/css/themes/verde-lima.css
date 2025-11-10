@@ -1,0 +1,13 @@
+:root[data-theme='verde-lima'] {
+    --brand-primary: #008f4f;
+    --brand-secondary: #d1f5a5;
+    --brand-surface: #f6fff5;
+    --brand-surface-subtle: #ebffeb;
+    --brand-muted: #0f5132;
+    --sidebar-active-bg: var(--brand-primary);
+    --sidebar-active-text: #f0fff4;
+    --sidebar-active-shadow: 0 8px 28px rgba(0, 143, 79, 0.35);
+    --sidebar-hover-bg: #c8f7d4;
+    --sidebar-hover-text: #064e3b;
+    --sidebar-text-color: #0f5132;
+}
