@@ -91,3 +91,14 @@ Front-end themes are selected at build time through the `VITE_APP_THEME` key in 
 - `azul-pacifico`
 
 Set the desired key in `.env` / `.env.example`, run `npm install` or `npm run build`, and the corresponding stylesheet will be bundled automatically. To add a new theme, drop a CSS file inside `resources/css/themes` (the filename becomes the key) and define the CSS variables you want to override—`resources/js/theme.ts` will pick it up automatically.
+
+### Sharing the API across multiple domains
+
+If you deploy the same codebase under different domains (for example, `https://rosamexicano.on-forge.com` and `https://depekesypekas.on-forge.com`) and need both SPAs to call a single backend, make sure to:
+
+1. Add every SPA origin to `CORS_ALLOWED_ORIGINS` in `.env` so `config/cors.php` can allow the cross-origin POST requests.
+2. Mirror the same hostnames inside `SANCTUM_STATEFUL_DOMAINS` to keep cookie-based auth working when requests include `withCredentials`.
+3. Point each front-end’s `VITE_API_BASE_URL` to the domain hosting the API (e.g. `https://rosamexicano.on-forge.com/api`).
+4. After changing these settings, clear cached config: `php artisan config:clear && php artisan config:cache`.
+
+With those values set, the API routes defined in `routes/api.php` will accept POSTs (and any other verbs) from all configured domains over HTTPS.
