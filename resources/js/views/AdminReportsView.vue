@@ -7,8 +7,13 @@ import {
     getCajaReport,
     getEntradasReport,
     getCajaProveedoresReport,
+    getEgresosCajaReport,
+    getMensualidadReport,
     type CajaReportResponse,
     type CajaReportVenta,
+    type EgresosCajaReportResponse,
+    type MensualidadReportResponse,
+    type MensualidadReportItem,
     type ProductosReportResponse,
     type ProductoRow,
     type ProductosPagination,
@@ -30,18 +35,33 @@ type ReportType =
     | 'productos'
     | 'inventario'
     | 'entradas'
-    | 'caja-condensado';
+    | 'caja-condensado'
+    | 'caja-egresos'
+    | 'mensualidad';
+
+type MensualidadSortableColumn =
+    | 'proveedor'
+    | 'concepto'
+    | 'importe'
+    | 'cantidad_pago'
+    | 'restante'
+    | 'status'
+    | 'fecha_cobro'
+    | 'payment_date';
 
 const options: Array<{ value: ReportType; label: string }> = [
     { value: 'caja', label: 'Caja' },
     { value: 'productos', label: 'Productos' },
     { value: 'inventario', label: 'Inventario' },
     { value: 'entradas', label: 'Entradas' },
-    { value: 'caja-condensado', label: 'Caja condensado' }
+    { value: 'caja-condensado', label: 'Caja condensado' },
+    { value: 'caja-egresos', label: 'Egresos de caja' },
+    { value: 'mensualidad', label: 'Mensualidad' },
 ];
 
 type InventarioSort = 'producto' | 'existencia' | 'proveedor';
 type SortDirection = 'asc' | 'desc';
+type MensualidadStatusFilter = 'todos' | 'pendiente' | 'pagado';
 
 const inventarioSortOptions: Array<{ value: InventarioSort; label: string }> = [
     { value: 'producto', label: 'Producto' },
@@ -73,6 +93,24 @@ const cajaCondensadoError = ref('');
 const cajaCondensadoData = ref<CajaProveedoresResponse | null>(null);
 const expandedProveedores = ref<Set<number>>(new Set());
 
+const egresosLoading = ref(false);
+const egresosError = ref('');
+const egresosData = ref<EgresosCajaReportResponse | null>(null);
+
+const mensualidadMonth = ref('');
+const mensualidadStatus = ref<MensualidadStatusFilter>('todos');
+const mensualidadLoading = ref(false);
+const mensualidadError = ref('');
+const mensualidadData = ref<MensualidadReportResponse | null>(null);
+const mensualidadSearch = ref('');
+const mensualidadSort = ref<MensualidadSortableColumn>('proveedor');
+const mensualidadSortDirection = ref<SortDirection>('asc');
+
+mensualidadMonth.value = new Date().toISOString().slice(0, 7);
+const mensualidadStatusMap: Record<string, string> = {
+    pending: 'Pendiente',
+    paid: 'Pagado',
+};
 
 const reportHeader = computed(() => {
     switch (selected.value) {
@@ -86,6 +124,8 @@ const reportHeader = computed(() => {
             return 'Reporte de entradas';
         case 'caja-condensado':
             return 'Reporte de caja condensado';
+        case 'caja-egresos':
+            return 'Reporte de egresos de caja';
         default:
             return 'Reporte';
     }
@@ -264,6 +304,150 @@ async function downloadCajaCondensado() {
     }
 }
 
+async function fetchEgresosCajaReport() {
+    if (selected.value !== 'caja-egresos') return;
+    egresosError.value = '';
+
+    if (!rangeStart.value) {
+        egresosError.value = 'Selecciona la fecha inicial.';
+        return;
+    }
+
+    const from = normalizeDateParam(rangeStart.value);
+    const to = rangeEnd.value ? normalizeDateParam(rangeEnd.value) : from;
+
+    egresosLoading.value = true;
+    try {
+        const response = await getEgresosCajaReport({ from_date: from, to_date: to });
+        if (response instanceof Blob) {
+            egresosError.value = 'La respuesta del reporte no es válida.';
+            egresosData.value = null;
+        } else {
+            egresosData.value = response;
+        }
+    } catch (err: any) {
+        egresosError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el reporte de egresos.';
+        egresosData.value = null;
+    } finally {
+        egresosLoading.value = false;
+    }
+}
+
+async function downloadEgresosCajaReport() {
+    if (selected.value !== 'caja-egresos') return;
+    egresosError.value = '';
+
+    if (!rangeStart.value) {
+        egresosError.value = 'Selecciona la fecha inicial.';
+        return;
+    }
+
+    const from = normalizeDateParam(rangeStart.value);
+    const to = rangeEnd.value ? normalizeDateParam(rangeEnd.value) : from;
+
+    try {
+        const blob = await getEgresosCajaReport({ from_date: from, to_date: to, download: true });
+        if (!(blob instanceof Blob)) {
+            egresosError.value = 'La respuesta del reporte no es válida para descarga.';
+            return;
+        }
+        const filename = `reporte-egresos-caja-${from}--${to}.csv`;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    } catch (err: any) {
+        egresosError.value = err?.response?.data?.message || err?.message || 'No se pudo descargar el reporte.';
+    }
+}
+
+function normalizeMesCobro(value: string): string | null {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}$/.test(trimmed)) {
+        return trimmed;
+    }
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function fetchMensualidadReport(download = false) {
+    if (selected.value !== 'mensualidad') return;
+    mensualidadError.value = '';
+
+    if (!mensualidadMonth.value) {
+        mensualidadError.value = 'Selecciona el mes de cobro.';
+        return;
+    }
+
+    const mes = normalizeMesCobro(mensualidadMonth.value);
+    if (!mes) {
+        mensualidadError.value = 'Mes inválido, usa el formato YYYY-MM.';
+        return;
+    }
+
+    const statusParam =
+        mensualidadStatus.value === 'todos'
+            ? 'all'
+            : mensualidadStatus.value === 'pendiente'
+                ? 'pending'
+                : 'paid';
+
+    if (download) {
+        try {
+            const blob = await getMensualidadReport({
+                mes_cobro: mes,
+                status: statusParam,
+                download: true,
+            });
+            if (!(blob instanceof Blob)) {
+                mensualidadError.value = 'La respuesta del reporte no es válida para descarga.';
+                return;
+            }
+            const filename = `reporte-mensualidad-${mes}.csv`;
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        } catch (err: any) {
+            mensualidadError.value =
+                err?.response?.data?.message || err?.message || 'No se pudo descargar el reporte de mensualidad.';
+        }
+        return;
+    }
+
+    mensualidadLoading.value = true;
+    try {
+        const data = await getMensualidadReport({
+            mes_cobro: mes,
+            status: statusParam,
+        });
+        console.log(data);
+        if (data instanceof Blob) {
+            mensualidadError.value = 'La respuesta del reporte no es válida.';
+            mensualidadData.value = null;
+        } else {
+            mensualidadData.value = data;
+            mensualidadSearch.value = '';
+        }
+    } catch (err: any) {
+        mensualidadError.value =
+            err?.response?.data?.message || err?.message || 'No se pudo cargar el reporte de mensualidad.';
+        mensualidadData.value = null;
+    } finally {
+        mensualidadLoading.value = false;
+    }
+}
+
 function toggleProveedor(proveedorId: number) {
     const current = new Set(expandedProveedores.value);
     if (current.has(proveedorId)) current.delete(proveedorId);
@@ -410,6 +594,104 @@ const cajaCondensadoResumen = computed(() => {
     };
 });
 
+const egresosSummary = computed(() => {
+    if (!egresosData.value) return null;
+    const resumen = egresosData.value.summary ?? {
+        ingresos_total: 0,
+        egresos_total: 0,
+        saldo: 0,
+    };
+    return {
+        movimientos: egresosData.value.egresos?.length ?? 0,
+        ingresos: Number(resumen.ingresos_total ?? 0),
+        egresos: Number(resumen.egresos_total ?? 0),
+        saldo: Number(resumen.saldo ?? 0),
+    };
+});
+
+const mensualidadSummary = computed(() => {
+    if (!mensualidadData.value) return null;
+    const resumen = mensualidadData.value.summary;
+    return {
+        totalCobros: Number(resumen?.total_cobros ?? 0),
+        importeTotal: Number(resumen?.importe_total ?? 0),
+        pagadoTotal: Number(resumen?.pagado_total ?? 0),
+        restanteTotal: Number(resumen?.restante_total ?? 0),
+        pagosCompletos: Number(resumen?.pagos_completos ?? 0),
+    };
+});
+
+const filteredMensualidadItems = computed<MensualidadReportItem[]>(() => {
+    if (!mensualidadData.value) return [];
+    const search = mensualidadSearch.value.trim().toLowerCase();
+    if (!search) return mensualidadData.value.items ?? [];
+    return mensualidadData.value.items.filter((item) => {
+        const proveedor = item.proveedor?.nombre?.toLowerCase() ?? '';
+        const concepto = item.concepto?.toLowerCase?.() ?? '';
+        return proveedor.includes(search) || concepto.includes(search);
+    });
+});
+
+const sortedMensualidadItems = computed(() => {
+    const items = [...filteredMensualidadItems.value];
+    const column = mensualidadSort.value;
+    const direction = mensualidadSortDirection.value === 'asc' ? 1 : -1;
+    items.sort((a, b) => {
+        const getValue = (item: MensualidadReportItem) => {
+            switch (column) {
+                case 'proveedor':
+                    return (item.proveedor?.nombre ?? '').toLowerCase();
+                case 'concepto':
+                    return (item.concepto ?? '').toLowerCase();
+                case 'importe':
+                    return Number(item.importe ?? 0);
+                case 'cantidad_pago':
+                    return Number(item.cantidad_pago ?? 0);
+                case 'restante':
+                    return Number(item.restante ?? 0);
+                case 'status':
+                    return (item.status ?? '').toLowerCase();
+                case 'fecha_cobro':
+                    return item.fecha_cobro ?? '';
+                case 'payment_date':
+                    return item.payment_date ?? '';
+                default:
+                    return '';
+            }
+        };
+
+        const valueA = getValue(a);
+        const valueB = getValue(b);
+
+        if (typeof valueA === 'number' && typeof valueB === 'number') {
+            return (valueA - valueB) * direction;
+        }
+
+        return valueA > valueB ? direction : valueA < valueB ? -direction : 0;
+    });
+    return items;
+});
+
+function displayMensualidadStatus(status?: string | null) {
+    if (!status) return '--';
+    return mensualidadStatusMap[status] ?? status;
+}
+
+function toggleMensualidadSort(column: MensualidadSortableColumn) {
+    if (mensualidadSort.value === column) {
+        mensualidadSortDirection.value =
+            mensualidadSortDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        mensualidadSort.value = column;
+        mensualidadSortDirection.value = 'asc';
+    }
+}
+
+function mensualidadSortIcon(column: MensualidadSortableColumn) {
+    if (mensualidadSort.value !== column) return '';
+    return mensualidadSortDirection.value === 'asc' ? '▲' : '▼';
+}
+
 function providerItemTotals(proveedor: CajaProveedorGroup) {
     return proveedor.items.reduce(
         (acc, item) => {
@@ -494,7 +776,9 @@ const groupedVisibleRows = computed(() => {
 const prodLoading = ref(false);
 const prodQ = ref<string>('');
 const prodPage = ref<number>(1);
-const prodPerPage = ref<number>(25);
+const prodPerPage = ref<number>(50);
+const prodSort = ref<'nombre' | 'proveedor' | 'precio'>('nombre');
+const prodDirection = ref<'asc' | 'desc'>('asc');
 
 const prodItems = ref<ProductoRow[]>([]);
 const prodPagination = ref<ProductosPagination | null>(null);
@@ -509,6 +793,8 @@ async function loadProductos() {
             q: prodQ.value.trim() || undefined,
             page: prodPage.value,
             per_page: prodPerPage.value,
+            sort: prodSort.value,
+            direction: prodDirection.value,
         });
         prodItems.value = res.data;
         prodPagination.value = res.pagination;
@@ -522,6 +808,16 @@ async function loadProductos() {
 function prodSubmitSearch() {
     prodPage.value = 1;
     loadProductos();
+}
+
+function toggleProdSort(column: 'nombre' | 'precio' | 'proveedor') {
+    if (prodSort.value === column) {
+        prodDirection.value = prodDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        prodSort.value = column;
+        prodDirection.value = 'asc';
+    }
+    prodPage.value = 1;
 }
 
 function prodGoFirst() {
@@ -557,7 +853,7 @@ function prodGoLast() {
 const inventarioLoading = ref(false);
 const inventarioQ = ref<string>('');
 const inventarioPage = ref<number>(1);
-const inventarioPerPage = ref<number>(25);
+const inventarioPerPage = ref<number>(50);
 const inventarioSort = ref<InventarioSort>('producto');
 const inventarioDirection = ref<SortDirection>('asc');
 
@@ -588,6 +884,16 @@ async function loadInventario() {
 function inventarioSubmitSearch() {
     inventarioPage.value = 1;
     loadInventario();
+}
+
+function toggleInventarioSort(column: InventarioSort) {
+    if (inventarioSort.value === column) {
+        inventarioDirection.value = inventarioDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        inventarioSort.value = column;
+        inventarioDirection.value = 'asc';
+    }
+    inventarioPage.value = 1;
 }
 
 function inventarioGoFirst() {
@@ -641,6 +947,18 @@ watch(
                 fetchCajaCondensadoReport();
             }
         }
+        if (val === 'caja-egresos') {
+            egresosError.value = '';
+            if (!egresosData.value && rangeStart.value) {
+                fetchEgresosCajaReport();
+            }
+        }
+        if (val === 'mensualidad') {
+            mensualidadError.value = '';
+            if (!mensualidadData.value && mensualidadMonth.value) {
+                fetchMensualidadReport();
+            }
+        }
     },
     { immediate: false }
 );
@@ -650,6 +968,13 @@ watch(prodPerPage, () => {
     prodPage.value = 1;
     if (selected.value === 'productos') loadProductos();
 });
+watch(
+    () => [prodSort.value, prodDirection.value],
+    () => {
+        prodPage.value = 1;
+        if (selected.value === 'productos') loadProductos();
+    }
+);
 watch(inventarioPerPage, () => {
     inventarioPage.value = 1;
     if (selected.value === 'inventario') loadInventario();
@@ -675,6 +1000,20 @@ watch(
             cajaCondensadoData.value = null;
             cajaCondensadoError.value = '';
             expandedProveedores.value = new Set();
+        }
+        if (selected.value === 'caja-egresos') {
+            egresosData.value = null;
+            egresosError.value = '';
+        }
+    }
+);
+
+watch(
+    () => [mensualidadMonth.value, mensualidadStatus.value],
+    () => {
+        if (selected.value === 'mensualidad') {
+            mensualidadData.value = null;
+            mensualidadError.value = '';
         }
     }
 );
@@ -719,16 +1058,30 @@ onBeforeUnmount(() => {
                             </option>
                         </select>
                     </label>
-                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado'].includes(selected)">
+                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado','caja-egresos'].includes(selected)">
                         <span class="font-medium text-gray-700">Fecha inicial</span>
                         <input v-model="rangeStart" type="date"
                             class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                     </label>
-                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado'].includes(selected)">
+                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado','caja-egresos'].includes(selected)">
                         <span class="font-medium text-gray-700">Fecha final <span
                                 class="text-xs text-gray-400">(opcional)</span></span>
                         <input v-model="rangeEnd" type="date"
                             class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                    </label>
+                    <label class="flex flex-col text-sm text-gray-600" v-if="selected === 'mensualidad'">
+                        <span class="font-medium text-gray-700">Mes de cobro</span>
+                        <input v-model="mensualidadMonth" type="month"
+                            class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                    </label>
+                    <label class="flex flex-col text-sm text-gray-600" v-if="selected === 'mensualidad'">
+                        <span class="font-medium text-gray-700">Estado</span>
+                        <select v-model="mensualidadStatus"
+                            class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900">
+                            <option value="todos">Todos</option>
+                            <option value="pendiente">Pendiente</option>
+                            <option value="pagado">Pagado</option>
+                        </select>
                     </label>
                 </div>
 
@@ -895,6 +1248,262 @@ onBeforeUnmount(() => {
                             </div>
                         </div>
                     </template>
+                    <template v-else-if="selected === 'caja-egresos'">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                                :disabled="egresosLoading" @click="fetchEgresosCajaReport()">
+                                <span v-if="egresosLoading">Consultando…</span>
+                                <span v-else>Consultar reporte</span>
+                            </button>
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                :disabled="egresosLoading" @click="downloadEgresosCajaReport()">
+                                Descargar CSV
+                            </button>
+                        </div>
+                        <p v-if="egresosError"
+                            class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            {{ egresosError }}
+                        </p>
+                        <div v-else class="mt-4 space-y-4">
+                            <div v-if="egresosLoading" class="text-xs text-gray-500">Cargando datos…</div>
+                            <div v-else-if="egresosData" class="space-y-4">
+                                <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+                                    <div>
+                                        Periodo:
+                                        <span class="font-semibold text-gray-900">{{ egresosData.from_date }}</span>
+                                        –
+                                        <span class="font-semibold text-gray-900">{{ egresosData.to_date }}</span>
+                                    </div>
+                                    <div v-if="egresosSummary"
+                                        class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 sm:grid-cols-4">
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ egresosSummary.movimientos }}</span>
+                                            <span>Movimientos</span>
+                                        </div>
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ formatCurrency(egresosSummary.ingresos) }}</span>
+                                            <span>Ingresos</span>
+                                        </div>
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ formatCurrency(egresosSummary.egresos) }}</span>
+                                            <span>Egresos</span>
+                                        </div>
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ formatCurrency(egresosSummary.saldo) }}</span>
+                                            <span>Saldo</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p class="text-[11px] text-gray-500">
+                                    *Ingresos corresponde a la suma de todas las ventas (ie = 1) dentro del periodo seleccionado.
+                                </p>
+
+                                <div :class="tableClasses.wrapper">
+                                    <table :class="tableClasses.table">
+                                        <thead :class="tableClasses.head">
+                                            <tr>
+                                                <th class="px-3 py-2">Venta ID</th>
+                                                <th class="px-3 py-2">Fecha</th>
+                                                <th class="px-3 py-2">Método</th>
+                                                <th class="px-3 py-2">Vendedor</th>
+                                                <th class="px-3 py-2">Concepto</th>
+                                                <th class="px-3 py-2 text-right">Monto</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody :class="tableClasses.body">
+                                            <tr v-if="egresosData.egresos.length === 0">
+                                                <td class="px-3 py-6 text-center text-gray-500" colspan="6">
+                                                    No hay movimientos con ie = 0 para el periodo seleccionado.
+                                                </td>
+                                            </tr>
+                                            <tr v-for="mov in egresosData.egresos" :key="mov.idventa" :class="tableClasses.row">
+                                                <td class="px-3 py-2 font-semibold text-gray-900">{{ mov.idventa }}</td>
+                                                <td class="px-3 py-2">{{ mov.fecha }}</td>
+                                                <td class="px-3 py-2 capitalize">{{ mov.metodo }}</td>
+                                                <td class="px-3 py-2">{{ mov.vendedor }}</td>
+                                                <td class="px-3 py-2">{{ mov.concepto }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(mov.totalventa) }}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <p v-else class="text-xs text-gray-500">Consulta el reporte para ver los movimientos.</p>
+                        </div>
+                    </template>
+                    <template v-else-if="selected === 'mensualidad'">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                                :disabled="mensualidadLoading" @click="fetchMensualidadReport()">
+                                <span v-if="mensualidadLoading">Consultando…</span>
+                                <span v-else>Consultar reporte</span>
+                            </button>
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                :disabled="mensualidadLoading" @click="fetchMensualidadReport(true)">
+                                Descargar CSV
+                            </button>
+                        </div>
+                        <p v-if="mensualidadError"
+                            class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            {{ mensualidadError }}
+                        </p>
+                        <div v-else class="mt-4 space-y-4">
+                            <div v-if="mensualidadLoading" class="text-xs text-gray-500">Cargando datos…</div>
+                            <div v-else-if="mensualidadData" class="space-y-4">
+                                <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+                                    <div>
+                                        Mes:
+                                        <span class="font-semibold text-gray-900">{{ mensualidadData.mes_cobro }}</span>
+                                    </div>
+                                    <div v-if="mensualidadSummary"
+                                        class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 sm:grid-cols-4">
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ mensualidadSummary.totalCobros }}</span>
+                                            <span>Cobros</span>
+                                        </div>
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ formatCurrency(mensualidadSummary.importeTotal) }}</span>
+                                            <span>Importe total</span>
+                                        </div>
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ formatCurrency(mensualidadSummary.pagadoTotal) }}</span>
+                                            <span>Pagado</span>
+                                        </div>
+                                        <div>
+                                            <span class="block font-semibold text-gray-900">{{ formatCurrency(mensualidadSummary.restanteTotal) }}</span>
+                                            <span>Restante</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p class="text-[11px] text-gray-500">
+                                    *Pagos completos registrados: {{ mensualidadSummary?.pagosCompletos ?? 0 }}.
+                                </p>
+
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <p class="text-xs text-gray-500">
+                                        Registros:
+                                        <span class="font-semibold text-gray-900">{{ filteredMensualidadItems.length }}</span>
+                                    </p>
+                                    <input v-model="mensualidadSearch" type="search"
+                                        placeholder="Buscar por proveedor o concepto…"
+                                        class="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                                </div>
+
+                                <div :class="tableClasses.wrapper">
+                                    <table :class="tableClasses.table">
+                                        <thead :class="tableClasses.head">
+                                            <tr>
+                                                <th class="px-3 py-2">
+                                                    <button type="button" class="flex items-center gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('proveedor')">
+                                                        Proveedor
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('proveedor') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2">
+                                                    <button type="button" class="flex items-center gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('concepto')">
+                                                        Concepto
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('concepto') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2 text-right">
+                                                    <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('importe')">
+                                                        Importe
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('importe') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2 text-right">
+                                                    <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('cantidad_pago')">
+                                                        Pagado
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('cantidad_pago') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2 text-right">
+                                                    <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('restante')">
+                                                        Restante
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('restante') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2">
+                                                    <button type="button" class="flex items-center gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('status')">
+                                                        Estado
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('status') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2">
+                                                    <button type="button" class="flex items-center gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('fecha_cobro')">
+                                                        Fecha cobro
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('fecha_cobro') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2">
+                                                    <button type="button" class="flex items-center gap-1 font-semibold"
+                                                        @click="toggleMensualidadSort('payment_date')">
+                                                        Fecha pago
+                                                        <span class="text-[10px]">{{ mensualidadSortIcon('payment_date') }}</span>
+                                                    </button>
+                                                </th>
+                                                <th class="px-3 py-2">Cobro PDF</th>
+                                                <th class="px-3 py-2">Recibo PDF</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody :class="tableClasses.body">
+                                            <tr v-if="filteredMensualidadItems.length === 0">
+                                                <td class="px-3 py-6 text-center text-gray-500" colspan="10">
+                                                    No hay registros de mensualidad para los criterios seleccionados.
+                                                </td>
+                                            </tr>
+                                            <tr v-for="item in sortedMensualidadItems" :key="item.id" :class="tableClasses.row">
+                                                <td class="px-3 py-2">
+                                                    <div class="font-semibold text-gray-900">{{ item.proveedor?.nombre ?? 'Sin proveedor' }}</div>
+                                                    <div class="text-[11px] text-gray-500">{{ item.proveedor?.email ?? 'Sin correo' }}</div>
+                                                </td>
+                                                <td class="px-3 py-2">
+                                                    <div class="text-gray-900">{{ item.concepto }}</div>
+                                                    <p v-if="item.nota" class="text-[11px] text-gray-500">{{ item.nota }}</p>
+                                                </td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(item.importe) }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(item.cantidad_pago) }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(item.restante) }}</td>
+                                                <td class="px-3 py-2">
+                                                    <span :class="item.pago_completo ? 'text-emerald-600 font-semibold' : 'text-gray-800'">
+                                                        {{ displayMensualidadStatus(item.status) }}
+                                                    </span>
+                                                </td>
+                                                <td class="px-3 py-2">{{ item.fecha_cobro ?? '--' }}</td>
+                                                <td class="px-3 py-2">{{ item.payment_date ?? '--' }}</td>
+                                                <td class="px-3 py-2">
+                                                    <a v-if="item.cobro_path" :href="item.cobro_path" target="_blank" rel="noopener"
+                                                        class="text-xs text-gray-900 underline">
+                                                        Ver cobro
+                                                    </a>
+                                                    <span v-else class="text-xs text-gray-500">--</span>
+                                                </td>
+                                                <td class="px-3 py-2">
+                                                    <a v-if="item.receipt_path" :href="item.receipt_path" target="_blank" rel="noopener"
+                                                        class="text-xs text-gray-900 underline">
+                                                        Ver recibo
+                                                    </a>
+                                                    <span v-else class="text-xs text-gray-500">--</span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <p v-else class="text-xs text-gray-500">Consulta el reporte para ver los cobros del mes seleccionado.</p>
+                        </div>
+                    </template>
                     <template v-else-if="selected === 'productos'">
                         <div class="space-y-4">
                             <p class="font-medium text-gray-900">{{ reportHeader }}</p>
@@ -937,9 +1546,24 @@ onBeforeUnmount(() => {
                                             <tr>
                                                 <th class="px-3 py-2">ID</th>
                                                 <th class="px-3 py-2">Ident</th>
-                                                <th class="px-3 py-2">Nombre</th>
-                                                <th class="px-3 py-2 text-right">Precio</th>
-                                                <th class="px-3 py-2">Proveedor</th>
+                                                <th class="px-3 py-2 cursor-pointer select-none" @click="toggleProdSort('nombre')">
+                                                    Nombre
+                                                    <span class="ml-1" v-if="prodSort === 'nombre'">
+                                                        {{ prodDirection === 'asc' ? '▲' : '▼' }}
+                                                    </span>
+                                                </th>
+                                                <th class="px-3 py-2 text-right cursor-pointer select-none" @click="toggleProdSort('precio')">
+                                                    Precio
+                                                    <span class="ml-1" v-if="prodSort === 'precio'">
+                                                        {{ prodDirection === 'asc' ? '▲' : '▼' }}
+                                                    </span>
+                                                </th>
+                                                <th class="px-3 py-2 cursor-pointer select-none" @click="toggleProdSort('proveedor')">
+                                                    Proveedor
+                                                    <span class="ml-1" v-if="prodSort === 'proveedor'">
+                                                        {{ prodDirection === 'asc' ? '▲' : '▼' }}
+                                                    </span>
+                                                </th>
                                             </tr>
                                         </thead>
 
@@ -1449,11 +2073,35 @@ onBeforeUnmount(() => {
                                             <tr>
                                                 <th class="px-3 py-2">Inventario ID</th>
                                                 <th class="px-3 py-2">Ident</th>
-                                                <th class="px-3 py-2">Producto</th>
+                                                <th
+                                                    class="px-3 py-2 cursor-pointer select-none"
+                                                    @click="toggleInventarioSort('producto')"
+                                                >
+                                                    Producto
+                                                    <span v-if="inventarioSort === 'producto'" class="ml-1">
+                                                        {{ inventarioDirection === 'asc' ? '▲' : '▼' }}
+                                                    </span>
+                                                </th>
                                                 <th class="px-3 py-2 text-right">Precio</th>
-                                                <th class="px-3 py-2 text-right">Existencia</th>
+                                                <th
+                                                    class="px-3 py-2 text-right cursor-pointer select-none"
+                                                    @click="toggleInventarioSort('existencia')"
+                                                >
+                                                    Existencia
+                                                    <span v-if="inventarioSort === 'existencia'" class="ml-1">
+                                                        {{ inventarioDirection === 'asc' ? '▲' : '▼' }}
+                                                    </span>
+                                                </th>
                                                 <th class="px-3 py-2 text-right">Costo total</th>
-                                                <th class="px-3 py-2">Proveedor</th>
+                                                <th
+                                                    class="px-3 py-2 cursor-pointer select-none"
+                                                    @click="toggleInventarioSort('proveedor')"
+                                                >
+                                                    Proveedor
+                                                    <span v-if="inventarioSort === 'proveedor'" class="ml-1">
+                                                        {{ inventarioDirection === 'asc' ? '▲' : '▼' }}
+                                                    </span>
+                                                </th>
                                             </tr>
                                         </thead>
                                         <tbody :class="tableClasses.body">

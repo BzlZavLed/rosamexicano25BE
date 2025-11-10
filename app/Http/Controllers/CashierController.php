@@ -30,13 +30,64 @@ class CashierController extends Controller
 
     private function todayStr(): string
     {
-        return date('d/m/y');
-    } // 22/10/25
+        return Carbon::now()->format('Y-m-d');
+    } // 2025-10-22
+
+    private function normalizeFecha(?string $value): string
+    {
+        $value = $value ? trim($value) : '';
+        if ($value === '') {
+            return $this->todayStr();
+        }
+
+        $formats = ['Y-m-d', 'd/m/y', 'd/m/Y', 'Y/m/d', 'm/d/Y', 'm-d-Y'];
+        foreach ($formats as $format) {
+            try {
+                return Carbon::createFromFormat($format, $value)->format('Y-m-d');
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        return Carbon::parse($value)->format('Y-m-d');
+    }
+
+    private function legacyFecha(string $fechaIso): ?string
+    {
+        try {
+            return Carbon::createFromFormat('Y-m-d', $fechaIso)->format('d/m/y');
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    private function cajaByFechaQuery(string $fechaIso)
+    {
+        $legacy = $this->legacyFecha($fechaIso);
+
+        return EstadoCaja::query()->where(function ($query) use ($fechaIso, $legacy) {
+            $query->where('fecha', $fechaIso);
+            if ($legacy && $legacy !== $fechaIso) {
+                $query->orWhere('fecha', $legacy);
+            }
+        });
+    }
+
+    private function applyVentaFechaFilter($query, string $fechaIso)
+    {
+        $legacy = $this->legacyFecha($fechaIso);
+        $query->where(function ($q) use ($fechaIso, $legacy) {
+            $q->where('fecha', $fechaIso);
+            if ($legacy && $legacy !== $fechaIso) {
+                $q->orWhere('fecha', $legacy);
+            }
+        });
+    }
 
     public function status()
     {
         $fecha = $this->todayStr();
-        $row = EstadoCaja::where('fecha', $fecha)->orderByDesc('id')->first();
+        $row = $this->cajaByFechaQuery($fecha)->orderByDesc('id')->first();
 
         return response()->json([
             'open' => $row && (int) $row->estado === 1,
@@ -48,11 +99,11 @@ class CashierController extends Controller
     {
         Log::info('OPEN CAJA payload', $request->all());
 
-        // d/m/y from request or today
-        $fecha = $request->input('fecha') ?: $this->todayStr();
+        // normalize to Y-m-d, accept legacy formats
+        $fecha = $this->normalizeFecha($request->input('fecha'));
 
         // Only one open per day
-        $already = EstadoCaja::where('fecha', $fecha)->where('estado', 1)->exists();
+        $already = $this->cajaByFechaQuery($fecha)->where('estado', 1)->exists();
         if ($already) {
             return response()->json(['message' => 'La caja ya está abierta'], 422);
         }
@@ -60,7 +111,7 @@ class CashierController extends Controller
             ? (float) $request->input('saldoinicial')
             : (float) $request->input('saldo');  // fallback
         $row = EstadoCaja::create([
-            'fecha' => $fecha,                            // varchar(10)
+            'fecha' => $fecha,                            // store as ISO
             'estado' => 1,                                 // 1 = abierta
             'saldoinicial' =>$opening,   // <-- IMPORTANT: map saldo -> saldoinicial
             'saldofinal' => 0.0,                               // not known yet
@@ -74,16 +125,17 @@ class CashierController extends Controller
 
     public function close(CajaCloseRequest $request)
     {
-        $fecha = $request->input('fecha') ?: $this->todayStr();
+        $fecha = $this->normalizeFecha($request->input('fecha'));
 
-        $row = EstadoCaja::where('fecha', $fecha)->where('estado', 1)->orderByDesc('id')->first();
+        $row = $this->cajaByFechaQuery($fecha)->where('estado', 1)->orderByDesc('id')->first();
         if (!$row) {
             return response()->json(['message' => 'No hay caja abierta para la fecha indicada'], 409);
         }
 
         // Sum only CASH sales for that date from legacy `ventas` table
-        $cashTotal = (float) DB::table('ventas')
-            ->where('fecha', $fecha)
+        $cashQuery = DB::table('ventas');
+        $this->applyVentaFechaFilter($cashQuery, $fecha);
+        $cashTotal = (float) $cashQuery
             ->where('metodo', 'cash')
             ->sum('totalventa');
 

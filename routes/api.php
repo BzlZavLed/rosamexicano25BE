@@ -99,6 +99,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Reports
     Route::get('/reports/caja', [ReportController::class, 'caja']);
+    Route::get('/reports/egresos-caja', [ReportController::class, 'egresosCaja']);
+    Route::get('/reports/mensualidad', [ReportController::class, 'mensualidad']);
     Route::get('/reports/productos', [ReportController::class, 'productos']);
     Route::get('/reports/inventario', [ReportController::class, 'inventario']);
     Route::get('/reports/entradas', [ReportController::class, 'entradas']);

@@ -7,6 +7,7 @@ use App\Models\Producto;
 use App\Models\Inventario;
 use App\Models\Entrada;
 use App\Models\Proveedor;
+use App\Models\Mensualidad;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -276,6 +277,220 @@ class ReportController extends Controller
         ]);
     }
 
+    public function egresosCaja(Request $request)
+    {
+        $fechaInicio = $request->input('from_date');
+        $fechaFin = $request->input('to_date');
+
+        if (!$fechaInicio) {
+            return response()->json(['message' => 'Debe proporcionar al menos from_date.'], 422);
+        }
+
+        try {
+            $inicioCarbon = $this->parseDateInput($fechaInicio);
+            $finCarbon = $fechaFin ? $this->parseDateInput($fechaFin) : $inicioCarbon;
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Formato de fecha inválido.'], 422);
+        }
+
+        if ($inicioCarbon->gt($finCarbon)) {
+            return response()->json(['message' => 'from_date no puede ser mayor a to_date.'], 422);
+        }
+
+        $inicioString = $inicioCarbon->format('d/m/y');
+        $finString = $finCarbon->format('d/m/y');
+        $inicioIso = $inicioCarbon->toDateString();
+        $finIso = $finCarbon->toDateString();
+
+        $baseQuery = Venta::query()
+            ->whereBetween('fecha', [$inicioIso, $finIso]);
+
+        $egresosQuery = (clone $baseQuery)->where('ie', 0)->orderBy('fecha')->orderBy('idventa');
+
+        $egresos = $egresosQuery->get();
+        $egresosTotal = (float) $egresos->sum(function (Venta $venta) {
+            return (float) $venta->totalventa;
+        });
+
+        $ingresosTotal = (float) (clone $baseQuery)
+            ->where('ie', 1)
+            ->sum('totalventa');
+
+        $saldo = round($ingresosTotal - $egresosTotal, 2);
+
+        $mapped = $egresos->map(function (Venta $venta) {
+            return [
+                'idventa' => $venta->idventa,
+                'fecha' => $venta->fecha,
+                'metodo' => $venta->metodo,
+                'concepto' => $venta->concepto,
+                'totalventa' => (float) $venta->totalventa,
+                'vendedor' => $venta->vendedor,
+            ];
+        })->values();
+
+        if ($request->boolean('download')) {
+            $filename = sprintf(
+                'reporte_egresos_caja_%s_%s.csv',
+                Str::of($inicioString)->replace('/', '-'),
+                Str::of($finString)->replace('/', '-')
+            );
+
+            return response()->streamDownload(function () use ($mapped) {
+                $handle = fopen('php://output', 'w');
+                fputcsv($handle, ['idventa', 'fecha', 'metodo', 'vendedor', 'concepto', 'monto']);
+
+                foreach ($mapped as $row) {
+                    fputcsv($handle, [
+                        $row['idventa'],
+                        $row['fecha'],
+                        $row['metodo'],
+                        $row['vendedor'],
+                        $row['concepto'],
+                        $row['totalventa'],
+                    ]);
+                }
+
+                fclose($handle);
+            }, $filename, [
+                'Content-Type' => 'text/csv',
+            ]);
+        }
+
+        return response()->json([
+            'from_date' => $inicioString,
+            'to_date' => $finString,
+            'egresos' => $mapped,
+            'summary' => [
+                'ingresos_total' => round($ingresosTotal, 2),
+                'egresos_total' => round($egresosTotal, 2),
+                'saldo' => $saldo,
+            ],
+        ]);
+    }
+
+    public function mensualidad(Request $request)
+    {
+        $mesCobro = $request->input('mes_cobro');
+        $status = $request->input('status');
+        $proveedorId = $request->input('proveedor_id');
+
+        if (!$mesCobro) {
+            return response()->json(['message' => 'Debe proporcionar mes_cobro (formato YYYY-MM).'], 422);
+        }
+
+        try {
+            $month = Carbon::createFromFormat('Y-m', $mesCobro);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Formato de mes inválido, use YYYY-MM.'], 422);
+        }
+
+        $mesCobroNormalized = $month->format('Y-m');
+
+        $query = Mensualidad::query()
+            ->with(['proveedor:id,nombre,email'])
+            ->where('mes_cobro', $mesCobroNormalized);
+
+        if ($proveedorId) {
+            $query->where('proveedor_id', $proveedorId);
+        }
+
+        if ($status && $status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        $mensualidades = $query->orderBy('fecha')->orderBy('id')->get();
+
+        $mapped = $mensualidades->map(function (Mensualidad $mensualidad) {
+            $fechaCobro = optional($mensualidad->fecha)->toDateString();
+            $paymentDate = optional($mensualidad->payment_date)->toDateString();
+
+            return [
+                'id' => (int) $mensualidad->id,
+                'proveedor' => [
+                    'id' => $mensualidad->proveedor->id ?? $mensualidad->proveedor_id,
+                    'nombre' => $mensualidad->proveedor->nombre ?? $mensualidad->nombre,
+                    'email' => $mensualidad->proveedor->email ?? null,
+                ],
+                'concepto' => $mensualidad->concepto,
+                'nota' => $mensualidad->nota,
+                'mes_cobro' => $mensualidad->mes_cobro,
+                'fecha_cobro' => $fechaCobro,
+                'importe' => (float) $mensualidad->importe,
+                'cantidad_pago' => (float) $mensualidad->cantidad_pago,
+                'restante' => (float) $mensualidad->restante,
+                'pago_completo' => (bool) $mensualidad->pago_completo,
+                'status' => $mensualidad->status,
+                'payment_date' => $paymentDate,
+                'receipt_path' => $mensualidad->receipt_path,
+                'cobro_path' => $mensualidad->cobro_path,
+            ];
+        })->values();
+
+        $summary = [
+            'total_cobros' => $mensualidades->count(),
+            'importe_total' => round((float) $mensualidades->sum('importe'), 2),
+            'pagado_total' => round((float) $mensualidades->sum('cantidad_pago'), 2),
+            'restante_total' => round((float) $mensualidades->sum('restante'), 2),
+            'pagos_completos' => $mensualidades->where('pago_completo', true)->count(),
+        ];
+
+        if ($request->boolean('download')) {
+            $filename = sprintf('reporte_mensualidad_%s.csv', Str::of($mesCobroNormalized)->replace('-', '_'));
+            return response()->streamDownload(function () use ($mapped) {
+                $handle = fopen('php://output', 'w');
+                fputcsv($handle, [
+                    'id',
+                    'proveedor_nombre',
+                    'proveedor_email',
+                    'mes_cobro',
+                    'fecha_cobro',
+                    'concepto',
+                    'importe',
+                    'cantidad_pago',
+                    'restante',
+                    'pago_completo',
+                    'status',
+                    'payment_date',
+                    'cobro_path',
+                    'receipt_path',
+                ]);
+
+                foreach ($mapped as $row) {
+                    fputcsv($handle, [
+                        $row['id'],
+                        $row['proveedor']['nombre'] ?? null,
+                        $row['proveedor']['email'] ?? null,
+                        $row['mes_cobro'],
+                        $row['fecha_cobro'],
+                        $row['concepto'],
+                        $row['importe'],
+                        $row['cantidad_pago'],
+                        $row['restante'],
+                        $row['pago_completo'] ? 1 : 0,
+                        $row['status'],
+                        $row['payment_date'],
+                        $row['cobro_path'],
+                        $row['receipt_path'],
+                    ]);
+                }
+
+                fclose($handle);
+            }, $filename, [
+                'Content-Type' => 'text/csv',
+            ]);
+        }
+
+        return response()->json([
+            'mes_cobro' => $mesCobroNormalized,
+            'filters' => [
+                'status' => $status && $status !== 'all' ? $status : null,
+                'proveedor_id' => $proveedorId ? (int) $proveedorId : null,
+            ],
+            'summary' => $summary,
+            'items' => $mapped,
+        ]);
+    }
 
     public function productos(Request $request)
     {
@@ -308,8 +523,25 @@ class ReportController extends Controller
             $query->where('proveedorid', $provider->ident);
         }
 
-        // Sort by product name as a reasonable default
-        $query->orderBy('nombre');
+        $sort = $request->get('sort', 'nombre');
+        $direction = strtolower($request->get('direction', 'asc')) === 'desc' ? 'desc' : 'asc';
+
+        if ($sort === 'proveedor') {
+            $query->leftJoin('proveedores as orden_proveedor', 'orden_proveedor.ident', '=', 'producto.proveedorid')
+                ->orderByRaw('LOWER(orden_proveedor.nombre) ' . $direction)
+                ->select('producto.*');
+        } else {
+            $column = match ($sort) {
+                'precio' => 'precio',
+                'ident' => 'ident',
+                default => 'nombre',
+            };
+            if ($column === 'nombre') {
+                $query->orderByRaw('LOWER(nombre) ' . $direction);
+            } else {
+                $query->orderBy($column, $direction);
+            }
+        }
 
         $paginator = $query
             ->paginate($perPage)

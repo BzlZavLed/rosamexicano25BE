@@ -27,11 +27,60 @@ use Carbon\Carbon;
 
 class CashierLegacyController extends Controller
 {
-    /** Return today as legacy d/m/y (two-digit year) */
+    /** Return today in ISO format */
     private function todayStr(): string
     {
-        // ex: 22/10/25
-        return date('d/m/y');
+        return Carbon::now()->format('Y-m-d');
+    }
+
+    private function normalizeFecha(?string $value): string
+    {
+        $value = $value ? trim($value) : '';
+        if ($value === '') {
+            return $this->todayStr();
+        }
+
+        $formats = ['Y-m-d', 'd/m/y', 'd/m/Y', 'Y/m/d', 'm/d/Y', 'm-d-Y'];
+        foreach ($formats as $format) {
+            try {
+                return Carbon::createFromFormat($format, $value)->format('Y-m-d');
+            } catch (\Throwable $e) {
+                continue;
+            }
+        }
+
+        return Carbon::parse($value)->format('Y-m-d');
+    }
+
+    private function legacyFecha(string $fechaIso): ?string
+    {
+        try {
+            return Carbon::createFromFormat('Y-m-d', $fechaIso)->format('d/m/y');
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    private function cajaByFechaQuery(string $fechaIso)
+    {
+        $legacy = $this->legacyFecha($fechaIso);
+        return EstadoCaja::query()->where(function ($query) use ($fechaIso, $legacy) {
+            $query->where('fecha', $fechaIso);
+            if ($legacy && $legacy !== $fechaIso) {
+                $query->orWhere('fecha', $legacy);
+            }
+        });
+    }
+
+    private function applyVentaFechaFilter($query, string $fechaIso)
+    {
+        $legacy = $this->legacyFecha($fechaIso);
+        $query->where(function ($q) use ($fechaIso, $legacy) {
+            $q->where('fecha', $fechaIso);
+            if ($legacy && $legacy !== $fechaIso) {
+                $q->orWhere('fecha', $legacy);
+            }
+        });
     }
 
     /* ===================== CAJA ===================== */
@@ -40,7 +89,7 @@ class CashierLegacyController extends Controller
     public function status(Request $request)
     {
         $fecha = $this->todayStr();
-        $row = EstadoCaja::where('fecha', $fecha)->orderByDesc('id')->first();
+        $row = $this->cajaByFechaQuery($fecha)->orderByDesc('id')->first();
 
         return response()->json([
             'open' => $row && (int) $row->estado === 1,
@@ -51,15 +100,15 @@ class CashierLegacyController extends Controller
     // POST /api/caja/open  { saldo: number, fecha?: "d/m/y" }
     public function open(CajaLegacyRequest $request)
     {
-        $fecha = $request->input('fecha') ?: $this->todayStr();
+        $fecha = $this->normalizeFecha($request->input('fecha'));
 
-        $existsOpen = EstadoCaja::where('fecha', $fecha)->where('estado', 1)->exists();
+        $existsOpen = $this->cajaByFechaQuery($fecha)->where('estado', 1)->exists();
         if ($existsOpen) {
             return response()->json(['message' => 'Ya existe caja abierta para esa fecha'], 409);
         }
 
         $row = EstadoCaja::create([
-            'fecha' => $fecha,              // varchar(10) legacy
+            'fecha' => $fecha,              // store ISO forward, still compatible searching legacy
             'estado' => 1,                   // 1 = abierta
             'saldoinicial' => (float) $request->input('saldo', 0),   // saldo inicial (efectivo)
             'saldofinal' => 0,   // saldo final (efectivo) --- IGNORE ---
@@ -73,17 +122,18 @@ class CashierLegacyController extends Controller
     // POST /api/caja/close  { saldosistema?: number, fecha?: "d/m/y" }
     public function close(CajaLegacyRequest $request)
     {
-        $fecha = $request->input('fecha') ?: $this->todayStr();
+        $fecha = $this->normalizeFecha($request->input('fecha'));
 
         // caja abierta de ese día
-        $row = EstadoCaja::where('fecha', $fecha)->where('estado', 1)->orderByDesc('id')->first();
+        $row = $this->cajaByFechaQuery($fecha)->where('estado', 1)->orderByDesc('id')->first();
         if (!$row) {
             return response()->json(['message' => 'No hay caja abierta para la fecha indicada'], 409);
         }
 
         // total en efectivo del día (según ventas.totalventa y ventas.metodo='efectivo')
-        $cashTotal = (float) DB::table('ventas')
-            ->where('fecha', $fecha)
+        $cashQuery = DB::table('ventas');
+        $this->applyVentaFechaFilter($cashQuery, $fecha);
+        $cashTotal = (float) $cashQuery
             ->whereIn('metodo', ['efectivo', 'cash']) // compat: aceptar registros legacy 'cash'
             ->sum('totalventa');
 
@@ -135,7 +185,7 @@ class CashierLegacyController extends Controller
     {
         // caja debe estar abierta para hoy (d/m/y)
         $fechaHoy = $this->todayStr();
-        $caja = EstadoCaja::where('fecha', $fechaHoy)->where('estado', 1)->first();
+        $caja = $this->cajaByFechaQuery($fechaHoy)->where('estado', 1)->first();
         if (!$caja) {
             return response()->json(['message' => 'Debes abrir caja antes de vender'], 409);
         }
@@ -428,9 +478,9 @@ class CashierLegacyController extends Controller
     // POST /api/cashier/expenses
     public function registerExpense(ExpenseLegacyRequest $request)
     {
-        $fecha = $request->input('fecha') ?: $this->todayStr();
+        $fecha = $this->normalizeFecha($request->input('fecha'));
 
-        $caja = EstadoCaja::where('fecha', $fecha)->where('estado', 1)->first();
+        $caja = $this->cajaByFechaQuery($fecha)->where('estado', 1)->first();
         if (!$caja) {
             return response()->json(['message' => 'Debes abrir caja antes de registrar gastos'], 409);
         }

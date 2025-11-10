@@ -305,19 +305,6 @@ function todayISO() {
     return new Date().toISOString().slice(0, 10);
 }
 
-function formatToDMY(dateStr?: string) {
-    const fallback = () => {
-        const now = new Date();
-        return `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getFullYear()).slice(-2)}`;
-    };
-    if (!dateStr) return fallback();
-
-    const [year = '', month = '', day = ''] = dateStr.split('-');
-    if (!year || !month || !day) return fallback();
-
-    return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year.slice(-2)}`;
-}
-
 function resetExpenseForm() {
     expenseForm.concepto = '';
     expenseForm.total = null;
@@ -862,7 +849,7 @@ async function submitExpense() {
         return;
     }
 
-    const fecha = formatToDMY(expenseForm.fecha);
+    const fecha = (expenseForm.fecha && expenseForm.fecha.trim()) || todayISO();
     const payload: CashMovementPayload = {
         totalventa: Number(expenseForm.total),
         metodo: 'efectivo',

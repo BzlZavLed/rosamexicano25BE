@@ -38,6 +38,28 @@ export type CajaReportResponse = {
     ventas: CajaReportVenta[];
 };
 
+export type EgresoCajaMovimiento = {
+    idventa: number;
+    fecha: string;
+    metodo: string;
+    concepto: string;
+    totalventa: number;
+    vendedor: string;
+};
+
+export type EgresosCajaSummary = {
+    ingresos_total: number;
+    egresos_total: number;
+    saldo: number;
+};
+
+export type EgresosCajaReportResponse = {
+    from_date: string;
+    to_date: string;
+    egresos: EgresoCajaMovimiento[];
+    summary: EgresosCajaSummary;
+};
+
 type CajaReportParams = {
     from_date: string;
     to_date: string;
@@ -58,6 +80,24 @@ export async function getCajaReport(params: CajaReportParams) {
     }
 
     const { data } = await http.get<CajaReportResponse>('/reports/caja', { params: query });
+    return data;
+}
+
+export async function getEgresosCajaReport(params: { from_date: string; to_date?: string; download?: boolean }) {
+    const { from_date, to_date, download } = params;
+    const query: Record<string, string | number> = { from_date };
+    if (to_date) query.to_date = to_date;
+    if (download) query.download = 1;
+
+    if (download) {
+        const { data } = await http.get('/reports/egresos-caja', {
+            params: query,
+            responseType: 'blob',
+        });
+        return data as Blob;
+    }
+
+    const { data } = await http.get<EgresosCajaReportResponse>('/reports/egresos-caja', { params: query });
     return data;
 }
 
@@ -138,6 +178,49 @@ export interface EntradasReportResponse {
 }
 
 // ---------------------
+// REPORT MENSUALIDAD
+// ---------------------
+
+export interface MensualidadReportItem {
+    id: number;
+    proveedor: {
+        id: number | null;
+        nombre: string | null;
+        email: string | null;
+    } | null;
+    concepto: string;
+    nota?: string | null;
+    mes_cobro: string;
+    fecha_cobro: string | null;
+    importe: number;
+    cantidad_pago: number;
+    restante: number;
+    pago_completo: boolean;
+    status: string;
+    payment_date: string | null;
+    receipt_path: string | null;
+    cobro_path: string | null;
+}
+
+export interface MensualidadReportSummary {
+    total_cobros: number;
+    importe_total: number;
+    pagado_total: number;
+    restante_total: number;
+    pagos_completos: number;
+}
+
+export interface MensualidadReportResponse {
+    mes_cobro: string;
+    filters: {
+        status: string | null;
+        proveedor_id: number | null;
+    };
+    summary: MensualidadReportSummary;
+    items: MensualidadReportItem[];
+}
+
+// ---------------------
 // REPORT CAJA PROVEEDORES (CONDENSADO)
 // ---------------------
 
@@ -214,11 +297,15 @@ export async function getProductosReport(opts: {
     q?: string;
     page?: number;
     per_page?: number;
+    sort?: 'nombre' | 'proveedor' | 'precio';
+    direction?: 'asc' | 'desc';
 } = {}): Promise<ProductosReportResponse> {
     const params: Record<string, string | number> = {};
     if (opts.q) params.q = opts.q;
     if (opts.page) params.page = opts.page;
     if (opts.per_page) params.per_page = opts.per_page;
+    if (opts.sort) params.sort = opts.sort;
+    if (opts.direction) params.direction = opts.direction;
 
     // Match the same style as getCajaReport (baseURL handles /api)
     const { data } = await http.get<ProductosReportResponse>('/reports/productos', { params });
@@ -267,5 +354,30 @@ export async function getCajaProveedoresReport(params: { from_date: string; to_d
 
 export async function getProviderTrends(params: { from_date: string; to_date: string }) {
     const { data } = await http.get<ProviderTrendsResponse>('/reports/provider/trends', { params });
+    return data;
+}
+
+export async function getMensualidadReport(params: {
+    mes_cobro: string;
+    status?: string;
+    proveedor_id?: number;
+    download?: boolean;
+}) {
+    const query: Record<string, string | number> = {
+        mes_cobro: params.mes_cobro,
+    };
+    if (params.status && params.status !== 'all') query.status = params.status;
+    if (typeof params.proveedor_id === 'number') query.proveedor_id = params.proveedor_id;
+    if (params.download) query.download = 1;
+
+    if (params.download) {
+        const { data } = await http.get('/reports/mensualidad', {
+            params: query,
+            responseType: 'blob',
+        });
+        return data as Blob;
+    }
+
+    const { data } = await http.get<MensualidadReportResponse>('/reports/mensualidad', { params: query });
     return data;
 }
