@@ -13,8 +13,7 @@ const showPw = ref(false);
 const DEFAULT_THEME = 'rosa-mexicano';
 
 const THEME_LOGOS: Record<string, string> = {
-    'verde-lima': '/storage/dpekesypekas.png',
-    'rosa-mexicano': '/storage/rosamexicano.png',
+    'verde-lima': '/images/themes/dpekesypekas.png',
 };
 
 const THEME_TITLES: Record<string, string> = {
