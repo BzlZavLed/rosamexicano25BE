@@ -68,12 +68,12 @@ import SidebarItem from './SidebarItem.vue';
                 <path d="M22 6l-10 7L2 6" />
             </svg>
         </SidebarItem>
-        <SidebarItem :to="{ path: '/admin/respaldo' }" label="Respaldar">
+       <!--  <SidebarItem :to="{ path: '/admin/respaldo' }" label="Respaldar">
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 <path d="M20 16.58A5 5 0 0018 7h-1.26A8 8 0 104 15.25" />
                 <path d="M12 12v9m0 0l-3-3m3 3l3-3" />
             </svg>
-        </SidebarItem>
+        </SidebarItem> -->
         <SidebarItem :to="{ path: '/admin/clientes' }" label="Clientes">
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 <path d="M17 21v-2a4 4 0 00-4-4H7a4 4 0 00-4 4v2" />
