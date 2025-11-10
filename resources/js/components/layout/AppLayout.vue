@@ -9,14 +9,17 @@ const isAdmin = computed(() => auth.isAdmin);
 const isProvider = computed(() => auth.isProvider);
 const drawerOpen = ref(false);
 const isCompact = ref(false);
+const sidebarCollapsed = ref(false);
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }
 function closeDrawer() { drawerOpen.value = false; }
 async function logout() { await auth.logout(); window.location.href = '/login'; }
+function toggleSidebarCollapse() { sidebarCollapsed.value = !sidebarCollapsed.value; }
 
 function handleResize() {
     isCompact.value = window.innerWidth < 768;
     if (!isCompact.value) drawerOpen.value = false;
+    if (isCompact.value) sidebarCollapsed.value = false;
 }
 
 onMounted(() => {
@@ -33,7 +36,9 @@ onUnmounted(() => {
     <div class="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
         <!-- Header -->
         <header class="sticky top-0 z-40 w-full bg-white border-b border-gray-200">
-            <div class="mx-auto max-w-7xl h-14 px-4 flex items-center justify-between">
+            <div
+                class="mx-auto h-14 px-4 flex items-center justify-between"
+                :class="(!sidebarCollapsed || isCompact) ? 'max-w-7xl' : 'max-w-none w-full'">
                 <div class="flex items-center gap-3 min-w-0">
                     <button
                         class="md:hidden inline-flex items-center justify-center rounded-lg border px-2.5 py-2 text-sm hover:bg-gray-100 transition"
@@ -41,7 +46,18 @@ onUnmounted(() => {
                         <span class="sr-only">Abrir menú</span>
                         ☰
                     </button>
-                    <div class="font-semibold truncate">Rosa Mexicano POS</div>
+                    <div class="flex items-center gap-2">
+                        <button
+                            v-if="!isCompact"
+                            class="inline-flex items-center justify-center rounded-lg border px-2.5 py-2 text-sm hover:bg-gray-100 transition"
+                            @click="toggleSidebarCollapse"
+                            :aria-pressed="sidebarCollapsed"
+                            :aria-label="sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'">
+                            <span v-if="sidebarCollapsed">☰</span>
+                            <span v-else>−</span>
+                        </button>
+                        <div class="font-semibold truncate">Rosa Mexicano POS</div>
+                    </div>
                 </div>
                 <div class="flex items-center gap-3 text-sm text-gray-600">
                     <div class="leading-tight text-right max-w-[50vw] sm:max-w-xs truncate">
@@ -58,9 +74,9 @@ onUnmounted(() => {
 
         <!-- Body -->
         <div class="flex-1 w-full">
-            <div class="mx-auto max-w-7xl px-2 sm:px-4 flex h-full">
+            <div class="mx-auto px-2 sm:px-4 flex h-full" :class="sidebarCollapsed ? 'max-w-full' : 'max-w-7xl'">
                 <!-- Desktop sidebar -->
-                <aside class="hidden md:block shrink-0 w-[250px] xl:w-[280px] pt-5 pr-4">
+                <aside v-show="!sidebarCollapsed" class="hidden md:block shrink-0 w-[250px] xl:w-[280px] pt-5 pr-4">
                     <div class="sticky top-20">
                         <component :is="isAdmin ? SidebarAdmin : SidebarProvider" />
                     </div>
@@ -89,7 +105,7 @@ onUnmounted(() => {
                 </transition>
 
                 <!-- Main content -->
-                <main class="flex-1 py-6 md:py-8 md:pl-6">
+                <main class="flex-1 py-6 md:py-8" :class="sidebarCollapsed ? 'md:pl-0' : 'md:pl-6'">
                     <div class="rounded-xl bg-white shadow-sm border border-gray-200 md:border-transparent md:shadow-none md:bg-transparent p-4 md:p-0 h-full">
                         <slot />
                     </div>

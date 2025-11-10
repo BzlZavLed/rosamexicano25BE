@@ -22,6 +22,7 @@ import {
     type EntradasReportResponse,
     type CajaProveedoresResponse,
     type CajaProveedorGroup,
+    type CajaProveedorItem,
 } from '../api/reports';
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -48,6 +49,20 @@ type MensualidadSortableColumn =
     | 'status'
     | 'fecha_cobro'
     | 'payment_date';
+type ProveedorModalSort =
+    | 'fecha'
+    | 'producto'
+    | 'ident'
+    | 'cantidad'
+    | 'precio'
+    | 'total'
+    | 'desc_producto'
+    | 'cargo_tarjeta'
+    | 'desc_total'
+    | 'ganancia'
+    | 'metodo'
+    | 'vendedor'
+    | 'promocion';
 
 const options: Array<{ value: ReportType; label: string }> = [
     { value: 'caja', label: 'Caja' },
@@ -91,7 +106,12 @@ const entradasData = ref<EntradasReportResponse | null>(null);
 const cajaCondensadoLoading = ref(false);
 const cajaCondensadoError = ref('');
 const cajaCondensadoData = ref<CajaProveedoresResponse | null>(null);
-const expandedProveedores = ref<Set<number>>(new Set());
+const cajaCondensadoView = ref<'cards' | 'table'>('table');
+const proveedorModalOpen = ref(false);
+const proveedorModalData = ref<CajaProveedorGroup | null>(null);
+const proveedorModalSort = ref<ProveedorModalSort>('fecha');
+const proveedorModalDirection = ref<SortDirection>('asc');
+const proveedorModalSearch = ref('');
 
 const egresosLoading = ref(false);
 const egresosError = ref('');
@@ -261,7 +281,6 @@ async function fetchCajaCondensadoReport() {
             cajaCondensadoData.value = null;
         } else {
             cajaCondensadoData.value = response as CajaProveedoresResponse;
-            expandedProveedores.value = new Set();
         }
     } catch (err: any) {
         cajaCondensadoError.value =
@@ -431,7 +450,6 @@ async function fetchMensualidadReport(download = false) {
             mes_cobro: mes,
             status: statusParam,
         });
-        console.log(data);
         if (data instanceof Blob) {
             mensualidadError.value = 'La respuesta del reporte no es válida.';
             mensualidadData.value = null;
@@ -446,13 +464,6 @@ async function fetchMensualidadReport(download = false) {
     } finally {
         mensualidadLoading.value = false;
     }
-}
-
-function toggleProveedor(proveedorId: number) {
-    const current = new Set(expandedProveedores.value);
-    if (current.has(proveedorId)) current.delete(proveedorId);
-    else current.add(proveedorId);
-    expandedProveedores.value = current;
 }
 
 type CajaFlatRow = {
@@ -632,6 +643,20 @@ const filteredMensualidadItems = computed<MensualidadReportItem[]>(() => {
     });
 });
 
+const proveedorModalTotals = computed(() => {
+    if (!proveedorModalData.value) {
+        return {
+            cantidad: 0,
+            total: 0,
+            descProducto: 0,
+            cargoTarjeta: 0,
+            descTotal: 0,
+            ganancia: 0,
+        };
+    }
+    return providerItemTotals(proveedorModalData.value);
+});
+
 const sortedMensualidadItems = computed(() => {
     const items = [...filteredMensualidadItems.value];
     const column = mensualidadSort.value;
@@ -712,6 +737,142 @@ function providerItemTotals(proveedor: CajaProveedorGroup) {
             ganancia: 0,
         }
     );
+}
+
+const proveedorModalFilteredItems = computed(() => {
+    if (!proveedorModalData.value) return [];
+    const search = proveedorModalSearch.value.trim().toLowerCase();
+    const items = proveedorModalData.value.items ?? [];
+    if (!search) return items;
+    return items.filter((item) => {
+        return (
+            item.producto_nombre?.toLowerCase().includes(search) ||
+            item.producto_ident?.toLowerCase().includes(search) ||
+            item.metodo?.toLowerCase().includes(search) ||
+            item.vendedor?.toLowerCase().includes(search)
+        );
+    });
+});
+
+const proveedorModalSortedItems = computed(() => {
+    const column = proveedorModalSort.value;
+    const dir = proveedorModalDirection.value === 'asc' ? 1 : -1;
+    const items = [...proveedorModalFilteredItems.value];
+    const valueOf = (item: CajaProveedorItem) => {
+        switch (column) {
+            case 'fecha':
+                return item.fecha ?? '';
+            case 'producto':
+                return item.producto_nombre ?? '';
+            case 'ident':
+                return item.producto_ident ?? '';
+            case 'cantidad':
+                return Number(item.cantidad ?? 0);
+            case 'precio':
+                return Number(item.precio_unitario ?? 0);
+            case 'total':
+                return Number(item.total ?? 0);
+            case 'desc_producto':
+                return Number(item.descuento_producto ?? 0);
+            case 'cargo_tarjeta':
+                return Number(item.cargo_tarjeta ?? 0);
+            case 'desc_total':
+                return Number(item.descuento_total ?? 0);
+            case 'ganancia':
+                return Number(item.ganancia ?? 0);
+            case 'metodo':
+                return item.metodo ?? '';
+            case 'vendedor':
+                return item.vendedor ?? '';
+            case 'promocion':
+                return item.promotion ?? '';
+            default:
+                return '';
+        }
+    };
+
+    items.sort((a, b) => {
+        const va = valueOf(a);
+        const vb = valueOf(b);
+        if (typeof va === 'number' && typeof vb === 'number') {
+            return (va - vb) * dir;
+        }
+        return va > vb ? dir : va < vb ? -dir : 0;
+    });
+    return items;
+});
+
+function openProveedorModal(proveedor: CajaProveedorGroup) {
+    proveedorModalData.value = proveedor;
+    proveedorModalOpen.value = true;
+    proveedorModalSearch.value = '';
+    proveedorModalSort.value = 'fecha';
+    proveedorModalDirection.value = 'asc';
+}
+
+function closeProveedorModal() {
+    proveedorModalOpen.value = false;
+    proveedorModalData.value = null;
+}
+
+function toggleProveedorModalSort(column: ProveedorModalSort) {
+    if (proveedorModalSort.value === column) {
+        proveedorModalDirection.value = proveedorModalDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        proveedorModalSort.value = column;
+        proveedorModalDirection.value = 'asc';
+    }
+}
+
+function proveedorModalSortIcon(column: ProveedorModalSort) {
+    if (proveedorModalSort.value !== column) return '';
+    return proveedorModalDirection.value === 'asc' ? '▲' : '▼';
+}
+
+function downloadProveedorModalCsv() {
+    if (!proveedorModalData.value) return;
+    const header = [
+        'Fecha',
+        'Producto',
+        'Ident',
+        'Cantidad',
+        'Precio unitario',
+        'Total',
+        'Desc. producto',
+        'Cargo tarjeta',
+        'Desc. total',
+        'Ganancia',
+        'Método',
+        'Vendedor',
+        'Promoción',
+    ];
+    const rows = proveedorModalSortedItems.value.map((item) => [
+        item.fecha ?? '',
+        item.producto_nombre ?? '',
+        item.producto_ident ?? '',
+        item.cantidad ?? '',
+        item.precio_unitario ?? '',
+        item.total ?? '',
+        item.descuento_producto ?? '',
+        item.cargo_tarjeta ?? '',
+        item.descuento_total ?? '',
+        item.ganancia ?? '',
+        item.metodo ?? '',
+        item.vendedor ?? '',
+        item.promotion ?? '',
+    ]);
+    const csv = [header, ...rows]
+        .map((line) => line.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const filename = `caja-condensado-${proveedorModalData.value.proveedor_ident}-movimientos.csv`;
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
 }
 
 const filteredCajaRows = computed(() => {
@@ -999,7 +1160,7 @@ watch(
         if (selected.value === 'caja-condensado') {
             cajaCondensadoData.value = null;
             cajaCondensadoError.value = '';
-            expandedProveedores.value = new Set();
+            closeProveedorModal();
         }
         if (selected.value === 'caja-egresos') {
             egresosData.value = null;
@@ -1014,6 +1175,15 @@ watch(
         if (selected.value === 'mensualidad') {
             mensualidadData.value = null;
             mensualidadError.value = '';
+        }
+    }
+);
+
+watch(
+    () => cajaCondensadoData.value,
+    () => {
+        if (!cajaCondensadoData.value) {
+            closeProveedorModal();
         }
     }
 );
@@ -1657,6 +1827,20 @@ onBeforeUnmount(() => {
                                     :disabled="cajaCondensadoLoading" @click="downloadCajaCondensado">
                                     Descargar CSV
                                 </button>
+                                <div class="flex items-center gap-1 rounded-full border border-gray-200 bg-gray-100 p-1 text-xs">
+                                    <button type="button"
+                                        class="rounded-full px-3 py-1 font-medium transition"
+                                        :class="cajaCondensadoView === 'cards' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'"
+                                        @click="cajaCondensadoView = 'cards'">
+                                        Tarjetas
+                                    </button>
+                                    <button type="button"
+                                        class="rounded-full px-3 py-1 font-medium transition"
+                                        :class="cajaCondensadoView === 'table' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'"
+                                        @click="cajaCondensadoView = 'table'">
+                                        Tabla
+                                    </button>
+                                </div>
                                 <span class="text-xs text-gray-500">Resumen por proveedor de ventas en el periodo seleccionado.</span>
                             </div>
 
@@ -1668,7 +1852,7 @@ onBeforeUnmount(() => {
                             <div v-else>
                                 <div v-if="cajaCondensadoLoading" class="text-xs text-gray-500">Cargando datos…</div>
                                 <div v-else-if="cajaCondensadoData" class="space-y-4">
-                                    <div class="flex flex-wrap items-start justify-between gap-3 text-xs text-gray-500">
+                                    <div class="flex flex-wrap items-start justify-between gap-3 text-xs text-gray-500" style="border: 1px solid #eee; border-radius: 8px; padding: 8px;">
                                         <div class="space-x-1">
                                             <span>Periodo:</span>
                                             <span class="font-semibold text-gray-900">{{ cajaCondensadoData.from_date }}</span>
@@ -1703,220 +1887,121 @@ onBeforeUnmount(() => {
                                         </div>
                                     </div>
 
-                                    <div :class="tableClasses.wrapper" class="hidden md:block">
-                                        <table :class="tableClasses.table">
-                                            <thead :class="tableClasses.head">
-                                                <tr>
-                                                    <th class="px-3 py-2"></th>
-                                                    <th class="px-3 py-2">Proveedor</th>
-                                                    <th class="px-3 py-2">Ident</th>
-                                                    <th class="px-3 py-2 text-right">Ventas brutas</th>
-                                                    <th class="px-3 py-2 text-right">Descuentos</th>
-                                                    <th class="px-3 py-2 text-right">Cargos tarjeta</th>
-                                                    <th class="px-3 py-2 text-right">Ganancia</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody :class="tableClasses.body">
-                                                <template v-for="proveedor in cajaCondensadoData.proveedores" :key="proveedor.proveedor_id">
-                                                    <tr :class="tableClasses.row">
-                                                        <td class="px-3 py-2">
-                                                            <button type="button"
-                                                                class="inline-flex h-5 w-5 items-center justify-center rounded border border-gray-300 text-xs hover:bg-gray-50"
-                                                                @click="toggleProveedor(proveedor.proveedor_id)">
-                                                                {{ expandedProveedores.has(proveedor.proveedor_id) ? '-' : '+' }}
-                                                            </button>
-                                                        </td>
+                                    <template v-if="cajaCondensadoView === 'cards'">
+                                        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" style="border: 1px solid #eee; border-radius: 8px; padding: 8px;">
+                                            <article v-for="proveedor in cajaCondensadoData.proveedores" :key="proveedor.proveedor_id"
+                                                class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm">
+                                                <div class="flex items-start justify-between gap-2">
+                                                    <div>
+                                                        <h3 class="text-base font-semibold text-gray-900">{{ proveedor.proveedor_nombre }}</h3>
+                                                        <p class="text-xs text-gray-500">Ident {{ proveedor.proveedor_ident }}</p>
+                                                    </div>
+                                                    <button type="button"
+                                                        class="inline-flex items-center justify-center rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                                        @click="openProveedorModal(proveedor)">
+                                                        Movimientos
+                                                    </button>
+                                                </div>
+                                                <dl class="grid grid-cols-2 gap-2 text-[11px] text-gray-600">
+                                                    <div>
+                                                        <dt class="text-gray-500">Ventas brutas</dt>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.ventas_brutas) }}</dd>
+                                                    </div>
+                                                    <div>
+                                                        <dt class="text-gray-500">Descuentos</dt>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.descuentos) }}</dd>
+                                                    </div>
+                                                    <div>
+                                                        <dt class="text-gray-500">Cargos tarjeta</dt>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.cargos_tarjeta) }}</dd>
+                                                    </div>
+                                                    <div>
+                                                        <dt class="text-gray-500">Ganancia</dt>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.ganancia_total) }}</dd>
+                                                    </div>
+                                                </dl>
+                                                <div class="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
+                                                    <div class="flex justify-between">
+                                                        <span>Unidades</span>
+                                                        <span class="font-semibold text-gray-900">{{ providerItemTotals(proveedor).cantidad }}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>Ventas</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).total) }}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>Desc. prod</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).descProducto) }}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>Cargo tarjeta</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).cargoTarjeta) }}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>Desc. total</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).descTotal) }}</span>
+                                                    </div>
+                                                    <div class="flex justify-between">
+                                                        <span>Ganancia</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).ganancia) }}</span>
+                                                    </div>
+                                                </div>
+                                            </article>
+                                            <div v-if="(cajaCondensadoData.proveedores?.length ?? 0) === 0"
+                                                class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-500 md:col-span-2 lg:col-span-3">
+                                                No se encontraron proveedores en el periodo seleccionado.
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <template v-else>
+                                        <div :class="tableClasses.wrapper">
+                                            <table :class="tableClasses.table">
+                                                <thead :class="tableClasses.head">
+                                                    <tr>
+                                                        <th class="px-3 py-2">Proveedor</th>
+                                                        <th class="px-3 py-2">Ident</th>
+                                                        <th class="px-3 py-2 text-right">Ventas brutas</th>
+                                                        <th class="px-3 py-2 text-right">Descuentos</th>
+                                                        <th class="px-3 py-2 text-right">Cargos tarjeta</th>
+                                                        <th class="px-3 py-2 text-right">Ganancia</th>
+                                                        <th class="px-3 py-2 text-right">Movimientos</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody :class="tableClasses.body">
+                                                    <tr v-for="proveedor in cajaCondensadoData.proveedores" :key="proveedor.proveedor_id" :class="tableClasses.row">
                                                         <td class="px-3 py-2 font-semibold text-gray-900">{{ proveedor.proveedor_nombre }}</td>
                                                         <td class="px-3 py-2">{{ proveedor.proveedor_ident }}</td>
                                                         <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.ventas_brutas) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.descuentos) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.cargos_tarjeta) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.ganancia_total) }}</td>
-                                                </tr>
-                                                <tr v-if="expandedProveedores.has(proveedor.proveedor_id) && proveedor.items.length > 0" class="bg-gray-50">
-                                                    <td class="px-3 py-0.5"></td>
-                                                    <td class="px-3 py-0.5 text-[10px] text-gray-500" colspan="6">
-                                                        * <span class="text-rose-600">Desc. total</span> = Desc. producto + Cargo tarjeta
-                                                    </td>
-                                                </tr>
-                                                    <tr v-if="expandedProveedores.has(proveedor.proveedor_id)" class="bg-gray-50 text-[11px] text-gray-600">
-                                                        <td class="px-3 py-2"></td>
-                                                        <td class="px-3 py-2" colspan="6">
-                                                            <div :class="tableClasses.wrapper">
-                                                                <table :class="tableClasses.table">
-                                                                    <thead :class="tableClasses.head">
-                                                                        <tr>
-                                                                            <th class="px-3 py-2">Fecha</th>
-                                                                            <th class="px-3 py-2">Producto</th>
-                                                                            <th class="px-3 py-2">Ident</th>
-                                                                            <th class="px-3 py-2 text-right">Cantidad</th>
-                                                                            <th class="px-3 py-2 text-right">Precio unitario</th>
-                                                                            <th class="px-3 py-2 text-right">Total</th>
-                                                                            <th class="px-3 py-2 text-right">Desc. producto</th>
-                                                                            <th class="px-3 py-2 text-right">Cargo tarjeta</th>
-                                                                            <th class="px-3 py-2 text-right">Desc. total</th>
-                                                                            <th class="px-3 py-2 text-right">Ganancia</th>
-                                                                            <th class="px-3 py-2">Método</th>
-                                                                            <th class="px-3 py-2">Vendedor</th>
-                                                                            <th class="px-3 py-2">Promoción</th>
-                                                                        </tr>
-                                                                    </thead>
-                                                                    <tbody :class="tableClasses.body">
-                                                                        <tr v-for="item in proveedor.items" :key="item.ventadesg_id">
-                                                                            <td class="px-3 py-2">{{ item.fecha }}</td>
-                                                                            <td class="px-3 py-2">{{ item.producto_nombre }}</td>
-                                                                            <td class="px-3 py-2">{{ item.producto_ident }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ item.cantidad }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.precio_unitario) }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.total) }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.descuento_producto) }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.cargo_tarjeta) }}</td>
-                                                                            <td class="px-3 py-2 text-right">
-                                                                                <div class="font-semibold text-rose-600">{{ formatCurrency(item.descuento_total) }}</div>
-                                                                                <div class="text-[10px] text-gray-500">
-                                                                                    {{ formatCurrency(item.descuento_producto) }} + {{ formatCurrency(item.cargo_tarjeta) }}
-                                                                                </div>
-                                                                            </td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.ganancia) }}</td>
-                                                                            <td class="px-3 py-2 capitalize">{{ item.metodo }}</td>
-                                                                            <td class="px-3 py-2">{{ item.vendedor }}</td>
-                                                                            <td class="px-3 py-2">{{ item.promotion || '—' }}</td>
-                                                                        </tr>
-                                                                        <tr v-if="proveedor.items.length === 0">
-                                                                            <td colspan="13" :class="tableClasses.emptyRow">
-                                                                                Sin detalles de ventas para este proveedor.
-                                                                            </td>
-                                                                        </tr>
-                                                                    </tbody>
-                                                                    <tfoot v-if="proveedor.items.length > 0" class="bg-gray-100 text-[11px] uppercase tracking-wide text-gray-600">
-                                                                        <tr>
-                                                                            <td class="px-3 py-2" colspan="3">Totales</td>
-                                                                            <td class="px-3 py-2 text-right">{{ providerItemTotals(proveedor).cantidad }}</td>
-                                                                            <td class="px-3 py-2"></td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(providerItemTotals(proveedor).total) }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(providerItemTotals(proveedor).descProducto) }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(providerItemTotals(proveedor).cargoTarjeta) }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(providerItemTotals(proveedor).descTotal) }}</td>
-                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(providerItemTotals(proveedor).ganancia) }}</td>
-                                                                            <td class="px-3 py-2" colspan="3"></td>
-                                                                        </tr>
-                                                                    </tfoot>
-                                                                </table>
-                                                            </div>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.descuentos) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.cargos_tarjeta) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.ganancia_total) }}</td>
+                                                        <td class="px-3 py-2 text-right">
+                                                            <button type="button"
+                                                                class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                                                @click="openProveedorModal(proveedor)">
+                                                                Ver movimientos
+                                                            </button>
                                                         </td>
                                                     </tr>
-                                                </template>
-                                                <tr v-if="(cajaCondensadoData.proveedores?.length ?? 0) === 0">
-                                                    <td colspan="7" :class="tableClasses.emptyRow">
-                                                        No se encontraron proveedores en el periodo seleccionado.
-                                                    </td>
-                                                </tr>
-                                            </tbody>
-                                            <tfoot v-if="cajaCondensadoResumen" class="bg-gray-100 text-[11px] uppercase tracking-wide text-gray-600">
-                                                <tr>
-                                                    <td class="px-3 py-2" colspan="3">Totales</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.ventasBrutas) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.descuentos) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.cargosTarjeta) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.ganancias) }}</td>
-                                                </tr>
-                                            </tfoot>
-                                        </table>
-                                    </div>
-                                    <div class="space-y-3 md:hidden">
-                                        <article v-for="proveedor in cajaCondensadoData.proveedores" :key="proveedor.proveedor_id"
-                                            class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm">
-                                            <div class="flex items-start justify-between gap-2">
-                                                <div>
-                                                    <h3 class="text-base font-semibold text-gray-900">{{ proveedor.proveedor_nombre }}</h3>
-                                                    <p class="text-xs text-gray-500">Ident {{ proveedor.proveedor_ident }}</p>
-                                                </div>
-                                                <button type="button"
-                                                    class="inline-flex items-center justify-center rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50"
-                                                    @click="toggleProveedor(proveedor.proveedor_id)">
-                                                    {{ expandedProveedores.has(proveedor.proveedor_id) ? 'Ocultar' : 'Ver detalles' }}
-                                                </button>
-                                            </div>
-                                            <div class="grid grid-cols-2 gap-2 text-xs text-gray-600">
-                                                <div>
-                                                    <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedor.ventas_brutas) }}</span>
-                                                    <span>Ventas brutas</span>
-                                                </div>
-                                                <div>
-                                                    <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedor.descuentos) }}</span>
-                                                    <span>Descuentos</span>
-                                                </div>
-                                                <div>
-                                                    <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedor.cargos_tarjeta) }}</span>
-                                                    <span>Cargos tarjeta</span>
-                                                </div>
-                                                <div>
-                                                    <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedor.ganancia_total) }}</span>
-                                                    <span>Ganancia</span>
-                                                </div>
-                                            </div>
-                                            <div v-if="expandedProveedores.has(proveedor.proveedor_id)" class="space-y-2">
-                                                <p class="text-[10px] text-gray-500">
-                                                    * <span class="text-rose-600 font-semibold">Desc. total</span> = Desc. producto + Cargo tarjeta
-                                                </p>
-                                                <div class="space-y-2">
-                                                    <article v-for="item in proveedor.items" :key="item.ventadesg_id"
-                                                        class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-[11px] text-gray-600">
-                                                        <div class="flex items-center justify-between">
-                                                            <span class="font-semibold text-gray-900">{{ item.producto_nombre }}</span>
-                                                            <span>{{ item.fecha }}</span>
-                                                        </div>
-                                                        <div class="mt-2 grid gap-1">
-                                                            <div><span class="font-medium text-gray-700">Ident:</span> {{ item.producto_ident }}</div>
-                                                            <div class="flex justify-between">
-                                                                <span><span class="font-medium text-gray-700">Cantidad:</span> {{ item.cantidad }}</span>
-                                                                <span><span class="font-medium text-gray-700">Total:</span> {{ formatCurrency(item.total) }}</span>
-                                                            </div>
-                                                            <div class="flex justify-between">
-                                                                <span><span class="font-medium text-gray-700">Desc. prod:</span> {{ formatCurrency(item.descuento_producto) }}</span>
-                                                                <span><span class="font-medium text-gray-700">Cargo tarjeta:</span> {{ formatCurrency(item.cargo_tarjeta) }}</span>
-                                                            </div>
-                                                            <div>
-                                                                <span class="font-medium text-gray-700">Desc. total:</span>
-                                                                <span class="font-semibold text-rose-600">{{ formatCurrency(item.descuento_total) }}</span>
-                                                                <span class="text-[10px] text-gray-500 ml-1">({{ formatCurrency(item.descuento_producto) }} + {{ formatCurrency(item.cargo_tarjeta) }})</span>
-                                                            </div>
-                                                            <div class="flex justify-between">
-                                                                <span><span class="font-medium text-gray-700">Ganancia:</span> {{ formatCurrency(item.ganancia) }}</span>
-                                                                <span><span class="font-medium text-gray-700">Método:</span> {{ item.metodo }}</span>
-                                                            </div>
-                                                            <div class="flex justify-between">
-                                                                <span><span class="font-medium text-gray-700">Vendedor:</span> {{ item.vendedor }}</span>
-                                                                <span><span class="font-medium text-gray-700">Promoción:</span> {{ item.promotion || '—' }}</span>
-                                                            </div>
-                                                        </div>
-                                                    </article>
-                                                    <div v-if="proveedor.items.length === 0"
-                                                        class="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-center text-xs text-gray-500">
-                                                        Sin detalles de ventas para este proveedor.
-                                                    </div>
-                                                </div>
-                                                <div v-if="proveedor.items.length > 0"
-                                                    class="rounded-lg border border-gray-200 bg-white p-3 text-[11px] text-gray-600">
-                                                    <div class="flex justify-between">
-                                                        <span class="font-semibold text-gray-900">Totales</span>
-                                                        <span>{{ providerItemTotals(proveedor).cantidad }} uds</span>
-                                                    </div>
-                                                    <div class="mt-2 grid grid-cols-2 gap-1">
-                                                        <div>Ventas: {{ formatCurrency(providerItemTotals(proveedor).total) }}</div>
-                                                        <div>Desc. prod: {{ formatCurrency(providerItemTotals(proveedor).descProducto) }}</div>
-                                                        <div>Tarjeta: {{ formatCurrency(providerItemTotals(proveedor).cargoTarjeta) }}</div>
-                                                        <div>Desc. total: {{ formatCurrency(providerItemTotals(proveedor).descTotal) }}</div>
-                                                        <div>Ganancia: {{ formatCurrency(providerItemTotals(proveedor).ganancia) }}</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </article>
-                                        <div v-if="(cajaCondensadoData.proveedores?.length ?? 0) === 0"
-                                            class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">
-                                            No se encontraron proveedores en el periodo seleccionado.
+                                                    <tr v-if="(cajaCondensadoData.proveedores?.length ?? 0) === 0">
+                                                        <td :class="tableClasses.emptyRow" colspan="7">
+                                                            No se encontraron proveedores en el periodo seleccionado.
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                                <tfoot v-if="cajaCondensadoResumen" class="bg-gray-100 text-[11px] uppercase tracking-wide text-gray-600">
+                                                    <tr>
+                                                        <td class="px-3 py-2" colspan="2">Totales</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.ventasBrutas) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.descuentos) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.cargosTarjeta) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.ganancias) }}</td>
+                                                        <td class="px-3 py-2"></td>
+                                                    </tr>
+                                                </tfoot>
+                                            </table>
                                         </div>
-                                    </div>
+                                    </template>
                                 </div>
                                 <div v-else class="text-xs text-gray-500">
                                     Selecciona un rango de fechas y presiona «Consultar resumen».
@@ -2183,5 +2268,177 @@ onBeforeUnmount(() => {
                 </div>
             </section>
         </div>
+        <transition name="fade">
+            <div v-if="proveedorModalOpen && proveedorModalData" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="closeProveedorModal"></div>
+                <div class="relative z-10 w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-xl flex flex-col" role="dialog" aria-modal="true">
+                    <header class="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
+                        <div>
+                            <p class="text-sm uppercase tracking-wide text-gray-500">Movimientos por proveedor</p>
+                            <h3 class="text-lg font-semibold text-gray-900">
+                                {{ proveedorModalData?.proveedor_nombre }}
+                            </h3>
+                            <p class="text-xs text-gray-500">Ident {{ proveedorModalData?.proveedor_ident }}</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                @click="downloadProveedorModalCsv">
+                                Descargar CSV
+                            </button>
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                @click="closeProveedorModal">
+                                Cerrar
+                            </button>
+                        </div>
+                    </header>
+                    <div class="flex-1 overflow-hidden px-5 py-4 flex flex-col gap-4">
+                        <div class="grid gap-3 text-xs text-gray-600 sm:grid-cols-5">
+                            <div>
+                                <span class="block font-semibold text-gray-900">{{ proveedorModalTotals.cantidad }}</span>
+                                <span>Unidades</span>
+                            </div>
+                            <div>
+                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.total) }}</span>
+                                <span>Ventas</span>
+                            </div>
+                            <div>
+                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.descProducto) }}</span>
+                                <span>Desc. producto</span>
+                            </div>
+                            <div>
+                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.cargoTarjeta) }}</span>
+                                <span>Cargo tarjeta</span>
+                            </div>
+                            <div>
+                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.ganancia) }}</span>
+                                <span>Ganancia</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <input v-model="proveedorModalSearch" type="search"
+                                class="w-full max-w-xs rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                placeholder="Buscar producto, vendedor o método…" />
+                            <p class="text-xs text-gray-500">
+                                Movimientos:
+                                <span class="font-semibold text-gray-900">{{ proveedorModalFilteredItems.length }}</span>
+                            </p>
+                        </div>
+                        <div class="flex-1 overflow-auto">
+                            <div :class="tableClasses.wrapper">
+                                <table :class="tableClasses.table">
+                                    <thead :class="tableClasses.head">
+                                        <tr>
+                                            <th class="px-3 py-2">
+                                                <button type="button" class="flex items-center gap-1 font-semibold" @click="toggleProveedorModalSort('fecha')">
+                                                    Fecha
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('fecha') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2">
+                                                <button type="button" class="flex items-center gap-1 font-semibold" @click="toggleProveedorModalSort('producto')">
+                                                    Producto
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('producto') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2">
+                                                <button type="button" class="flex items-center gap-1 font-semibold" @click="toggleProveedorModalSort('ident')">
+                                                    Ident
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('ident') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2 text-right">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('cantidad')">
+                                                    Cantidad
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('cantidad') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2 text-right">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('precio')">
+                                                    Precio unitario
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('precio') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2 text-right">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('total')">
+                                                    Total
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('total') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2 text-right">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('desc_producto')">
+                                                    Desc. producto
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('desc_producto') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2 text-right">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('cargo_tarjeta')">
+                                                    Cargo tarjeta
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('cargo_tarjeta') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2 text-right">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('desc_total')">
+                                                    Desc. total*
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('desc_total') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2 text-right">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('ganancia')">
+                                                    Ganancia
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('ganancia') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2">
+                                                <button type="button" class="flex items-center gap-1 font-semibold" @click="toggleProveedorModalSort('metodo')">
+                                                    Método
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('metodo') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2">
+                                                <button type="button" class="flex items-center gap-1 font-semibold" @click="toggleProveedorModalSort('vendedor')">
+                                                    Vendedor
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('vendedor') }}</span>
+                                                </button>
+                                            </th>
+                                            <th class="px-3 py-2">
+                                                <button type="button" class="flex items-center gap-1 font-semibold" @click="toggleProveedorModalSort('promocion')">
+                                                    Promoción
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('promocion') }}</span>
+                                                </button>
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody :class="tableClasses.body">
+                                        <tr v-if="proveedorModalSortedItems.length === 0">
+                                            <td :class="tableClasses.emptyRow" colspan="13">
+                                                No hay movimientos para este proveedor.
+                                            </td>
+                                        </tr>
+                                        <tr v-for="item in proveedorModalSortedItems" :key="item.ventadesg_id" :class="tableClasses.row">
+                                            <td class="px-3 py-2">{{ item.fecha }}</td>
+                                            <td class="px-3 py-2">{{ item.producto_nombre }}</td>
+                                            <td class="px-3 py-2">{{ item.producto_ident }}</td>
+                                            <td class="px-3 py-2 text-right">{{ item.cantidad }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.precio_unitario) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.total) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.descuento_producto) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.cargo_tarjeta) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.descuento_total) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.ganancia) }}</td>
+                                            <td class="px-3 py-2 capitalize">{{ item.metodo }}</td>
+                                            <td class="px-3 py-2">{{ item.vendedor }}</td>
+                                            <td class="px-3 py-2">{{ item.promotion ?? 'normal' }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="text-[10px] text-gray-500 mt-2">* Desc. total = Desc. producto + Cargo tarjeta.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </transition>
     </AppLayout>
 </template>
