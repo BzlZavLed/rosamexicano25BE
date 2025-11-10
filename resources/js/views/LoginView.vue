@@ -14,6 +14,7 @@ const DEFAULT_THEME = 'rosa-mexicano';
 
 const THEME_LOGOS: Record<string, string> = {
     'verde-lima': '/images/themes/dpekesypekas.png',
+    'rosa-mexicano': '/images/themes/rosamexicano.png',
 };
 
 const THEME_TITLES: Record<string, string> = {
