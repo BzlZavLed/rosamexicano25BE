@@ -85,6 +85,10 @@
 
 <body>
     <div class="card">
+        <form action="{{ route('superadmin.logout') }}" method="POST" style="text-align:right;">
+            @csrf
+            <button type="submit" class="button" style="border-color:#e11d48;color:#e11d48;">Salir</button>
+        </form>
         <h1>Respaldo de base de datos</h1>
         <p style="color:#475569;">Descarga los últimos snapshots generados automáticamente. Solo se conservan los más recientes.</p>
 

@@ -117,3 +117,5 @@ Super admins can download the generated SQL files from `/superadmin/backups`, wh
 SUPERADMIN_USER=someuser
 SUPERADMIN_PASSWORD=strong-password
 ```
+
+Visit `/superadmin/login` to authenticate; upon success you’ll be redirected to `/superadmin/backups` where you can download the available SQL dumps or log out. Credentials are stored only in the session (no browser pop-up prompts).
