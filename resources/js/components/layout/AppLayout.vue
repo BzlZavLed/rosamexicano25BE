@@ -10,6 +10,7 @@ const isProvider = computed(() => auth.isProvider);
 const drawerOpen = ref(false);
 const isCompact = ref(false);
 const sidebarCollapsed = ref(false);
+const appName = import.meta.env.VITE_APP_NAME || 'Rosa Mexicano POS';
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }
 function closeDrawer() { drawerOpen.value = false; }
@@ -56,7 +57,7 @@ onUnmounted(() => {
                             <span v-if="sidebarCollapsed">☰</span>
                             <span v-else>−</span>
                         </button>
-                        <div class="font-semibold truncate">Rosa Mexicano POS</div>
+                        <div class="font-semibold truncate">{{ appName }}</div>
                     </div>
                 </div>
                 <div class="flex items-center gap-3 text-sm text-gray-600">
