@@ -84,14 +84,43 @@ class CashierController extends Controller
         });
     }
 
+    private function cashSummary(string $fechaIso): array
+    {
+        $methods = ['efectivo', 'cash'];
+
+        $ingresosQuery = DB::table('ventas')->whereIn('metodo', $methods)->where('ie', 1);
+        $this->applyVentaFechaFilter($ingresosQuery, $fechaIso);
+        $ingresos = (float) $ingresosQuery->sum('totalventa');
+
+        $egresosQuery = DB::table('ventas')->whereIn('metodo', $methods)->where('ie', 0);
+        $this->applyVentaFechaFilter($egresosQuery, $fechaIso);
+        $egresos = (float) $egresosQuery->sum('totalventa');
+
+        return [
+            'ingresos' => round($ingresos, 2),
+            'egresos' => round($egresos, 2),
+            'neto' => round($ingresos - $egresos, 2),
+        ];
+    }
+
     public function status()
     {
         $fecha = $this->todayStr();
         $row = $this->cajaByFechaQuery($fecha)->orderByDesc('id')->first();
+        $cashSummary = [
+            'ingresos' => 0.0,
+            'egresos' => 0.0,
+            'neto' => 0.0,
+        ];
+
+        if ($row) {
+            $cashSummary = $this->cashSummary($fecha);
+        }
 
         return response()->json([
             'open' => $row && (int) $row->estado === 1,
             'caja' => $row,
+            'cash_summary' => $cashSummary,
         ]);
     }
 

@@ -102,3 +102,7 @@ If you deploy the same codebase under different domains (for example, `https://r
 4. After changing these settings, clear cached config: `php artisan config:clear && php artisan config:cache`.
 
 With those values set, the API routes defined in `routes/api.php` will accept POSTs (and any other verbs) from all configured domains over HTTPS.
+
+### Audit trail
+
+Every INSERT, UPDATE, or DELETE executed by the application is captured automatically in the `audit_logs` table (see `database/migrations/2025_11_04_000000_create_audit_logs_table.php`). The listener registered in `App\Providers\AppServiceProvider` writes the SQL statement, bindings, connection, action type, and the authenticated user (when available). Run `php artisan migrate` to create the table before expecting entries; the logger skips logging until the table exists to avoid breaking fresh deployments.

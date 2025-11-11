@@ -121,6 +121,8 @@ const cashReceived = ref<number | null>(null);
 // Cash drawer amounts -------------------------------------------------------
 const openAmount = ref<number | null>(null);
 const closeAmount = ref<number | null>(null);
+const closeAmountSuggestion = ref<number | null>(null);
+const closeAmountTouched = ref(false);
 
 // Derived state & constants --------------------------------------
 /** Memoizes promotions per product to avoid redundant API requests during cart edits. */
@@ -781,6 +783,21 @@ function onManualDiscountChange(row: CartRow) {
 async function refreshCaja() {
     const data = await cajaStatus();
     caja.value = data ?? { open: false, caja: null };
+
+    const summary = (data as any)?.cash_summary ?? (data as any)?.cashSummary;
+    const net = summary?.neto ?? summary?.net ?? null;
+    if (caja.value.open && net != null && !Number.isNaN(Number(net))) {
+        const rounded = Math.round(Number(net) * 100) / 100;
+        closeAmountSuggestion.value = rounded;
+        if (!closeAmountTouched.value) {
+            closeAmount.value = rounded;
+        }
+    } else if (!caja.value.open) {
+        closeAmountSuggestion.value = null;
+        if (!closeAmountTouched.value) {
+            closeAmount.value = null;
+        }
+    }
 }
 
 /** Opens the cash drawer with an initial balance. */
@@ -795,6 +812,8 @@ async function openCaja() {
         await cajaOpen({ saldoinicial: Number(openAmount.value) });
         clearError();
         showMessage('Caja abierta');
+        closeAmountTouched.value = false;
+        closeAmountSuggestion.value = null;
         await refreshCaja();
     } catch (e: any) {
         showError(e?.response?.data?.message || 'No se pudo abrir caja');
@@ -812,6 +831,8 @@ async function closeCaja() {
         await cajaClose(payload);
         clearError();
         showMessage('Caja cerrada');
+        closeAmountTouched.value = false;
+        closeAmountSuggestion.value = null;
         await refreshCaja();
     } catch (e: any) {
         showError(e?.response?.data?.message || 'No se pudo cerrar caja');
@@ -1167,6 +1188,7 @@ onUnmounted(() => {
                 </div>
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input v-model.number="closeAmount" type="number" step="0.01" placeholder="Saldo sistema (opcional)"
+                        @input="closeAmountTouched = true"
                         class="w-full rounded border px-3 py-2 text-sm sm:w-48">
                     <button :disabled="saving" @click="closeCaja"
                         class="w-full rounded bg-rose-600 text-white text-sm px-3 py-2 transition hover:bg-rose-700 disabled:opacity-60 sm:w-auto">Cerrar
