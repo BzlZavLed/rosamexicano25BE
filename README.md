@@ -106,3 +106,7 @@ With those values set, the API routes defined in `routes/api.php` will accept PO
 ### Audit trail
 
 Every INSERT, UPDATE, or DELETE executed by the application is captured automatically in the `audit_logs` table (see `database/migrations/2025_11_04_000000_create_audit_logs_table.php`). The listener registered in `App\Providers\AppServiceProvider` writes the SQL statement, bindings, connection, action type, and the authenticated user (when available). Run `php artisan migrate` to create the table before expecting entries; the logger skips logging until the table exists to avoid breaking fresh deployments.
+
+### Automated database snapshots
+
+Use `php artisan db:snapshot` to generate a SQL dump under `storage/app/backups`. The command auto-detects the current database connection (MySQL or PostgreSQL), invokes `mysqldump` / `pg_dump`, and keeps only the most recent 30 files (configurable via `--keep=`). A daily scheduled run at 02:00 server time is configured in `bootstrap/app.php`; make sure the queue/cron runner executes `php artisan schedule:run` every minute so the snapshots are produced. Remember to install the relevant CLI tools (`mysqldump` or `pg_dump`) on the server and grant the app user permission to write into `storage/app/backups`.
