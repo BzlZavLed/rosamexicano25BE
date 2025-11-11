@@ -22,6 +22,14 @@ use Illuminate\Support\Facades\Route;
 Route::post('/auth/login', [UnifiedAuthController::class, 'login']);
 Route::post('/login', [UnifiedAuthController::class, 'login'])->name('api.login');
 
+Route::get('/health-check', function () {
+    return response()->json([
+        'ok' => true,
+        'app' => config('app.name'),
+        'timestamp' => now()->toIso8601String(),
+    ]);
+});
+
 Route::post('/setup/admin', function (Request $request) {
     abort_unless($request->header('X-Setup-Token') === config('app.admin_setup_token'), 403);
 
