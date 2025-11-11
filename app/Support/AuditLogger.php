@@ -27,6 +27,10 @@ class AuditLogger
             return;
         }
 
+        if (! Auth::hasUser()) {
+            return;
+        }
+
         $action = static::detectAction($query->sql);
         if (! $action) {
             return;
