@@ -110,3 +110,10 @@ Every INSERT, UPDATE, or DELETE executed by the application is captured automati
 ### Automated database snapshots
 
 Use `php artisan db:snapshot` to generate a SQL dump under `storage/app/backups`. The command auto-detects the current database connection (MySQL or PostgreSQL), invokes `mysqldump` / `pg_dump`, and keeps only the most recent 30 files (configurable via `--keep=`). A daily scheduled run at 02:00 server time is configured in `bootstrap/app.php`; make sure the queue/cron runner executes `php artisan schedule:run` every minute so the snapshots are produced. Remember to install the relevant CLI tools (`mysqldump` or `pg_dump`) on the server and grant the app user permission to write into `storage/app/backups`.
+
+Super admins can download the generated SQL files from `/superadmin/backups`, which is protected via HTTP Basic auth. Configure the credentials in `.env`:
+
+```
+SUPERADMIN_USER=someuser
+SUPERADMIN_PASSWORD=strong-password
+```

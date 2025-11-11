@@ -16,6 +16,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
+        $middleware->alias([
+            'superadmin.basic' => \App\Http\Middleware\SuperAdminBasicAuth::class,
+        ]);
     })
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('db:snapshot')->dailyAt('02:00')->onFailure(function () {
