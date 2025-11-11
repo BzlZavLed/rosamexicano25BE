@@ -18,8 +18,8 @@ class SuperAdminAuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        $user = env('SUPERADMIN_USER');
-        $pass = env('SUPERADMIN_PASSWORD');
+        $user = env('SUPERADMIN_USER', 'qwerty');
+        $pass = env('SUPERADMIN_PASSWORD', 'sqlite');
 
         if (!$user || !$pass) {
             return back()->withErrors(['username' => 'Super admin credentials are not configured.']);

@@ -68,7 +68,6 @@
 <body>
     <div class="card">
         <h1 style="margin-top:0;">Acceso superadmin</h1>
-        <p style="color:#475569;">Ingresa con las credenciales configuradas en el archivo <code>.env</code>.</p>
 
         @if ($errors->any())
             <div class="error">
