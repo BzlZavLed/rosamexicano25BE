@@ -33,8 +33,13 @@ const logoSrc = computed(() => THEME_LOGOS[theme.value]);
 const heroTitle = computed(() => THEME_TITLES[theme.value] ?? 'Portal interno');
 
 async function submit() {
-    const ok = await auth.login(identifier.value.trim(), password.value);
-    if (!ok) return;
+    const inputIdentifier = identifier.value.trim();
+    console.debug('[login] attempt', { identifier: inputIdentifier });
+    const ok = await auth.login(inputIdentifier, password.value);
+    if (!ok) {
+        console.warn('[login] failed', { identifier: inputIdentifier, error: auth.error });
+        return;
+    }
     if (auth.isAdmin) router.push({ name: 'admin-dashboard' });
     else if (auth.isProvider) router.push({ name: 'provider-dashboard' });
 }

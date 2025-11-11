@@ -6,6 +6,7 @@ use App\Models\Usuario;
 use App\Models\Proveedor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 
 class UnifiedAuthController extends Controller
 {
@@ -39,12 +40,21 @@ class UnifiedAuthController extends Controller
                     'user'  => ['id'=>$admin->id,'email'=>$admin->email,'nombre'=>$admin->nombre],
                 ]);
             }
+            Log::warning('Admin login failed', [
+                'identifier' => $id,
+                'ip' => $request->ip(),
+                'reason' => $admin ? 'password_mismatch' : 'user_not_found',
+            ]);
             return response()->json(['message'=>'Invalid credentials'], 401);
         }
 
         // Provider path (phone)
         $normalizedPhone = preg_replace('/\D+/', '', $id);
         if ($normalizedPhone === '') {
+            Log::warning('Provider login failed: invalid phone', [
+                'identifier' => $id,
+                'ip' => $request->ip(),
+            ]);
             return response()->json(['message' => 'Invalid credentials'], 401);
         }
 
@@ -59,6 +69,11 @@ class UnifiedAuthController extends Controller
             )->first();
         }
         if (!$prov) {
+            Log::warning('Provider login failed: provider not found', [
+                'identifier' => $id,
+                'normalized' => $normalizedPhone,
+                'ip' => $request->ip(),
+            ]);
             return response()->json(['message'=>'Invalid credentials'], 401);
         }
 
@@ -80,6 +95,11 @@ class UnifiedAuthController extends Controller
         }
 
         if (!$ok) {
+            Log::warning('Provider login failed: password mismatch', [
+                'identifier' => $id,
+                'provider_id' => $prov->id,
+                'ip' => $request->ip(),
+            ]);
             return response()->json(['message'=>'Invalid credentials'], 401);
         }
 
