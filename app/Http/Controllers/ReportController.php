@@ -114,14 +114,11 @@ class ReportController extends Controller
                 $totalventa = round($net, 2);
             } else {
                 $subtotal = (float) $venta->subtotal;
-                $amount = (float) ($venta->descuento_general ?? 0);
-                $percent = (float) ($venta->descuento_general_porcentaje ?? 0);
-                if ($percent <= 0 && $amount > 0 && $subtotal > 0) {
-                    $percent = round(($amount / $subtotal) * 100, 2);
-                }
                 $tarjetaCargo = (float) $venta->tarjeta_cargo;
-                $overallDiscount = $amount + $lineDiscountTotal + $tarjetaCargo;
+                $overallDiscount = $lineDiscountTotal + $tarjetaCargo;
                 $totalventa = (float) $venta->totalventa;
+                $amount = 0.0;
+                $percent = 0.0;
             }
 
             return [
@@ -709,7 +706,6 @@ class ReportController extends Controller
                 'v.id as venta_id',
                 'v.fecha as venta_fecha',
                 'v.subtotal as venta_subtotal',
-                'v.descuento_general as venta_descuento_general',
                 'v.tarjeta_cargo as venta_tarjeta_cargo',
                 'v.metodo as venta_metodo',
                 'v.vendedor as venta_vendedor',
@@ -730,14 +726,7 @@ class ReportController extends Controller
 
         $collection = collect($rows->get());
 
-        $generalDiscountTotal = $collection
-            ->groupBy(function ($row) {
-                return $row->idventa !== null ? (string) $row->idventa : 'venta_null_' . spl_object_id($row);
-            })
-            ->sum(function ($rows) {
-                $first = $rows->first();
-                return round((float) ($first->venta_descuento_general ?? 0), 2);
-            });
+        $generalDiscountTotal = 0.0;
 
         $grouped = $collection->groupBy(function ($row) {
             return $row->proveedor_ident !== null ? (string) $row->proveedor_ident : 'sin_proveedor';

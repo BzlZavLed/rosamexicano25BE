@@ -135,7 +135,6 @@ class ProviderSalesFlowTest extends TestCase
             'payment' => [
                 'method' => 'tarjeta',
             ],
-            'discount_percent' => 0,
         ]);
 
         $response->assertCreated();

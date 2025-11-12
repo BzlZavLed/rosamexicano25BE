@@ -113,10 +113,7 @@ function randIdent(): number { return Math.floor(100000 + Math.random() * 900000
 
 const showImporteField = computed(() => form.tipo === 'normal');
 const showPorcentajeField = computed(() => form.tipo === 'porcentaje');
-const tipoLabel = computed(() => {
-    const option = tipoOptions.find((opt) => opt.value === form.tipo);
-    return option?.label ?? form.tipo;
-});
+
 
 watch(() => form.tipo, (value) => {
     if (value !== 'porcentaje') {

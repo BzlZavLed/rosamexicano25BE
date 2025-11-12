@@ -114,7 +114,6 @@ const clientError = ref('');
 let clientSearchTimer: number | undefined;
 const clientSearchNoResults = ref(false);
 
-const discountPercent = ref<number>(0);
 const paymentMethod = ref<CashMethod>('efectivo');
 const cashReceived = ref<number | null>(null);
 
@@ -189,13 +188,8 @@ const manualItemDiscountAmount = computed(() =>
     Math.round(cart.value.reduce((sum, row) => sum + lineManualDiscount(row), 0) * 100) / 100
 );
 
-/** Cashier-entered manual percent discount applied to the entire cart. */
-const discountAmount = computed(() =>
-    Math.round((subTotal.value * (discountPercent.value || 0) / 100) * 100) / 100
-);
-
 const totalDiscountAmount = computed(() =>
-    discountAmount.value + promoDiscountAmount.value + manualItemDiscountAmount.value
+    promoDiscountAmount.value + manualItemDiscountAmount.value
 );
 
 /** Net total after discounts but before card surcharge is applied. */
@@ -432,7 +426,7 @@ function captureSaleSnapshot(ventaId: number, sourceRows: CartRow[] = cart.value
         rows: sourceRows.map(row => ({ ...row })),
         subtotal: subTotal.value,
         promoDiscount: promoDiscountAmount.value,
-        manualDiscount: discountAmount.value,
+        manualDiscount: manualItemDiscountAmount.value,
         manualItemDiscount: manualItemDiscountAmount.value,
         totalDiscount: totalDiscountAmount.value,
         afterDiscount: afterDiscount.value,
@@ -942,9 +936,6 @@ async function onCheckout() {
         if (paymentMethod.value === 'efectivo') {
             payload.payment.received = Number(cashReceived.value ?? 0);
         }
-        if (discountPercent.value > 0) {
-            payload.discount_percent = discountPercent.value;
-        }
         payload.ie = 1;
 
         if (paymentMethod.value === 'tarjeta') {
@@ -970,7 +961,6 @@ async function onCheckout() {
         showMessage('Venta realizada con promociones aplicadas');
 
         cart.value = [];
-        discountPercent.value = 0;
         cashReceived.value = null;
         await refreshCaja();
     } catch (e: any) {
@@ -1094,7 +1084,7 @@ function buildReceiptPDF(snapshot: SaleSnapshot) {
     hr();
     rowR('Subtotal', money(snapshot.subtotal));
     if (snapshot.promoDiscount) rowR('Promociones', `- ${money(snapshot.promoDiscount)}`);
-    if (snapshot.manualDiscount) rowR('Desc. general', `- ${money(snapshot.manualDiscount)}`);
+    if (snapshot.manualDiscount) rowR('Desc. por producto', `- ${money(snapshot.manualDiscount)}`);
     if (snapshot.manualItemDiscount) rowR('Desc. por producto', `- ${money(snapshot.manualItemDiscount)}`);
     if (snapshot.surchargeAmount) rowR(`Recargo ${snapshot.surchargePercent}%`, money(snapshot.surchargeAmount));
     rowR('TOTAL', money(snapshot.total), true);
@@ -1490,20 +1480,11 @@ onUnmounted(() => {
                 <!-- Totals & Payment -->
                 <section class="w-full space-y-3 text-[13px] leading-tight lg:w-80 lg:shrink-0">
                     <div class="border rounded-md p-3 space-y-3">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">Descuento (%)</label>
-                            <input v-model.number="discountPercent" type="number" step="0.5" min="0" max="100"
-                                class="w-full rounded-md border px-2.5 py-1.5 text-[13px]" />
-                        </div>
-
                         <div class="text-[13px] space-y-1">
                             <div class="flex justify-between"><span>Subtotal</span><b>{{ currency(subTotal) }}</b></div>
                             <div class="flex justify-between" v-if="promoDiscountAmount">
                                 <span>Promociones</span>
                                 <b class="text-emerald-700">- {{ currency(promoDiscountAmount) }}</b>
-                            </div>
-                            <div class="flex justify-between">
-                                <span>Desc. general</span><b>- {{ currency(discountAmount) }}</b>
                             </div>
                             <div class="flex justify-between" v-if="manualItemDiscountAmount">
                                 <span>Desc. por producto</span>

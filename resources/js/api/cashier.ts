@@ -40,7 +40,6 @@ export type CheckoutItemPayload = {
 
 export type CheckoutPayload = {
     items: CheckoutItemPayload[];
-    discount_percent?: number;
     payment: { method: CashMethod; received?: number };
     ie?: number;
     provider_surcharge?: Array<{ proveedor_id: number; amount: number; nombre?: string; percent?: number }>;

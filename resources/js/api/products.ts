@@ -17,14 +17,6 @@ export type Producto = {
     } | null;
 };
 
-export type Proveedor = {
-    id?: number;
-    ident: number;
-    nombre: string;
-    tipo?: 'normal' | 'consigna' | 'porcentaje';
-    porcentaje_comision?: number | null;
-};
-
 export type ListProductosParams = {
     search?: string;
     page?: number;
@@ -60,12 +52,6 @@ export async function updateProducto(id: number, p: Partial<Producto>) {
 
 export async function deleteProducto(id: number) {
     await http.delete(`/productos/${id}`);
-}
-
-export async function listProveedores() {
-    const { data } = await http.get('/proveedores', { params: { per_page: 1000 } });
-    const rows = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
-    return rows as Proveedor[];
 }
 
 /** Inventory hooks */

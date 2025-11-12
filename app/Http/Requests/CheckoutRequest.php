@@ -24,7 +24,6 @@ class CheckoutRequest extends FormRequest
             'lineas.*.cant'   => ['required','integer','min:1'],
             'lineas.*.product_desc'=> ['nullable','numeric','min:0'],
             'lineas.*.totdesc'=> ['nullable','numeric','min:0'],
-            'descuento_general' => ['nullable','numeric','min:0','max:100'],
         ];
     }
 }

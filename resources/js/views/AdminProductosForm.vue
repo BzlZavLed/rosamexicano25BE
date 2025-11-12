@@ -7,13 +7,12 @@ import {
     createProducto,
     updateProducto,
     deleteProducto,
-    listProveedores,
     setStock,
     bulkUploadCSV,
     type Producto,
-    type Proveedor,
     type ListProductosParams,
 } from '../api/products';
+import { listProveedoresAll, type Proveedor } from '../api/proveedores';
 import http from '../api/http';
 
 import JsBarcode from 'jsbarcode';
@@ -244,15 +243,27 @@ function resetForm() {
     selectedId.value = null;
     message.value = '';
     error.value = '';
+    providerSearch.value = '';
 }
 
+const providerSearch = ref('');
+const providerDropdownOpen = ref(false);
 const currentProveedor = computed(() => proveedores.value.find((p) => p.ident === form.proveedorid) ?? null);
 const proveedorTipo = computed(() => currentProveedor.value?.tipo ?? 'normal');
 const proveedorPorcentaje = computed(() => currentProveedor.value?.porcentaje_comision ?? null);
 const requiereCostoProveedor = computed(() => proveedorTipo.value === 'consigna');
 const esPorcentajeProveedor = computed(() => proveedorTipo.value === 'porcentaje');
+const filteredProveedores = computed(() => {
+    const term = providerSearch.value.trim().toLowerCase();
+    if (!term) return proveedores.value.slice(0, 25);
+    return proveedores.value
+        .filter((p) => p.nombre.toLowerCase().includes(term) || String(p.ident).includes(term))
+        .slice(0, 25);
+});
 
 watch(() => form.proveedorid, () => {
+    const prov = currentProveedor.value;
+    providerSearch.value = prov ? `${prov.nombre} (#${prov.ident})` : '';
     syncPrecioProveedor('provider');
 });
 
@@ -282,6 +293,22 @@ function syncPrecioProveedor(trigger: 'provider' | 'price') {
     } else if (prov.tipo === 'consigna' && trigger === 'provider' && form.precio_proveedor == null) {
         form.precio_proveedor = null;
     }
+}
+
+function onProviderInput(value: string) {
+    providerSearch.value = value;
+    providerDropdownOpen.value = true;
+    form.proveedorid = null;
+}
+
+function selectProviderOption(prov: Proveedor) {
+    form.proveedorid = prov.ident;
+    providerSearch.value = `${prov.nombre} (#${prov.ident})`;
+    providerDropdownOpen.value = false;
+}
+
+function closeProviderDropdown() {
+    setTimeout(() => { providerDropdownOpen.value = false; }, 150);
 }
 
 function buildListParams(overrides: Partial<ListProductosParams> = {}): ListProductosParams {
@@ -324,8 +351,10 @@ async function loadList() {
 }
 async function loadProveedores() {
     try {
-        const resp = await listProveedores();
+        const resp = await listProveedoresAll();
         proveedores.value = Array.isArray(resp) ? resp : [];
+        const prov = currentProveedor.value;
+        providerSearch.value = prov ? `${prov.nombre} (#${prov.ident})` : '';
     } catch { /* ignore */ }
 }
 async function selectRow(p: Producto) {
@@ -340,6 +369,8 @@ async function selectRow(p: Producto) {
     form.fecha = p.fecha || new Date().toISOString().slice(0, 10);
     form.cantidadInicial = null;
     message.value = ''; error.value = '';
+    const prov = proveedores.value.find((prov) => prov.ident === p.proveedorid);
+    providerSearch.value = prov ? `${prov.nombre} (#${prov.ident})` : `${p.proveedor?.nombre ?? ''} (#${p.proveedorid})`;
     syncPrecioProveedor('provider');
 }
 async function submitCreateOrUpdate() {
@@ -347,7 +378,6 @@ async function submitCreateOrUpdate() {
     if (!form.ident) form.ident = randIdent();
     if (!form.nombre || !form.proveedorid || !form.precio) {
         error.value = 'Nombre, Proveedor y Precio son obligatorios';
-        console.log(form);
         return;
     }
     if ((requiereCostoProveedor.value || esPorcentajeProveedor.value) && (form.precio_proveedor == null)) {
@@ -579,15 +609,28 @@ onMounted(async () => {
                     </div>
 
                     <!-- Proveedor -->
-                    <div>
+                    <div class="relative">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
-                        <select v-model.number="form.proveedorid"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
-                            <option :value="null" disabled>Selecciona proveedor</option>
-                            <option v-for="p in proveedores" :key="p.ident" :value="p.ident">{{ p.nombre }}</option>
-                        </select>
+                        <input type="text" :value="providerSearch" @input="onProviderInput(($event.target as HTMLInputElement).value)"
+                            @focus="providerDropdownOpen = true" @blur="closeProviderDropdown"
+                            @keydown.enter.prevent="filteredProveedores[0] ? selectProviderOption(filteredProveedores[0]) : null"
+                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                            placeholder="Busca por nombre o identificador" autocomplete="off" />
+                        <input type="hidden" :value="form.proveedorid ?? ''">
+                        <div v-if="providerDropdownOpen"
+                            class="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-auto">
+                            <template v-if="filteredProveedores.length">
+                                <button v-for="p in filteredProveedores" :key="p.ident" type="button"
+                                    class="w-full text-left px-3 py-2 hover:bg-gray-100 flex flex-col"
+                                    @mousedown.prevent="selectProviderOption(p)">
+                                    <span class="font-medium text-gray-800">{{ p.nombre }}</span>
+                                    <span class="text-xs text-gray-500">#{{ p.ident }} · {{ p.tipo }}</span>
+                                </button>
+                            </template>
+                            <p v-else class="px-3 py-2 text-sm text-gray-500">Sin resultados</p>
+                        </div>
                         <p class="text-xs text-gray-500 mt-1" v-if="currentProveedor">
-                            Tipo: <b>{{ currentProveedor?.tipo || 'normal' }}</b>
+                            Tipo: <b class="capitalize">{{ currentProveedor?.tipo || 'normal' }}</b>
                             <span v-if="currentProveedor?.tipo === 'porcentaje' && currentProveedor?.porcentaje_comision">
                                 — {{ currentProveedor?.porcentaje_comision }}% de comisión
                             </span>

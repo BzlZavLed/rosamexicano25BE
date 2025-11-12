@@ -192,12 +192,11 @@ class CashierLegacyController extends Controller
         }
 
         $items = $request->input('items', []);
-        $discountPercent = (float) ($request->input('discount_percent') ?? 0);
         $method = $request->input('payment.method');    // 'efectivo' | 'tarjeta' | 'transferencia'
         $received = $request->input('payment.received');  // efectivo entregado (solo efectivo)
 
         try {
-            $payload = DB::transaction(function () use ($items, $discountPercent, $method, $received, $fechaHoy, $request) {
+            $payload = DB::transaction(function () use ($items, $method, $received, $fechaHoy, $request) {
 
                 $lines = [];
                 $grossSubtotal = 0.0;
@@ -281,33 +280,11 @@ class CashierLegacyController extends Controller
                     $providerLines[$providerId][] = $index;
                 }
 
-                // 2) descuento global (porcentaje)
-                $netSubtotal = max(0, $grossSubtotal - $itemDiscountTotal);
-                $orderDiscountPercent = max(0, min(100, (float) $discountPercent));
-                $orderDiscountAmount = $orderDiscountPercent > 0 ? round($netSubtotal * ($orderDiscountPercent / 100), 2) : 0.0;
-                if ($orderDiscountAmount > $netSubtotal) {
-                    $orderDiscountAmount = $netSubtotal;
-                }
+                $afterDiscount = max(0, $grossSubtotal - $itemDiscountTotal);
 
-                $afterDiscount = max(0, $netSubtotal - $orderDiscountAmount);
-
-                // 3) distribuir descuento global por línea y acumular netos por proveedor
-                $lineCount = count($lines);
-                $remainingOrderDiscount = $orderDiscountAmount;
                 $providerNetTotals = [];
-                foreach ($lines as $idx => &$line) {
-                    $lineOrderDiscount = 0.0;
-                    if ($orderDiscountAmount > 0 && $netSubtotal > 0) {
-                        if ($idx === $lineCount - 1) {
-                            $lineOrderDiscount = $remainingOrderDiscount;
-                        } else {
-                            $lineOrderDiscount = round($orderDiscountAmount * ($line['net_before_order'] / $netSubtotal), 2);
-                            $remainingOrderDiscount = max(0, $remainingOrderDiscount - $lineOrderDiscount);
-                        }
-                    }
-
-                    $lineNetAfterOrder = max(0, $line['net_before_order'] - $lineOrderDiscount);
-                    $line['order_discount_part'] = $lineOrderDiscount;
+                foreach ($lines as &$line) {
+                    $lineNetAfterOrder = max(0, $line['net_before_order']);
                     $line['net_after_order'] = $lineNetAfterOrder;
 
                     $pid = $line['provider_id'];
@@ -315,7 +292,7 @@ class CashierLegacyController extends Controller
                 }
                 unset($line);
 
-                // 4) recargo a proveedores por tarjeta (4.5%), distribuido proporcionalmente
+                // 2) recargo a proveedores por tarjeta (4.5%), distribuido proporcionalmente
                 $providerChargeTotal = 0.0;
                 if ($method === 'tarjeta') {
                     $totalNetAfterOrder = array_sum($providerNetTotals);
@@ -398,41 +375,35 @@ class CashierLegacyController extends Controller
                     $recibo = $total;
                     $cambio = 0.0;
                 }
-                $ie = $request->input('ie', 1); // legacy
+        $ie = $request->input('ie', 1); // legacy
 
-                // 7) encabezado de venta (tabla legacy "ventas")
-                $venta = Venta::create([
-                    'idventa' => $nextIdVenta,
-                    'subtotal' => round($grossSubtotal, 2),
-                    'tarjeta_cargo' => round($providerChargeTotal, 2),
-                    'descuento_general' => round($orderDiscountAmount, 2),
-                    'descuento_general_porcentaje' => $orderDiscountPercent,
-                    'totalventa' => $total,
-                    'metodo' => $method,       // 'efectivo' | 'tarjeta' | 'transferencia'
-                    'recibo' => $recibo,
-                    'cambio' => $cambio,
-                    'vendedor' => $vendedor,
-                    'fecha' => $fechaHoy,     // "d/m/y" (varchar(10))
-                    'ie' => $ie,
-                    'concepto' => 'VENTA MOSTRADOR',
-                ]);
+        // 7) encabezado de venta (tabla legacy "ventas")
+        $venta = Venta::create([
+            'idventa' => $nextIdVenta,
+            'subtotal' => round($grossSubtotal, 2),
+            'tarjeta_cargo' => round($providerChargeTotal, 2),
+            'totalventa' => $total,
+            'metodo' => $method,       // 'efectivo' | 'tarjeta' | 'transferencia'
+            'recibo' => $recibo,
+            'cambio' => $cambio,
+            'vendedor' => $vendedor,
+            'fecha' => $fechaHoy,     // "d/m/y" (varchar(10))
+            'ie' => $ie,
+            'concepto' => 'VENTA MOSTRADOR',
+        ]);
 
-                // 8) renglones (tabla legacy "ventadesg") + actualizar inventario
-                $hora = date('H:i:s'); // ok para time(6)
-                $percentLabel = rtrim(rtrim(number_format($orderDiscountPercent, 2, '.', ''), '0'), '.');
+        // 8) renglones (tabla legacy "ventadesg") + actualizar inventario
+        $hora = date('H:i:s'); // ok para time(6)
 
-                foreach ($lines as $ln) {
-                    $lineItemDiscount = round($ln['item_discount'], 2);
-                    $lineOrderDiscount = $ln['order_discount_part'] ?? 0.0;
-                    $lineProviderCharge = round($ln['provider_charge'] ?? 0.0, 2);
+        foreach ($lines as $ln) {
+            $lineItemDiscount = round($ln['item_discount'], 2);
+            $lineProviderCharge = round($ln['provider_charge'] ?? 0.0, 2);
 
-                    // Etiqueta de promoción: NO considerar el recargo como "descuento"
-                    $promotionFlag = 'normal';
-                    if ($lineOrderDiscount > 0 && $orderDiscountPercent > 0) {
-                        $promotionFlag = 'descuento - ' . ($percentLabel !== '' ? $percentLabel : '0') . '%';
-                    } elseif ($lineItemDiscount > 0) {
-                        $promotionFlag = 'descuento - producto';
-                    }
+            // Etiqueta de promoción: NO considerar el recargo como "descuento"
+            $promotionFlag = 'normal';
+            if ($lineItemDiscount > 0) {
+                $promotionFlag = 'descuento - producto';
+            }
 
                     if ($bundleLabel = $this->detectPromotionLabel($ln['producto'], (int) ($ln['qty'] ?? 0))) {
                         $promotionFlag = $bundleLabel;
@@ -478,10 +449,10 @@ class CashierLegacyController extends Controller
                     'venta' => $venta,
                     'subtotal' => $grossSubtotal,
                     'item_discount_total' => $itemDiscountTotal,
-                    'subtotal_after_item_discounts' => $netSubtotal,
-                    'discount_percent' => $orderDiscountPercent,
-                    'discount_amount' => $orderDiscountAmount,
-                    'overall_discount_total' => $itemDiscountTotal + $orderDiscountAmount + $providerChargeTotal,
+                    'subtotal_after_item_discounts' => $afterDiscount,
+                    'discount_percent' => 0,
+                    'discount_amount' => 0,
+                    'overall_discount_total' => $itemDiscountTotal + $providerChargeTotal,
                     'surcharge_percent' => $method === 'tarjeta' ? 4.5 : 0.0,
                     'surcharge_amount' => $providerChargeTotal,
                     'tarjeta_cargo' => round($providerChargeTotal, 2),
@@ -524,8 +495,6 @@ class CashierLegacyController extends Controller
                 $vendedor = $request->input('vendedor') ?: ($request->user()->nombre ?? $request->user()->email ?? 'admin');
 
                 $subtotal = round($total, 2);
-                $descuentoGeneral = 0.0;
-                $descuentoPercent = 0.0;
                 $tarjetaCargo = 0.0;
                 $totalVenta = $subtotal;
 
@@ -533,8 +502,6 @@ class CashierLegacyController extends Controller
                 return Venta::create([
                     'idventa' => $nextIdVenta,
                     'subtotal' => $subtotal,
-                    'descuento_general' => $descuentoGeneral,
-                    'descuento_general_porcentaje' => $descuentoPercent,
                     'tarjeta_cargo' => $tarjetaCargo,
                     'totalventa' => $totalVenta,
                     'metodo' => $method,

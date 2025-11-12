@@ -283,35 +283,11 @@ class CashierController extends Controller
                 $inv->save();
             }
 
-            $netSubtotal = max(0, $grossSubtotal - $itemDiscountTotal);
-            $orderDiscountPercent = isset($payload['descuento_general'])
-                ? max(0, min(100, (float) $payload['descuento_general']))
-                : 0.0;
-            $orderDiscountAmount = $orderDiscountPercent > 0
-                ? round($netSubtotal * ($orderDiscountPercent / 100), 2)
-                : 0.0;
-            if ($orderDiscountAmount > $netSubtotal) {
-                $orderDiscountAmount = $netSubtotal;
-            }
+            $afterDiscount = max(0, $grossSubtotal - $itemDiscountTotal);
 
-            $afterDiscount = max(0, $netSubtotal - $orderDiscountAmount);
-
-            $lineCount = count($lines);
-            $remainingOrderDiscount = $orderDiscountAmount;
             $providerNetTotals = [];
-            foreach ($lines as $idx => &$line) {
-                $lineOrderDiscount = 0.0;
-                if ($orderDiscountAmount > 0 && $netSubtotal > 0) {
-                    if ($idx === $lineCount - 1) {
-                        $lineOrderDiscount = $remainingOrderDiscount;
-                    } else {
-                        $lineOrderDiscount = round($orderDiscountAmount * ($line['net_before_order'] / $netSubtotal), 2);
-                        $remainingOrderDiscount = max(0, $remainingOrderDiscount - $lineOrderDiscount);
-                    }
-                }
-
-                $lineNetAfterOrder = max(0, $line['net_before_order'] - $lineOrderDiscount);
-                $line['order_discount_part'] = $lineOrderDiscount;
+            foreach ($lines as &$line) {
+                $lineNetAfterOrder = max(0, $line['net_before_order']);
                 $line['net_after_order'] = $lineNetAfterOrder;
                 $providerId = $line['provider_id'];
                 $providerNetTotals[$providerId] = ($providerNetTotals[$providerId] ?? 0) + $lineNetAfterOrder;
@@ -383,8 +359,6 @@ class CashierController extends Controller
             $venta = Venta::create([
                 'idventa' => $payload['idventa'],
                 'subtotal' => round($grossSubtotal, 2),
-                'descuento_general' => round($orderDiscountAmount, 2),
-                'descuento_general_porcentaje' => $orderDiscountPercent,
                 'tarjeta_cargo' => $providerChargeTotal,
                 'totalventa' => $total,
                 'metodo' => $payload['metodo'],
@@ -396,21 +370,16 @@ class CashierController extends Controller
                 'concepto' => $payload['concepto'] ?? '',
             ]);
 
-            $percentLabel = rtrim(rtrim(number_format($orderDiscountPercent, 2, '.', ''), '0'), '.');
-
             foreach ($lines as $line) {
                 $lineData = $line['data'];
                 $prod = $line['producto'];
 
                 $lineItemDiscount = round($line['item_discount'], 2);
-                $lineOrderDiscount = $line['order_discount_part'] ?? 0.0;
                 $lineProviderCharge = round($line['provider_charge'] ?? 0.0, 2);
                 $totalProductDiscount = round($lineItemDiscount + $lineProviderCharge, 2);
 
                 $promotionFlag = 'normal';
-                if ($lineOrderDiscount > 0 && $orderDiscountPercent > 0) {
-                    $promotionFlag = 'descuento - ' . ($percentLabel !== '' ? $percentLabel : '0') . '%';
-                } elseif ($totalProductDiscount > 0) {
+                if ($totalProductDiscount > 0) {
                     $promotionFlag = 'descuento - producto';
                 }
 
@@ -439,10 +408,10 @@ class CashierController extends Controller
                 'venta' => $venta,
                 'subtotal' => $grossSubtotal,
                 'item_discount_total' => $itemDiscountTotal,
-                'subtotal_after_item_discounts' => $netSubtotal,
-                'discount_percent' => $orderDiscountPercent,
-                'discount_amount' => $orderDiscountAmount,
-                'overall_discount_total' => $itemDiscountTotal + $orderDiscountAmount + $providerChargeTotal,
+                'subtotal_after_item_discounts' => $afterDiscount,
+                'discount_percent' => 0,
+                'discount_amount' => 0,
+                'overall_discount_total' => $itemDiscountTotal + $providerChargeTotal,
                 'surcharge_percent' => strtolower($payload['metodo']) === 'tarjeta' ? 4.5 : 0.0,
                 'surcharge_amount' => $providerChargeTotal,
                 'tarjeta_cargo' => $providerChargeTotal,
