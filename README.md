@@ -128,4 +128,4 @@ Los proveedores ahora se clasifican en tres tipos:
 - `consigna`: no tienen cuota mensual; cada producto debe capturar su costo base (`precio_proveedor`) y se vende con un precio público independiente.
 - `porcentaje`: la tienda retiene 20% o 30% de cada venta. El costo del proveedor se calcula aplicando ese porcentaje al precio de venta y también se descuenta cualquier 4.5% por ventas con tarjeta (prorrateado entre todos los proveedores de la venta).
 
-Los productos almacenan ambos precios (público y costo proveedor) y las ventas registran, por renglón, cuánto debe pagarse al proveedor (`ventadesg.proveedor_pago`) junto con el porcentaje aplicado cuando sea necesario.
+Los productos almacenan ambos precios (público y costo proveedor) y las ventas registran, por renglón, el costo del proveedor (`ventadesg.proveedor_bruto`), los descuentos que se le cargan (`ventadesg.proveedor_descuento`) y el monto neto a pagar (`ventadesg.proveedor_neto`), junto con el porcentaje aplicado cuando sea necesario.

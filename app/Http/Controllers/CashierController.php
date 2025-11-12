@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use App\Support\ProviderPayout;
 
 class CashierController extends Controller
 {
@@ -90,11 +91,15 @@ class CashierController extends Controller
 
         $ingresosQuery = DB::table('ventas')->whereIn('metodo', $methods)->where('ie', 1);
         $this->applyVentaFechaFilter($ingresosQuery, $fechaIso);
-        $ingresos = (float) $ingresosQuery->sum('totalventa');
+        $ingresos = (float) $ingresosQuery
+            ->selectRaw('COALESCE(SUM(COALESCE(ingreso_real, totalventa)), 0) as total')
+            ->value('total');
 
         $egresosQuery = DB::table('ventas')->whereIn('metodo', $methods)->where('ie', 0);
         $this->applyVentaFechaFilter($egresosQuery, $fechaIso);
-        $egresos = (float) $egresosQuery->sum('totalventa');
+        $egresos = (float) $egresosQuery
+            ->selectRaw('COALESCE(SUM(COALESCE(ingreso_real, totalventa)), 0) as total')
+            ->value('total');
 
         return [
             'ingresos' => round($ingresos, 2),
@@ -228,14 +233,17 @@ class CashierController extends Controller
 
         $payload = $request->validated();
 
-        return DB::transaction(function () use ($payload, $fecha, $hora) {
+        $result = DB::transaction(function () use ($payload, $fecha, $hora) {
             $grossSubtotal = 0;
             $itemDiscountTotal = 0;
             $lines = [];
-            $providerLines = [];
+            $lineItems = [];
 
             foreach ($payload['lineas'] as $index => $line) {
-                $producto = \App\Models\Producto::findOrFail($line['idProd']);
+                $ident = (int) $line['idProd'];
+                $producto = \App\Models\Producto::with('proveedor')
+                    ->where('ident', $ident)
+                    ->firstOrFail();
 
                 $lineBase = (float) $line['pUni'] * (int) $line['cant'];
                 $rawDiscount = $line['product_desc'] ?? $line['totdesc'] ?? 0;
@@ -249,19 +257,20 @@ class CashierController extends Controller
                 $grossSubtotal += $lineBase;
                 $itemDiscountTotal += $lineItemDiscount;
 
-                $providerId = (int) ($producto->proveedorid ?? 0);
-
                 $lines[] = [
                     'producto' => $producto,
                     'data' => $line,
                     'line_base' => $lineBase,
                     'item_discount' => $lineItemDiscount,
-                    'net_before_order' => $lineNetBeforeOrder,
-                    'provider_id' => $providerId,
-                    'provider_charge' => 0.0,
                 ];
 
-                $providerLines[$providerId][] = $index;
+                $lineItems[] = [
+                    'producto' => $producto,
+                    'proveedor' => $producto->relationLoaded('proveedor') ? $producto->getRelation('proveedor') : null,
+                    'qty' => (int) $line['cant'],
+                    'unit_price' => (float) $line['pUni'],
+                    'discount_amount' => $lineItemDiscount,
+                ];
 
                 $inv = \App\Models\Inventario::where('ident', $producto->ident)->lockForUpdate()->first();
                 if (!$inv) {
@@ -283,83 +292,37 @@ class CashierController extends Controller
                 $inv->save();
             }
 
-            $afterDiscount = max(0, $grossSubtotal - $itemDiscountTotal);
+            $payout = ProviderPayout::calculate($lineItems, $payload['metodo']);
+            $grossSubtotal = $payout['gross_subtotal'];
+            $itemDiscountTotal = $payout['discount_total'];
+            $afterDiscount = $payout['after_discount'];
+            $providerChargeTotal = $payout['provider_charge_total'];
+            $total = $payout['total'];
+            $costoTotal = $payout['costo_total'];
+            $gananciaTotal = $payout['ganancia_total'];
 
-            $providerNetTotals = [];
-            foreach ($lines as &$line) {
-                $lineNetAfterOrder = max(0, $line['net_before_order']);
-                $line['net_after_order'] = $lineNetAfterOrder;
-                $providerId = $line['provider_id'];
-                $providerNetTotals[$providerId] = ($providerNetTotals[$providerId] ?? 0) + $lineNetAfterOrder;
+            foreach ($lines as $idx => &$line) {
+                $line['payout'] = $payout['lines'][$idx] ?? [];
             }
             unset($line);
 
-            $providerChargeTotal = 0.0;
-            if (strtolower($payload['metodo']) === 'tarjeta') {
-                $totalNetAfterOrder = array_sum($providerNetTotals);
-                if ($totalNetAfterOrder > 0) {
-                    $providerChargeTotal = round($totalNetAfterOrder * 0.045, 2);
-
-                    $providerIds = array_keys($providerNetTotals);
-                    $providerCharges = [];
-                    $remainingChargeTotal = $providerChargeTotal;
-                    $providerCount = count($providerIds);
-
-                    foreach ($providerIds as $pIndex => $providerId) {
-                        $base = $providerNetTotals[$providerId];
-                        if ($base <= 0) {
-                            $providerCharges[$providerId] = 0.0;
-                            continue;
-                        }
-
-                        if ($pIndex === $providerCount - 1) {
-                            $providerCharges[$providerId] = round($remainingChargeTotal, 2);
-                        } else {
-                            $share = $base / $totalNetAfterOrder;
-                            $charge = round($providerChargeTotal * $share, 2);
-                            $providerCharges[$providerId] = $charge;
-                            $remainingChargeTotal -= $charge;
-                        }
-                    }
-
-                    foreach ($providerCharges as $providerId => $charge) {
-                        $indexes = $providerLines[$providerId] ?? [];
-                        if (empty($indexes) || $charge <= 0) {
-                            continue;
-                        }
-
-                        $providerBase = $providerNetTotals[$providerId];
-                        $remainingCharge = $charge;
-                        $lineCountForProvider = count($indexes);
-
-                        foreach ($indexes as $pos => $lineIdx) {
-                            $lineNetAfterOrder = $lines[$lineIdx]['net_after_order'];
-                            if ($providerBase <= 0 || $remainingCharge <= 0) {
-                                $lineCharge = 0.0;
-                            } elseif ($pos === $lineCountForProvider - 1) {
-                                $lineCharge = round($remainingCharge, 2);
-                            } else {
-                                $weight = $lineNetAfterOrder / $providerBase;
-                                $lineCharge = round($charge * $weight, 2);
-                                $remainingCharge -= $lineCharge;
-                            }
-
-                            $lines[$lineIdx]['provider_charge'] = round(($lines[$lineIdx]['provider_charge'] ?? 0) + $lineCharge, 2);
-                        }
-                    }
-
-                    $providerChargeTotal = round(array_reduce($lines, function ($carry, $lineData) {
-                        return $carry + ($lineData['provider_charge'] ?? 0);
-                    }, 0.0), 2);
-                }
+            $ventaId = (int) ($payload['idventa'] ?? 0);
+            if ($ventaId <= 0) {
+                $ventaId = (int) DB::table('ventas')->max('idventa');
+                $ventaId = $ventaId > 0 ? $ventaId + 1 : 1;
             }
 
-            $total = round(max(0, $afterDiscount - $providerChargeTotal), 2);
+            $paymentMethod = strtolower($payload['metodo']);
+            $cashDelta = round(max(0, ($payload['recibo'] ?? 0) - ($payload['cambio'] ?? 0)), 2);
+            $ingresoReal = in_array($paymentMethod, ['efectivo', 'cash'], true) ? $cashDelta : $total;
 
             $venta = Venta::create([
-                'idventa' => $payload['idventa'],
+                'idventa' => $ventaId,
                 'subtotal' => round($grossSubtotal, 2),
                 'tarjeta_cargo' => $providerChargeTotal,
+                'costo_total' => $costoTotal,
+                'ganancia_total' => $gananciaTotal,
+                'ingreso_real' => $ingresoReal,
                 'totalventa' => $total,
                 'metodo' => $payload['metodo'],
                 'recibo' => $payload['recibo'],
@@ -375,11 +338,23 @@ class CashierController extends Controller
                 $prod = $line['producto'];
 
                 $lineItemDiscount = round($line['item_discount'], 2);
-                $lineProviderCharge = round($line['provider_charge'] ?? 0.0, 2);
-                $totalProductDiscount = round($lineItemDiscount + $lineProviderCharge, 2);
+                $linePayout = $line['payout'] ?? [];
+                $lineProviderCharge = round($linePayout['provider_charge'] ?? 0.0, 2);
+                $providerBruto = round($linePayout['provider_bruto'] ?? 0.0, 2);
+                $providerDiscount = round($linePayout['provider_total_discount'] ?? 0.0, 2);
+                $providerNet = round($linePayout['provider_net'] ?? max(0, $providerBruto - $providerDiscount), 2);
+                $publicTotal = round($linePayout['public_total'] ?? $line['line_base'], 2);
+                $adminMarkup = round($linePayout['admin_markup'] ?? max(0, $publicTotal - $providerBruto), 2);
+                $providerPct = null;
+                if ($prod->relationLoaded('proveedor')) {
+                    $prov = $prod->getRelation('proveedor');
+                    if ($prov && $prov->tipo === 'porcentaje') {
+                        $providerPct = $prov->porcentaje_comision;
+                    }
+                }
 
                 $promotionFlag = 'normal';
-                if ($totalProductDiscount > 0) {
+                if ($lineItemDiscount > 0) {
                     $promotionFlag = 'descuento - producto';
                 }
 
@@ -388,17 +363,23 @@ class CashierController extends Controller
                 }
 
                 VentaDesg::create([
-                    'idventa' => $payload['idventa'],
+                    'idventa' => $ventaId,
                     'fecha' => $fecha,
-                    'idProd' => $prod->id,
+                    'idprod' => (int) ($lineData['idProd'] ?? $prod->ident),
                     'nombre' => $lineData['nombre'],
                     'proveedor' => $lineData['proveedor'],
-                    'pUni' => $lineData['pUni'],
+                    'puni' => $lineData['pUni'],
                     'cant' => $lineData['cant'],
                     'total' => $line['line_base'],
-                    'descuento_producto' => $totalProductDiscount,
+                    'descuento_producto' => $lineItemDiscount,
                     'promotion' => $promotionFlag,
                     'hora' => $hora,
+                    'cargo_tarjeta_proveedor' => $lineProviderCharge > 0 ? $lineProviderCharge : null,
+                    'proveedor_porcentaje' => $providerPct,
+                    'proveedor_bruto' => $providerBruto,
+                    'proveedor_descuento' => $providerDiscount,
+                    'proveedor_neto' => $providerNet,
+                    'admin_ganancia' => $adminMarkup,
                 ]);
             }
 
@@ -411,13 +392,18 @@ class CashierController extends Controller
                 'subtotal_after_item_discounts' => $afterDiscount,
                 'discount_percent' => 0,
                 'discount_amount' => 0,
-                'overall_discount_total' => $itemDiscountTotal + $providerChargeTotal,
+                'overall_discount_total' => round($itemDiscountTotal + $providerChargeTotal, 2),
                 'surcharge_percent' => strtolower($payload['metodo']) === 'tarjeta' ? 4.5 : 0.0,
                 'surcharge_amount' => $providerChargeTotal,
                 'tarjeta_cargo' => $providerChargeTotal,
+                'ingreso_real' => $ingresoReal,
+                'costo_total' => $costoTotal,
+                'ganancia_total' => $gananciaTotal,
                 'total' => $total,
             ];
         });
+
+        return response()->json(['data' => $result], 201);
     }
 
     private function detectBundlePromotion(?Producto $producto, int $quantity): ?string

@@ -11,7 +11,20 @@ class Venta extends Model
     public $timestamps = false;
 
     protected $fillable = [
-        'idventa','totalventa','metodo','recibo','cambio','vendedor','fecha','ie','concepto','subtotal','tarjeta_cargo'
+        'idventa',
+        'totalventa',
+        'ingreso_real',
+        'metodo',
+        'recibo',
+        'cambio',
+        'vendedor',
+        'fecha',
+        'ie',
+        'concepto',
+        'subtotal',
+        'tarjeta_cargo',
+        'costo_total',
+        'ganancia_total',
     ];
 
     public function lineas()

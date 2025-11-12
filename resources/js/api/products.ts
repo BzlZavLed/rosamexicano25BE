@@ -1,5 +1,6 @@
 import http from '../api/http';
 import type { AxiosResponse } from 'axios';
+import type { Proveedor } from './proveedores';
 
 export type Producto = {
     id: number;

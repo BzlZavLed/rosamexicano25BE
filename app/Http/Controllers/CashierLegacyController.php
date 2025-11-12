@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Mail\TicketMail;
 use App\Models\Mailer;
+use App\Support\ProviderPayout;
 use Throwable;
 use Carbon\Carbon;
 
@@ -378,10 +379,15 @@ class CashierLegacyController extends Controller
         $ie = $request->input('ie', 1); // legacy
 
         // 7) encabezado de venta (tabla legacy "ventas")
+        $methodKey = strtolower($method);
+        $cashDelta = round(max(0, $recibo - $cambio), 2);
+        $ingresoReal = in_array($methodKey, ['efectivo', 'cash'], true) ? $cashDelta : $total;
+
         $venta = Venta::create([
             'idventa' => $nextIdVenta,
             'subtotal' => round($grossSubtotal, 2),
             'tarjeta_cargo' => round($providerChargeTotal, 2),
+            'ingreso_real' => $ingresoReal,
             'totalventa' => $total,
             'metodo' => $method,       // 'efectivo' | 'tarjeta' | 'transferencia'
             'recibo' => $recibo,
@@ -409,6 +415,13 @@ class CashierLegacyController extends Controller
                         $promotionFlag = $bundleLabel;
                     }
 
+                    $providerUnitCost = (float) ($ln['provider_unit_cost'] ?? 0);
+                    $providerBruto = round($providerUnitCost * (int) ($ln['qty'] ?? 0), 2);
+                    $providerManual = min($providerBruto, $lineItemDiscount);
+                    $providerDiscountTotal = round($providerManual + $lineProviderCharge, 2);
+                    $providerNet = max(0, round($providerBruto - $providerDiscountTotal, 2));
+                    $adminMarkup = max(0, round($ln['gross'] - $providerBruto, 2));
+
                     VentaDesg::create([
                         'idventa' => $nextIdVenta,
                         'fecha' => $fechaHoy,
@@ -422,7 +435,10 @@ class CashierLegacyController extends Controller
                         'cargo_tarjeta_proveedor' => ($lineProviderCharge > 0 ? $lineProviderCharge : null),
                         'promotion' => $promotionFlag,
                         'hora' => $hora,
-                        'proveedor_pago' => round(($ln['provider_unit_cost'] ?? 0) * (int) $ln['qty'], 2),
+                        'proveedor_bruto' => $providerBruto,
+                        'proveedor_descuento' => $providerDiscountTotal,
+                        'proveedor_neto' => $providerNet,
+                        'admin_ganancia' => $adminMarkup,
                         'proveedor_porcentaje' => $ln['provider_type'] === 'porcentaje'
                             ? ($ln['provider_pct'] ?? null)
                             : null,

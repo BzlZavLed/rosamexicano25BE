@@ -16,7 +16,7 @@ import {
     registerExpense,
     type CashMethod,
     type CashMovementPayload,
-    type CheckoutItemPayload,
+    type CheckoutLinePayload,
     type CheckoutPayload
 } from '../api/cashier';
 import { searchClientes, createCliente, type Cliente } from '../api/clientes';
@@ -28,8 +28,15 @@ type Producto = {
     nombre: string;
     descripcion?: string;
     precio: number;
+    precio_proveedor?: number;
     proveedorid: number;
-    proveedor?: { id: number; nombre: string };
+    proveedor?: {
+        id: number;
+        ident?: number;
+        nombre: string;
+        tipo?: 'normal' | 'consigna' | 'porcentaje';
+        porcentaje_comision?: number;
+    };
     inventario?: { existencia: number; importe: number };
 };
 
@@ -41,6 +48,9 @@ type CartRow = {
     qty: number;
     proveedorname?: string;
     proveedorid?: number;
+    proveedorTipo?: 'normal' | 'consigna' | 'porcentaje';
+    proveedorPct?: number | null;
+    precioProveedor?: number;
     promoDiscountPct?: number;
     promoFreeQty?: number;
     promoNote?: string;
@@ -64,7 +74,24 @@ type SaleSnapshot = {
     cashReceived: number;
     change: number;
     providerSurcharge: Array<{ proveedor_id: number; nombre: string; amount: number; percent: number }>;
-    providerNetTotals: Array<{ proveedor_id: number; nombre: string; total: number }>;
+    providerNetTotals: Array<{
+        proveedor_id: number;
+        nombre: string;
+        proveedor_tipo: 'normal' | 'consigna' | 'porcentaje';
+        proveedor_pct: number | null;
+        total: number;
+        public_total: number;
+        proveedor_bruto: number;
+        proveedor_descuento: number;
+        provider_card_charge: number;
+        admin_ganancia: number;
+        line_items: Array<{
+            nombre: string;
+            qty: number;
+            precio_publico: number;
+            precio_proveedor: number;
+        }>;
+    }>;
 };
 
 // Reactive state -------------------------------------------------
@@ -150,32 +177,6 @@ const lineManualDiscount = (row: CartRow) => Math.max(0, Number(row.manualDiscou
 const lineNet = (row: CartRow) =>
     Math.max(0, lineGross(row) - linePromoDiscount(row) - lineManualDiscount(row));
 
-const providerTotals = computed(() => {
-    const map = new Map<number, { cantidad: number; total: number }>();
-    for (const row of cart.value) {
-        const proveedorId = (row.proveedorid ?? (row as any).proveedorid) ?? 0;
-        if (!proveedorId) continue;
-        const entry = map.get(proveedorId) ?? { cantidad: 0, total: 0 };
-        entry.cantidad += row.qty;
-        entry.total += lineNet(row);
-        map.set(proveedorId, entry);
-    }
-    return map;
-});
-
-const providerPercentages = computed(() => {
-    const totals = providerTotals.value;
-    const sumCantidad = Array.from(totals.values()).reduce((acc, item) => acc + item.cantidad, 0);
-    if (!sumCantidad) return new Map<number, number>();
-    const percentMap = new Map<number, number>();
-    totals.forEach((info, pid) => {
-        percentMap.set(pid, info.cantidad / sumCantidad);
-    });
-    return percentMap;
-});
-
-const providerSurchargeRemainder = ref(0);
-
 /** Raw total before discounts or surcharges. */
 const subTotal = computed(() => cart.value.reduce((sum, row) => sum + row.precio * row.qty, 0));
 
@@ -196,92 +197,209 @@ const totalDiscountAmount = computed(() =>
 const afterDiscount = computed(() => Math.max(0, subTotal.value - totalDiscountAmount.value));
 /** Surcharge only applies to tarjeta operations; currently a fixed 4.5%. */
 const surchargePercent = computed(() => paymentMethod.value === 'tarjeta' ? 4.5 : 0);
-const surchargeAmount = computed(() => Math.round((afterDiscount.value * surchargePercent.value / 100) * 100) / 100);
-const providerSurcharge = computed(() => {
-    if (paymentMethod.value !== 'tarjeta') {
-        providerSurchargeRemainder.value = 0;
-        return new Map<number, number>();
-    }
-    const percents = providerPercentages.value;
-    const allocations = new Map<number, number>();
-    const ordered = Array.from(percents.entries()).sort((a, b) => b[1] - a[1]);
-    let totalAllocated = 0;
-    for (const [pid, percent] of ordered) {
-        const portion = Math.round(surchargeAmount.value * percent * 100) / 100;
-        if (portion > 0) {
-            allocations.set(pid, portion);
-            totalAllocated += portion;
-        }
-    }
-    let remainder = Math.round((surchargeAmount.value - totalAllocated) * 100) / 100;
-    if (remainder !== 0 && ordered.length) {
-        const firstEntry = ordered[0];
-        if (firstEntry) {
-            const [pid] = firstEntry;
-            const current = allocations.get(pid) ?? 0;
-            allocations.set(pid, Math.round((current + remainder) * 100) / 100);
-            totalAllocated += remainder;
-            remainder = 0;
-        }
-    }
-    providerSurchargeRemainder.value = remainder;
-    return allocations;
-});
+const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
-const providerNetAfterSurcharge = computed(() => {
-    const totals = providerTotals.value;
-    const surcharges = providerSurcharge.value;
-    const result = new Map<number, number>();
-    if (surcharges instanceof Map) {
-        for (const [pid, info] of totals.entries()) {
-            const surcharge = surcharges.get(pid) ?? 0;
-            result.set(pid, Math.max(0, info.total - surcharge));
+function calculateProviderBruto(
+    type: CartRow['proveedorTipo'],
+    gross: number,
+    qty: number,
+    providerUnitCost: number,
+    percent?: number | null
+) {
+    switch (type) {
+        case 'consigna':
+            return round2(providerUnitCost * qty);
+        case 'porcentaje': {
+            const pct = percent ?? 0;
+            const share = 1 - Math.max(0, Math.min(100, pct)) / 100;
+            return round2(gross * share);
         }
-    } else {
-        for (const [pid, info] of totals.entries()) {
-            result.set(pid, info.total);
+        default:
+            return gross;
+    }
+}
+
+function distributeSurchargeTotals(
+    providerTotals: Map<number, number>,
+    base: number,
+    surchargeTotal: number
+) {
+    const charges = new Map<number, number>();
+    if (base <= 0 || surchargeTotal <= 0) {
+        return charges;
+    }
+
+    const entries = Array.from(providerTotals.entries());
+    let remaining = surchargeTotal;
+    entries.forEach(([providerId, total], index) => {
+        if (total <= 0) {
+            charges.set(providerId, 0);
+            return;
+        }
+        if (index === entries.length - 1) {
+            const portion = round2(remaining);
+            charges.set(providerId, portion);
+            remaining -= portion;
+        } else {
+            const portion = round2(surchargeTotal * (total / base));
+            charges.set(providerId, portion);
+            remaining -= portion;
+        }
+    });
+
+    if (Math.abs(remaining) >= 0.01 && entries.length) {
+        const lastEntry = entries[entries.length - 1];
+        if (lastEntry) {
+            const [lastProviderId] = lastEntry;
+            charges.set(lastProviderId, round2((charges.get(lastProviderId) ?? 0) + remaining));
         }
     }
-    return result;
-});
 
-const providerInfoMap = computed(() => {
-    const info = new Map<number, { nombre: string }>();
+    return charges;
+}
+
+const providerFinancialSummary = computed(() => {
+    const providers = new Map<number, {
+        proveedor_id: number;
+        nombre: string;
+        proveedor_tipo: 'normal' | 'consigna' | 'porcentaje';
+        proveedor_pct: number | null;
+        public_total: number;
+        proveedor_bruto: number;
+        proveedor_descuento: number;
+        admin_ganancia: number;
+        cantidad: number;
+        line_items: Array<{
+            nombre: string;
+            qty: number;
+            precio_publico: number;
+            precio_proveedor: number;
+        }>;
+    }>();
+    let grossSubtotal = 0;
+
     for (const row of cart.value) {
-        const proveedorId = (row.proveedorid ?? (row as any).proveedorid) ?? 0;
-        if (!proveedorId || info.has(proveedorId)) continue;
-        const nombre =
-            row.proveedorname ||
-            (row as any).proveedor?.nombre ||
-            `Proveedor ${proveedorId}`;
-        info.set(proveedorId, { nombre });
+        const proveedorId = Number(row.proveedorid ?? 0);
+        if (!proveedorId) continue;
+        const qty = Math.max(0, row.qty);
+        if (!qty) continue;
+
+        const gross = round2(row.precio * qty);
+        const discount = Math.min(
+            gross,
+            round2(linePromoDiscount(row) + lineManualDiscount(row))
+        );
+        const providerType = row.proveedorTipo ?? 'normal';
+        const providerPct = providerType === 'porcentaje' ? row.proveedorPct ?? 0 : null;
+        const providerUnitCost = Number(row.precioProveedor ?? row.precio);
+        const precioProveedor = providerUnitCost;
+        const providerBruto = calculateProviderBruto(
+            providerType,
+            gross,
+            qty,
+            providerUnitCost,
+            providerPct
+        );
+        const providerManual = Math.min(providerBruto, discount);
+        const adminMarkup = Math.max(0, round2(gross - providerBruto));
+
+        grossSubtotal += gross;
+
+        const current = providers.get(proveedorId) ?? {
+            proveedor_id: proveedorId,
+            nombre: row.proveedorname ?? `Proveedor ${proveedorId}`,
+            proveedor_tipo: providerType,
+            proveedor_pct: providerPct,
+            public_total: 0,
+            proveedor_bruto: 0,
+            proveedor_descuento: 0,
+            admin_ganancia: 0,
+            cantidad: 0,
+            line_items: [],
+        };
+
+        current.public_total = round2(current.public_total + gross);
+        current.proveedor_bruto = round2(current.proveedor_bruto + providerBruto);
+        current.proveedor_descuento = round2(current.proveedor_descuento + providerManual);
+        current.admin_ganancia = round2(current.admin_ganancia + adminMarkup);
+        current.cantidad += qty;
+        current.line_items.push({
+            nombre: row.nombre,
+            qty,
+            precio_publico: Number(row.precio),
+            precio_proveedor: precioProveedor,
+        });
+        if (providerType === 'porcentaje') {
+            current.proveedor_pct = providerPct;
+        }
+        providers.set(proveedorId, current);
     }
-    return info;
+
+    grossSubtotal = round2(grossSubtotal);
+    const surchargeTotal =
+        paymentMethod.value === 'tarjeta' ? round2(grossSubtotal * 0.045) : 0;
+
+    const publicTotals = new Map<number, number>();
+    providers.forEach((entry, pid) => {
+        publicTotals.set(pid, entry.public_total);
+    });
+    const chargesMap = distributeSurchargeTotals(publicTotals, grossSubtotal, surchargeTotal);
+
+    const providerList = Array.from(providers.values())
+        .map((entry) => {
+            const cardCharge = round2(chargesMap.get(entry.proveedor_id) ?? 0);
+            const providerNet = round2(
+                Math.max(0, entry.proveedor_bruto - entry.proveedor_descuento - cardCharge)
+            );
+            const percent =
+                grossSubtotal > 0
+                    ? round2((entry.public_total / grossSubtotal) * 100)
+                    : 0;
+            return {
+                ...entry,
+                provider_card_charge: cardCharge,
+                provider_net: providerNet,
+                percent,
+            };
+        })
+        .sort((a, b) => b.public_total - a.public_total);
+
+    return {
+        grossSubtotal,
+        surchargeTotal,
+        providers: providerList,
+    };
 });
 
-const providerSurchargeList = computed(() =>
-    Array.from(providerSurcharge.value.entries()).map(([proveedor_id, amount]) => {
-        const info = providerInfoMap.value.get(proveedor_id);
-        const percent = providerPercentages.value.get(proveedor_id) ?? 0;
-        return {
-            proveedor_id,
-            nombre: info?.nombre ?? `Proveedor ${proveedor_id}`,
-            amount,
-            percent: Math.round(percent * 10000) / 100,
-        };
-    })
-);
+const providerSurchargeList = computed(() => {
+    const summary = providerFinancialSummary.value;
+    return summary.providers
+        .filter((item) => item.provider_card_charge > 0)
+        .map((item) => ({
+            proveedor_id: item.proveedor_id,
+            nombre: item.nombre,
+            amount: item.provider_card_charge,
+            percent: item.percent,
+        }));
+});
 
 const providerNetTotalsList = computed(() =>
-    Array.from(providerNetAfterSurcharge.value.entries()).map(([proveedor_id, total]) => {
-        const info = providerInfoMap.value.get(proveedor_id);
-        return {
-            proveedor_id,
-            nombre: info?.nombre ?? `Proveedor ${proveedor_id}`,
-            total,
-        };
-    })
+    providerFinancialSummary.value.providers.map((item) => ({
+        proveedor_id: item.proveedor_id,
+        nombre: item.nombre,
+        proveedor_tipo: item.proveedor_tipo,
+        proveedor_pct: item.proveedor_pct ?? null,
+        total: item.provider_net,
+        public_total: item.public_total,
+        proveedor_bruto: item.proveedor_bruto,
+        proveedor_descuento: item.proveedor_descuento,
+        provider_card_charge: item.provider_card_charge,
+        admin_ganancia: item.admin_ganancia,
+        line_items: item.line_items,
+    }))
 );
+
+const surchargeAmount = computed(() => providerFinancialSummary.value.surchargeTotal);
 const total = computed(() => {
     const base = Math.round(afterDiscount.value * 100) / 100;
     if (paymentMethod.value === 'tarjeta') {
@@ -295,6 +413,34 @@ const changeDue = computed(() => {
     const received = Number(cashReceived.value ?? 0);
     return Math.max(0, Math.round((received - total.value) * 100) / 100);
 });
+
+const expandedProviders = ref<Set<number>>(new Set());
+function toggleProviderDetail(proveedorId: number) {
+    const next = new Set(expandedProviders.value);
+    if (next.has(proveedorId)) {
+        next.delete(proveedorId);
+    } else {
+        next.add(proveedorId);
+    }
+    expandedProviders.value = next;
+}
+const isProviderExpanded = (proveedorId: number) => expandedProviders.value.has(proveedorId);
+
+const showProviderBreakdown = ref(true);
+
+const providerTypeStyles: Record<'normal' | 'consigna' | 'porcentaje', { icon: string; label: string; className: string }> = {
+    normal: { icon: '🛒', label: 'Normal', className: 'bg-gray-100 text-gray-700' },
+    consigna: { icon: '📦', label: 'Consigna', className: 'bg-amber-100 text-amber-700' },
+    porcentaje: { icon: '％', label: 'Porcentaje', className: 'bg-indigo-100 text-indigo-700' },
+};
+function providerTypeInfo(type: CartRow['proveedorTipo'] = 'normal', percent?: number | null) {
+    const base = providerTypeStyles[type ?? 'normal'] ?? providerTypeStyles.normal;
+    const label =
+        (type === 'porcentaje' && percent != null)
+            ? `${base.label} (${percent}%)`
+            : base.label;
+    return { ...base, label };
+}
 
 // Functions ------------------------------------------------------
 function todayISO() {
@@ -414,10 +560,18 @@ function captureSaleSnapshot(ventaId: number, sourceRows: CartRow[] = cart.value
         amount: item.amount,
         percent: item.percent,
     }));
-    const providerNet = providerNetTotalsList.value.map((item) => ({
+const providerNet = providerNetTotalsList.value.map((item) => ({
         proveedor_id: item.proveedor_id,
         nombre: item.nombre,
+        proveedor_tipo: item.proveedor_tipo,
+        proveedor_pct: item.proveedor_pct,
         total: item.total,
+        public_total: item.public_total,
+        proveedor_bruto: item.proveedor_bruto,
+        proveedor_descuento: item.proveedor_descuento,
+        provider_card_charge: item.provider_card_charge,
+        admin_ganancia: item.admin_ganancia,
+        line_items: item.line_items,
     }));
 
     return {
@@ -649,7 +803,6 @@ async function doSearch() {
     try {
         const isBarcode = /^\d+$/.test(query.value.trim());
         const data = await findProduct(isBarcode ? { barcode: Number(query.value) } : { search: query.value, per_page: 20 });
-        console.log('Search results:', data);
         results.value = data;
         SHOW_RESULTS.value = true;
     } catch (e: any) {
@@ -726,10 +879,21 @@ async function addToCart(producto: Producto) {
 
     const row = cart.value.find(r => r.ident === producto.ident);
     const max = Number(producto?.inventario?.existencia ?? 0);
+    const proveedorIdent = producto.proveedor?.ident ?? producto.proveedorid;
+    const proveedorTipo = (producto.proveedor?.tipo as CartRow['proveedorTipo']) ?? 'normal';
+    const proveedorPct = producto.proveedor?.porcentaje_comision ?? null;
+    const precioProveedor = Number(producto.precio_proveedor ?? producto.precio);
 
     if (row) {
         if (row.qty < max) row.qty++;
-        await applyPromotionsToRow(row, producto.proveedorid);
+        if (!row.proveedorTipo) row.proveedorTipo = proveedorTipo;
+        if (row.proveedorPct == null) row.proveedorPct = proveedorPct;
+        if (row.precioProveedor == null) row.precioProveedor = precioProveedor;
+        if (!row.proveedorid) row.proveedorid = proveedorIdent;
+        if (!row.proveedorname && producto.proveedor?.nombre) {
+            row.proveedorname = producto.proveedor.nombre;
+        }
+        await applyPromotionsToRow(row, proveedorIdent);
         clampManualDiscount(row);
         return;
     }
@@ -741,11 +905,14 @@ async function addToCart(producto: Producto) {
         proveedorname: producto.proveedor?.nombre,
         existencia: max,
         qty: max > 0 ? 1 : 0,
-        proveedorid: producto.proveedorid,
+        proveedorid: proveedorIdent,
+        proveedorTipo,
+        proveedorPct,
+        precioProveedor,
         manualDiscount: 0,
     };
 
-    await applyPromotionsToRow(newRow, producto.proveedorid);
+    await applyPromotionsToRow(newRow, proveedorIdent);
     cart.value.unshift(newRow);
 }
 
@@ -900,18 +1067,29 @@ async function onCheckout() {
         return;
     }
 
-    const items: CheckoutItemPayload[] = cart.value
+    const lineas: CheckoutLinePayload[] = cart.value
         .filter(row => row.qty > 0)
         .map(row => {
-            const item: CheckoutItemPayload = {
-                ident: row.ident,
-                qty: row.qty,
+            const promo = Math.round(linePromoDiscount(row) * 100) / 100;
+            const manual = Math.round(lineManualDiscount(row) * 100) / 100;
+            const totalDiscount = Math.round((promo + manual) * 100) / 100;
+            const line: CheckoutLinePayload = {
+                idProd: row.ident,
+                nombre: row.nombre,
+                proveedor: Number(row.proveedorid ?? 0),
+                pUni: Number(row.precio),
+                cant: row.qty,
             };
-            const discountAmount = Math.round((linePromoDiscount(row) + lineManualDiscount(row)) * 100) / 100;
-            if (discountAmount > 0) item.discount_amount = discountAmount;
-            return item;
+            if (totalDiscount > 0) {
+                line.product_desc = totalDiscount;
+                line.totdesc = totalDiscount;
+            }
+            if (manual > 0) {
+                line.manual_discount = manual;
+            }
+            return line;
         });
-    if (!items.length) {
+    if (!lineas.length) {
         showError('Carrito vacío');
         return;
     }
@@ -926,32 +1104,22 @@ async function onCheckout() {
 
     saving.value = true;
     try {
-        const payload: CheckoutPayload = {
-            items,
-            payment: {
-                method: paymentMethod.value,
-            },
-        };
-
+        const ventaTotal = total.value;
+        let recibo = ventaTotal;
+        let cambio = 0;
         if (paymentMethod.value === 'efectivo') {
-            payload.payment.received = Number(cashReceived.value ?? 0);
+            recibo = Number(cashReceived.value ?? 0);
+            cambio = changeDue.value;
         }
-        payload.ie = 1;
 
-        if (paymentMethod.value === 'tarjeta') {
-            const surchargeEntries = Array.from(providerSurcharge.value.entries())
-                .filter(([, amount]) => amount > 0)
-                .map(([proveedor_id, amount]) => ({ proveedor_id, amount }));
-            if (surchargeEntries.length) {
-                payload.provider_surcharge = surchargeEntries;
-            }
-
-            const netEntries = Array.from(providerNetAfterSurcharge.value.entries())
-                .map(([proveedor_id, total]) => ({ proveedor_id, total }));
-            if (netEntries.length) {
-                payload.provider_net_totals = netEntries;
-            }
-        }
+        const payload: CheckoutPayload = {
+            metodo: paymentMethod.value,
+            recibo,
+            cambio,
+            vendedor: caja.value?.caja?.usuario ?? 'Mostrador',
+            concepto: 'VENTA MOSTRADOR',
+            lineas,
+        };
 
         const res = await checkout(payload);
         const ventaId = res?.data?.venta?.idventa;
@@ -1342,9 +1510,18 @@ onUnmounted(() => {
                                         <div>
                                             <p class="font-semibold text-gray-900">{{ r.nombre }}</p>
                                             <p class="text-[11px] text-gray-500">Identificador: {{ r.ident }}</p>
-                                            <p v-if="r.proveedorname" class="text-[11px] text-gray-500">
-                                                Proveedor: {{ r.proveedorname }}
-                                            </p>
+                                        <p
+                                            v-if="r.proveedorname"
+                                            class="text-[11px] text-gray-500 flex items-center gap-1"
+                                        >
+                                            <span
+                                                class="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px]"
+                                                :class="providerTypeInfo(r.proveedorTipo, r.proveedorPct).className"
+                                            >
+                                                {{ providerTypeInfo(r.proveedorTipo, r.proveedorPct).icon }}
+                                            </span>
+                                            <span>{{ r.proveedorname }}</span>
+                                        </p>
                                             <p v-if="r.promoNote" class="text-[11px] text-emerald-700">
                                                 {{ r.promoNote }}
                                             </p>
@@ -1434,7 +1611,18 @@ onUnmounted(() => {
                                                 </div>
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right">
-                                                <span class="truncate inline-block max-w-[18ch]">{{ r.proveedorname }}</span>
+                                                <div class="flex items-center justify-end gap-1">
+                                                    <span
+                                                        v-if="r.proveedorname"
+                                                        class="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px]"
+                                                        :class="providerTypeInfo(r.proveedorTipo, r.proveedorPct).className"
+                                                    >
+                                                        {{ providerTypeInfo(r.proveedorTipo, r.proveedorPct).icon }}
+                                                    </span>
+                                                    <span class="truncate inline-block max-w-[18ch]">
+                                                        {{ r.proveedorname }}
+                                                    </span>
+                                                </div>
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right whitespace-nowrap">{{ currency(r.precio) }}</td>
                                             <td class="px-2.5 py-1.5 text-right">{{ r.existencia }}</td>
@@ -1492,50 +1680,133 @@ onUnmounted(() => {
                             </div>
                             <div class="flex justify-between">
                                 <span>
-                                    Recargo
+                                    Recargo tarjeta
                                     <template v-if="paymentMethod === 'tarjeta'">
-                                        (cubierto por proveedores)
+                                        ({{ surchargePercent }}% sobre {{ currency(subTotal) }})
                                     </template>
                                     <template v-else-if="surchargePercent">
                                         ({{ surchargePercent }}%)
                                     </template>
                                 </span>
-                                <b>{{ currency(paymentMethod === 'tarjeta' ? 0 : surchargeAmount) }}</b>
+                                <b>{{ currency(surchargeAmount) }}</b>
                             </div>
                             <div
-                                v-if="paymentMethod === 'tarjeta' && providerSurchargeList.length"
+                                v-if="providerNetTotalsList.length"
                                 class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs text-gray-600"
                             >
-                                <p class="font-medium text-gray-700">Distribución del recargo</p>
-                                <ul class="mt-1 space-y-1">
-                                    <li
-                                        v-for="item in providerSurchargeList"
-                                        :key="item.proveedor_id"
-                                        class="flex items-center justify-between gap-2"
-                                    >
-                                        <span class="truncate">{{ item.nombre }}</span>
-                                        <span class="text-right text-gray-700">
-                                            <span class="mr-2 text-[11px] text-gray-500">{{ item.percent.toFixed(2) }}%</span>
-                                            <b class="font-semibold text-gray-900">-{{ currency(item.amount) }}</b>
-                                        </span>
-                                    </li>
-                                </ul>
-                                <div
-                                    v-if="providerNetTotalsList.length"
-                                    class="mt-2 rounded border border-gray-200 bg-white/70 px-2 py-2 text-[11px] text-gray-500"
-                                >
-                                    <p class="font-medium text-gray-700">Importe neto por proveedor:</p>
+                                <div class="flex items-center justify-between">
+                                    <p class="font-medium text-gray-700">Distribución del recargo</p>
+                                    <label class="inline-flex items-center gap-1 text-[11px] text-gray-600 select-none">
+                                        <input
+                                            type="checkbox"
+                                            v-model="showProviderBreakdown"
+                                            class="rounded border-gray-300 text-[#E4007C] focus:ring-[#E4007C]"
+                                        />
+                                        <span>Mostrar desglose</span>
+                                    </label>
+                                </div>
+                                <template v-if="showProviderBreakdown">
                                     <ul class="mt-1 space-y-1">
                                         <li
-                                            v-for="item in providerNetTotalsList"
-                                            :key="`net-${item.proveedor_id}`"
+                                            v-for="item in providerSurchargeList"
+                                            :key="item.proveedor_id"
                                             class="flex items-center justify-between gap-2"
                                         >
                                             <span class="truncate">{{ item.nombre }}</span>
-                                            <span class="font-semibold text-gray-800">{{ currency(item.total) }}</span>
+                                            <span class="text-right text-gray-700">
+                                                <span class="mr-2 text-[11px] text-gray-500">{{ item.percent.toFixed(2) }}%</span>
+                                                <b class="font-semibold text-gray-900">
+                                                    {{ paymentMethod === 'tarjeta' ? '-' : '' }}{{ currency(item.amount) }}
+                                                </b>
+                                            </span>
                                         </li>
                                     </ul>
-                                </div>
+                                    <div
+                                        class="mt-2 rounded border border-gray-200 bg-white/70 px-2 py-2 text-[11px] text-gray-500"
+                                    >
+                                        <p class="font-medium text-gray-700">Detalle por proveedor:</p>
+                                        <ul class="mt-1 space-y-1">
+                                            <li
+                                                v-for="item in providerNetTotalsList"
+                                                :key="`net-${item.proveedor_id}`"
+                                            class="rounded bg-white px-2 py-1.5 shadow-sm"
+                                        >
+                                            <div class="flex flex-wrap items-center justify-between gap-2 text-gray-800">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="truncate font-semibold">{{ item.nombre }}</span>
+                                                    <span
+                                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                                        :class="providerTypeInfo(item.proveedor_tipo, item.proveedor_pct).className"
+                                                    >
+                                                        <span>{{ providerTypeInfo(item.proveedor_tipo, item.proveedor_pct).icon }}</span>
+                                                        <span>{{ providerTypeInfo(item.proveedor_tipo, item.proveedor_pct).label }}</span>
+                                                    </span>
+                                                </div>
+                                                <span class="font-semibold text-gray-900">{{ currency(item.total) }}</span>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                class="mt-1 text-[11px] font-semibold text-[#E4007C] underline"
+                                                @click="toggleProviderDetail(item.proveedor_id)"
+                                            >
+                                                {{ isProviderExpanded(item.proveedor_id) ? 'Ocultar desglose' : 'Mostrar desglose' }}
+                                            </button>
+                                            <div
+                                                v-if="isProviderExpanded(item.proveedor_id)"
+                                                class="mt-1 space-y-0.5 text-[10px] text-gray-500"
+                                            >
+                                                <div class="flex justify-between gap-2">
+                                                    <span>Público:</span>
+                                                    <span class="font-medium text-gray-700">{{ currency(item.public_total) }}</span>
+                                                </div>
+                                                <div class="flex justify-between gap-2">
+                                                    <span>Costo proveedor:</span>
+                                                    <span class="font-medium text-gray-700">{{ currency(item.proveedor_bruto) }}</span>
+                                                </div>
+                                                <div class="flex justify-between gap-2">
+                                                    <span>Desc. proveedor:</span>
+                                                    <span class="font-medium text-gray-700">-{{ currency(item.proveedor_descuento) }}</span>
+                                                </div>
+                                                <div class="flex justify-between gap-2">
+                                                    <span>Recargo tarjeta:</span>
+                                                    <span class="font-medium text-gray-700">-{{ currency(item.provider_card_charge) }}</span>
+                                                </div>
+                                                <div class="flex justify-between gap-2">
+                                                    <span>Ganancia admin:</span>
+                                                    <span class="font-medium text-gray-700">+{{ currency(item.admin_ganancia) }}</span>
+                                                </div>
+                                            </div>
+                                            <div
+                                                v-if="item.line_items?.length && isProviderExpanded(item.proveedor_id)"
+                                                class="mt-2 rounded border border-gray-100 bg-gray-50 p-2"
+                                            >
+                                                <table class="w-full text-[10px] text-gray-600">
+                                                    <thead>
+                                                        <tr class="text-[9px] uppercase tracking-wide text-gray-500">
+                                                            <th class="text-left">Producto</th>
+                                                            <th class="text-right">Cant</th>
+                                                            <th class="text-right">Público</th>
+                                                            <th class="text-right">Precio proveedor</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr
+                                                            v-for="line in item.line_items"
+                                                            :key="`${item.proveedor_id}-${line.nombre}`"
+                                                            class="[&:nth-child(even)]:bg-white"
+                                                        >
+                                                            <td class="pr-2 text-left">{{ line.nombre }}</td>
+                                                            <td class="px-1 text-right">{{ line.qty }}</td>
+                                                            <td class="px-1 text-right">{{ currency(line.precio_publico) }}</td>
+                                                            <td class="pl-1 text-right">{{ currency(line.precio_proveedor) }}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </li>
+                                    </ul>
+                                    </div>
+                                </template>
                             </div>
                             <div class="flex justify-between text-base">
                                 <span>Total</span><b>{{ currency(total) }}</b>

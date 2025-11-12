@@ -31,19 +31,25 @@ export async function findProduct(params: CashierFindParams) {
     return Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
 }
 
-export type CheckoutItemPayload = {
-    ident: number;
-    qty: number;
-    discount_percent?: number;
-    discount_amount?: number;
+export type CheckoutLinePayload = {
+    idProd: number;
+    nombre: string;
+    proveedor: number;
+    pUni: number;
+    cant: number;
+    product_desc?: number;
+    totdesc?: number;
+    manual_discount?: number;
 };
 
 export type CheckoutPayload = {
-    items: CheckoutItemPayload[];
-    payment: { method: CashMethod; received?: number };
-    ie?: number;
-    provider_surcharge?: Array<{ proveedor_id: number; amount: number; nombre?: string; percent?: number }>;
-    provider_net_totals?: Array<{ proveedor_id: number; total: number; nombre?: string }>;
+    idventa?: number;
+    metodo: CashMethod;
+    recibo: number;
+    cambio: number;
+    vendedor: string;
+    concepto?: string;
+    lineas: CheckoutLinePayload[];
 };
 
 export async function checkout(payload: CheckoutPayload) {

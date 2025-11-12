@@ -66,7 +66,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Cashier operations
     Route::get('/cashier/find-product', [CashierLegacyController::class, 'findProduct']);
-    Route::post('/cashier/checkout', [CashierLegacyController::class, 'checkout']);
+    Route::post('/cashier/checkout', [CashierController::class, 'checkout']);
 
     // Proveedores
     Route::apiResource('proveedores', ProveedoresController::class)

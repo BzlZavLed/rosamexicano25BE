@@ -127,13 +127,33 @@ class ProviderSalesFlowTest extends TestCase
         Sanctum::actingAs($admin, ['role:admin']);
 
         $response = $this->postJson('/api/cashier/checkout', [
-            'items' => [
-                ['ident' => $productos['normal']->ident, 'qty' => 1],
-                ['ident' => $productos['consigna']->ident, 'qty' => 1],
-                ['ident' => $productos['porcentaje']->ident, 'qty' => 1],
-            ],
-            'payment' => [
-                'method' => 'tarjeta',
+            'metodo' => 'tarjeta',
+            'recibo' => 600,
+            'cambio' => 0,
+            'vendedor' => $admin->nombre,
+            'concepto' => 'VENTA MOSTRADOR',
+            'lineas' => [
+                [
+                    'idProd' => $productos['normal']->ident,
+                    'nombre' => $productos['normal']->nombre,
+                    'proveedor' => $normal->ident,
+                    'pUni' => 100,
+                    'cant' => 1,
+                ],
+                [
+                    'idProd' => $productos['consigna']->ident,
+                    'nombre' => $productos['consigna']->nombre,
+                    'proveedor' => $consigna->ident,
+                    'pUni' => 200,
+                    'cant' => 1,
+                ],
+                [
+                    'idProd' => $productos['porcentaje']->ident,
+                    'nombre' => $productos['porcentaje']->nombre,
+                    'proveedor' => $porcentaje->ident,
+                    'pUni' => 300,
+                    'cant' => 1,
+                ],
             ],
         ]);
 
@@ -146,9 +166,12 @@ class ProviderSalesFlowTest extends TestCase
         $this->assertNotNull($venta);
         $this->assertEqualsWithDelta(600, (float) $venta->subtotal, 0.01);
         $this->assertEqualsWithDelta(27, (float) $venta->tarjeta_cargo, 0.01);
-        $this->assertEqualsWithDelta(573, (float) $venta->totalventa, 0.01);
+        $this->assertEqualsWithDelta(600, (float) $venta->totalventa, 0.01);
+        $this->assertEqualsWithDelta(600, (float) $venta->ingreso_real, 0.01);
+        $this->assertEqualsWithDelta(403, (float) $venta->costo_total, 0.01);
+        $this->assertEqualsWithDelta(170, (float) $venta->ganancia_total, 0.01);
         $this->assertSame('tarjeta', $venta->metodo);
-        $this->assertEqualsWithDelta(573, (float) $venta->recibo, 0.01);
+        $this->assertEqualsWithDelta(600, (float) $venta->recibo, 0.01);
         $this->assertEqualsWithDelta(0, (float) $venta->cambio, 0.01);
 
         $lineas = VentaDesg::where('idventa', $ventaId)->get()->keyBy('nombre');
@@ -162,7 +185,10 @@ class ProviderSalesFlowTest extends TestCase
                 'total' => 100,
                 'descuento_producto' => 0,
                 'cargo_tarjeta_proveedor' => 4.5,
-                'proveedor_pago' => 100,
+                'proveedor_bruto' => 100,
+                'proveedor_descuento' => 4.5,
+                'proveedor_neto' => 95.5,
+                'admin_ganancia' => 0,
                 'proveedor_porcentaje' => null,
             ],
             'Consigna Prod' => [
@@ -172,7 +198,10 @@ class ProviderSalesFlowTest extends TestCase
                 'total' => 200,
                 'descuento_producto' => 0,
                 'cargo_tarjeta_proveedor' => 9.0,
-                'proveedor_pago' => 120,
+                'proveedor_bruto' => 120,
+                'proveedor_descuento' => 9.0,
+                'proveedor_neto' => 111.0,
+                'admin_ganancia' => 80,
                 'proveedor_porcentaje' => null,
             ],
             'Porcentaje Prod' => [
@@ -182,7 +211,10 @@ class ProviderSalesFlowTest extends TestCase
                 'total' => 300,
                 'descuento_producto' => 0,
                 'cargo_tarjeta_proveedor' => 13.5,
-                'proveedor_pago' => 210,
+                'proveedor_bruto' => 210,
+                'proveedor_descuento' => 13.5,
+                'proveedor_neto' => 196.5,
+                'admin_ganancia' => 90,
                 'proveedor_porcentaje' => 30,
             ],
         ];
@@ -196,7 +228,10 @@ class ProviderSalesFlowTest extends TestCase
             $this->assertEqualsWithDelta($expected['total'], (float) $line->total, 0.01, "{$nombre}: total incorrecto");
             $this->assertEqualsWithDelta($expected['descuento_producto'], (float) ($line->descuento_producto ?? 0), 0.01, "{$nombre}: descuento producto incorrecto");
             $this->assertEqualsWithDelta($expected['cargo_tarjeta_proveedor'], (float) ($line->cargo_tarjeta_proveedor ?? 0), 0.01, "{$nombre}: cargo tarjeta proveedor incorrecto");
-            $this->assertEqualsWithDelta($expected['proveedor_pago'], (float) ($line->proveedor_pago ?? 0), 0.01, "{$nombre}: proveedor pago incorrecto");
+            $this->assertEqualsWithDelta($expected['proveedor_bruto'], (float) ($line->proveedor_bruto ?? 0), 0.01, "{$nombre}: proveedor bruto incorrecto");
+            $this->assertEqualsWithDelta($expected['proveedor_descuento'], (float) ($line->proveedor_descuento ?? 0), 0.01, "{$nombre}: proveedor descuento incorrecto");
+            $this->assertEqualsWithDelta($expected['proveedor_neto'], (float) ($line->proveedor_neto ?? 0), 0.01, "{$nombre}: proveedor neto incorrecto");
+            $this->assertEqualsWithDelta($expected['admin_ganancia'], (float) ($line->admin_ganancia ?? 0), 0.01, "{$nombre}: admin ganancia incorrecta");
             if ($expected['proveedor_porcentaje'] === null) {
                 $this->assertNull($line->proveedor_porcentaje, "{$nombre}: proveedor porcentaje debería ser null");
             } else {
