@@ -88,7 +88,31 @@ class ReportController extends Controller
             })->values();
         }
 
-        $mapped = $ventas->map(function (Venta $venta) use ($provider) {
+        $providerIds = [];
+        foreach ($ventas as $venta) {
+            foreach ($venta->lineas as $linea) {
+                $pid = (int) ($linea->proveedor ?? 0);
+                if ($pid > 0) {
+                    $providerIds[$pid] = true;
+                }
+            }
+        }
+        $providerMap = Proveedor::whereIn('ident', array_keys($providerIds))
+            ->get()
+            ->keyBy('ident');
+
+        $summaryTotals = [
+            'ventas_total' => 0,
+            'subtotal' => 0.0,
+            'descuento_lineas' => 0.0,
+            'tarjeta_cargo' => 0.0,
+            'totalventa' => 0.0,
+            'ingreso_real' => 0.0,
+            'costo_total' => 0.0,
+            'ganancia_total' => 0.0,
+        ];
+
+        $mapped = $ventas->map(function (Venta $venta) use ($providerMap, &$summaryTotals) {
             $lineas = $venta->lineas;
             $lineDiscountTotal = (float) $lineas->sum(function ($linea) {
                 return (float) ($linea->descuento_producto ?? 0);
@@ -97,66 +121,142 @@ class ReportController extends Controller
                 return (float) ($linea->cargo_tarjeta_proveedor ?? 0);
             });
 
-            if ($provider) {
-                $gross = (float) $lineas->sum(function ($linea) {
-                    $unit = (float) ($linea->puni ?? 0);
-                    $qty = (int) ($linea->cant ?? 0);
-                    return round($unit * $qty, 2);
-                });
-                $net = (float) $lineas->sum(function ($linea) {
-                    return (float) ($linea->total ?? 0);
-                });
-                $overallDiscount = round($lineDiscountTotal + $lineCardCharges, 2);
-                $tarjetaCargo = round($lineCardCharges, 2);
-                $amount = 0.0;
-                $percent = $gross > 0 ? round(($overallDiscount / $gross) * 100, 2) : 0.0;
-                $subtotal = round($gross, 2);
-                $totalventa = round($net, 2);
-            } else {
-                $subtotal = (float) $venta->subtotal;
-                $tarjetaCargo = (float) $venta->tarjeta_cargo;
-                $overallDiscount = $lineDiscountTotal + $tarjetaCargo;
-                $totalventa = (float) $venta->totalventa;
-                $amount = 0.0;
-                $percent = 0.0;
+            $lineGrossSubtotal = (float) $lineas->sum(function ($linea) {
+                return (float) ($linea->total ?? 0);
+            });
+
+            $subtotal = (float) ($venta->subtotal ?? $lineGrossSubtotal);
+            if ($subtotal <= 0 || abs($subtotal - $lineGrossSubtotal) <= 0.05) {
+                $subtotal = round($lineGrossSubtotal, 2);
             }
+
+            $tarjetaCargo = round((float) ($venta->tarjeta_cargo ?? $lineCardCharges), 2);
+            $totalventa = round((float) ($venta->totalventa ?? ($lineGrossSubtotal - $lineDiscountTotal)), 2);
+            $ingresoReal = round((float) ($venta->ingreso_real ?? $totalventa), 2);
+
+            $lineEntries = [];
+            $providerSummary = [];
+
+            foreach ($lineas as $linea) {
+                $pid = (int) ($linea->proveedor ?? 0);
+                $provider = $providerMap->get($pid);
+                $providerName = $provider->nombre ?? "Proveedor {$pid}";
+                $providerType = $provider->tipo ?? 'normal';
+                $providerPct = $providerType === 'porcentaje'
+                    ? ($provider->porcentaje_comision ?? null)
+                    : null;
+
+                $lineTotal = (float) ($linea->total ?? 0);
+                $providerBruto = (float) ($linea->proveedor_bruto ?? 0);
+                $providerDiscount = (float) ($linea->proveedor_descuento ?? 0);
+                $providerNet = (float) ($linea->proveedor_neto ?? ($providerBruto - $providerDiscount));
+                $providerCardCharge = (float) ($linea->cargo_tarjeta_proveedor ?? 0);
+                $adminGanancia = (float) ($linea->admin_ganancia ?? 0);
+
+                $lineEntries[] = [
+                    'idprod' => (int) $linea->idprod,
+                    'nombre' => $linea->nombre,
+                    'proveedor' => $pid,
+                    'proveedor_nombre' => $providerName,
+                    'proveedor_tipo' => $providerType,
+                    'proveedor_porcentaje' => $providerPct,
+                    'puni' => (float) $linea->puni,
+                    'cant' => (int) $linea->cant,
+                    'total' => $lineTotal,
+                    'descuento_producto' => (float) ($linea->descuento_producto ?? 0),
+                    'cargo_tarjeta_proveedor' => $providerCardCharge,
+                    'promotion' => $linea->promotion ?? 'normal',
+                    'proveedor_bruto' => $providerBruto,
+                    'proveedor_descuento' => $providerDiscount,
+                    'proveedor_neto' => $providerNet,
+                    'admin_ganancia' => $adminGanancia,
+                ];
+
+                if ($pid > 0) {
+                    if (!isset($providerSummary[$pid])) {
+                        $providerSummary[$pid] = [
+                            'proveedor_id' => $pid,
+                            'nombre' => $providerName,
+                            'tipo' => $providerType,
+                            'porcentaje' => $providerPct,
+                            'publico_total' => 0.0,
+                            'proveedor_bruto' => 0.0,
+                            'proveedor_descuento' => 0.0,
+                            'provider_card_charge' => 0.0,
+                            'proveedor_neto' => 0.0,
+                            'admin_ganancia' => 0.0,
+                        ];
+                    }
+                    $providerSummary[$pid]['publico_total'] += $lineTotal;
+                    $providerSummary[$pid]['proveedor_bruto'] += $providerBruto;
+                    $providerSummary[$pid]['proveedor_descuento'] += $providerDiscount;
+                    $providerSummary[$pid]['provider_card_charge'] += $providerCardCharge;
+                    $providerSummary[$pid]['proveedor_neto'] += $providerNet;
+                    $providerSummary[$pid]['admin_ganancia'] += $adminGanancia;
+                }
+            }
+
+            $providerSummary = array_map(function (array $entry) use ($subtotal) {
+                $entry['publico_total'] = round($entry['publico_total'], 2);
+                $entry['proveedor_bruto'] = round($entry['proveedor_bruto'], 2);
+                $entry['proveedor_descuento'] = round($entry['proveedor_descuento'], 2);
+                $entry['provider_card_charge'] = round($entry['provider_card_charge'], 2);
+                $entry['proveedor_neto'] = round($entry['proveedor_neto'], 2);
+                $entry['admin_ganancia'] = round($entry['admin_ganancia'], 2);
+                $entry['percent'] = $subtotal > 0
+                    ? round(($entry['publico_total'] / $subtotal) * 100, 2)
+                    : 0.0;
+                return $entry;
+            }, array_values($providerSummary));
+
+            $costoTotal = (float) ($venta->costo_total ?? array_sum(array_column($providerSummary, 'proveedor_neto')));
+            $gananciaTotal = (float) ($venta->ganancia_total ?? array_sum(array_column($providerSummary, 'admin_ganancia')));
+
+            $summaryTotals['ventas_total']++;
+            $summaryTotals['subtotal'] += $subtotal;
+            $summaryTotals['descuento_lineas'] += $lineDiscountTotal;
+            $summaryTotals['tarjeta_cargo'] += $tarjetaCargo;
+            $summaryTotals['totalventa'] += $totalventa;
+            $summaryTotals['ingreso_real'] += $ingresoReal;
+            $summaryTotals['costo_total'] += $costoTotal;
+            $summaryTotals['ganancia_total'] += $gananciaTotal;
 
             return [
                 'idventa' => $venta->idventa,
                 'fecha' => $venta->fecha,
                 'metodo' => $venta->metodo,
-                'subtotal' => $subtotal,
-                'descuento_general_percent' => $percent,
-                'descuento_general_amount' => $amount,
+                'subtotal' => round($subtotal, 2),
+                'descuento_lineas' => round($lineDiscountTotal, 2),
                 'tarjeta_cargo' => $tarjetaCargo,
-                'descuento_lineas' => $lineDiscountTotal,
-                'descuento_total' => $overallDiscount,
                 'totalventa' => $totalventa,
+                'ingreso_real' => $ingresoReal,
+                'costo_total' => round($costoTotal, 2),
+                'ganancia_total' => round($gananciaTotal, 2),
                 'ie' => (int) $venta->ie,
                 'concepto' => $venta->concepto,
                 'recibo' => (float) $venta->recibo,
                 'cambio' => (float) $venta->cambio,
                 'vendedor' => $venta->vendedor,
-                'lineas' => $lineas->map(function ($linea) {
-                    return [
-                        'idprod' => (int) $linea->idprod,
-                        'nombre' => $linea->nombre,
-                        'proveedor' => (int) $linea->proveedor,
-                        'puni' => (float) $linea->puni,
-                        'cant' => (int) $linea->cant,
-                        'total' => (float) $linea->total,
-                        'descuento_producto' => (float) ($linea->descuento_producto ?? 0),
-                        'cargo_tarjeta_proveedor' => (float) ($linea->cargo_tarjeta_proveedor ?? 0),
-                        'promotion' => $linea->promotion ?? 'normal',
-                    ];
-                }),
+                'providers' => $providerSummary,
+                'lineas' => $lineEntries,
             ];
-        });
+        })->values();
+
+        $summaryPayload = [
+            'ventas_total' => $summaryTotals['ventas_total'],
+            'subtotal' => round($summaryTotals['subtotal'], 2),
+            'descuento_lineas' => round($summaryTotals['descuento_lineas'], 2),
+            'tarjeta_cargo' => round($summaryTotals['tarjeta_cargo'], 2),
+            'total_totalventa' => round($summaryTotals['totalventa'], 2),
+            'ingreso_real' => round($summaryTotals['ingreso_real'], 2),
+            'costo_total' => round($summaryTotals['costo_total'], 2),
+            'ganancia_total' => round($summaryTotals['ganancia_total'], 2),
+        ];
 
         Log::info('Reporte de caja generado', [
             'from' => $inicioString,
             'to' => $finString,
-            'total_ventas' => $ventas->count(),
+            'total_ventas' => $mapped->count(),
         ]);
 
         foreach (DB::getQueryLog() as $entry) {
@@ -177,21 +277,26 @@ class ReportController extends Controller
             $callback = function () use ($mapped) {
                 $handle = fopen('php://output', 'w');
                 fputcsv($handle, [
-                    'idventa',
+                    'venta_id',
                     'fecha',
                     'metodo',
                     'subtotal',
-                    'descuento_general_percent',
-                    'descuento_general_amount',
-                    'descuento_lineas',
-                    'descuento_total',
-                    'tarjeta_cargo',
                     'totalventa',
-                    'ie',
-                    'concepto',
-                    'recibo',
-                    'cambio',
-                    'vendedor',
+                    'ingreso_real',
+                    'tarjeta_cargo',
+                    'costo_total',
+                    'ganancia_total',
+                    'descuento_lineas',
+                    'proveedor_id',
+                    'proveedor_nombre',
+                    'proveedor_tipo',
+                    'proveedor_porcentaje',
+                    'proveedor_publico_total',
+                    'proveedor_bruto',
+                    'proveedor_descuento',
+                    'proveedor_cargo_tarjeta',
+                    'proveedor_neto',
+                    'proveedor_ganancia_admin',
                     'linea_idprod',
                     'linea_nombre',
                     'linea_proveedor',
@@ -199,27 +304,28 @@ class ReportController extends Controller
                     'linea_cant',
                     'linea_total',
                     'linea_descuento_producto',
+                    'linea_cargo_tarjeta_proveedor',
+                    'linea_proveedor_bruto',
+                    'linea_proveedor_descuento',
+                    'linea_proveedor_neto',
+                    'linea_admin_ganancia',
                     'linea_promotion',
                 ]);
 
                 foreach ($mapped as $venta) {
-                    if ($venta['lineas']->isEmpty()) {
+                    $lineas = $venta['lineas'] ?? [];
+                    if (empty($lineas)) {
                         fputcsv($handle, [
                             $venta['idventa'],
                             $venta['fecha'],
                             $venta['metodo'],
                             $venta['subtotal'],
-                            $venta['descuento_general_percent'],
-                            $venta['descuento_general_amount'],
-                            $venta['descuento_lineas'],
-                            $venta['descuento_total'],
-                            $venta['tarjeta_cargo'],
                             $venta['totalventa'],
-                            $venta['ie'],
-                            $venta['concepto'],
-                            $venta['recibo'],
-                            $venta['cambio'],
-                            $venta['vendedor'],
+                            $venta['ingreso_real'],
+                            $venta['tarjeta_cargo'],
+                            $venta['costo_total'],
+                            $venta['ganancia_total'],
+                            $venta['descuento_lineas'],
                             null,
                             null,
                             null,
@@ -232,23 +338,28 @@ class ReportController extends Controller
                         continue;
                     }
 
-                    foreach ($venta['lineas'] as $linea) {
+                    foreach ($lineas as $linea) {
                         fputcsv($handle, [
                             $venta['idventa'],
                             $venta['fecha'],
                             $venta['metodo'],
                             $venta['subtotal'],
-                            $venta['descuento_general_percent'],
-                            $venta['descuento_general_amount'],
-                            $venta['descuento_lineas'],
-                            $venta['descuento_total'],
-                            $venta['tarjeta_cargo'],
                             $venta['totalventa'],
-                            $venta['ie'],
-                            $venta['concepto'],
-                            $venta['recibo'],
-                            $venta['cambio'],
-                            $venta['vendedor'],
+                            $venta['ingreso_real'],
+                            $venta['tarjeta_cargo'],
+                            $venta['costo_total'],
+                            $venta['ganancia_total'],
+                            $venta['descuento_lineas'],
+                            $linea['proveedor'],
+                            $linea['proveedor_nombre'] ?? null,
+                            $linea['proveedor_tipo'] ?? null,
+                            $linea['proveedor_porcentaje'] ?? null,
+                            $linea['total'],
+                            $linea['proveedor_bruto'],
+                            $linea['proveedor_descuento'],
+                            $linea['cargo_tarjeta_proveedor'],
+                            $linea['proveedor_neto'],
+                            $linea['admin_ganancia'],
                             $linea['idprod'],
                             $linea['nombre'],
                             $linea['proveedor'],
@@ -256,6 +367,11 @@ class ReportController extends Controller
                             $linea['cant'],
                             $linea['total'],
                             $linea['descuento_producto'],
+                            $linea['cargo_tarjeta_proveedor'],
+                            $linea['proveedor_bruto'],
+                            $linea['proveedor_descuento'],
+                            $linea['proveedor_neto'],
+                            $linea['admin_ganancia'],
                             $linea['promotion'],
                         ]);
                     }
@@ -270,6 +386,7 @@ class ReportController extends Controller
         return response()->json([
             'from_date' => $inicioString,
             'to_date' => $finString,
+            'summary' => $summaryPayload,
             'ventas' => $mapped,
         ]);
     }

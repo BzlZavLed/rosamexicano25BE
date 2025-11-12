@@ -4,12 +4,34 @@ export type CajaReportLine = {
     idprod: number;
     nombre: string;
     proveedor: number;
+    proveedor_nombre?: string | null;
+    proveedor_tipo?: 'normal' | 'consigna' | 'porcentaje';
+    proveedor_porcentaje?: number | null;
     puni: number;
     cant: number;
     total: number;
     product_desc?: number;
     descuento_producto?: number;
+    cargo_tarjeta_proveedor?: number;
     promotion?: string;
+    proveedor_bruto?: number;
+    proveedor_descuento?: number;
+    proveedor_neto?: number;
+    admin_ganancia?: number;
+};
+
+export type CajaReportProvider = {
+    proveedor_id: number;
+    nombre: string;
+    tipo: 'normal' | 'consigna' | 'porcentaje';
+    porcentaje?: number | null;
+    publico_total: number;
+    proveedor_bruto: number;
+    proveedor_descuento: number;
+    provider_card_charge: number;
+    proveedor_neto: number;
+    admin_ganancia: number;
+    percent: number;
 };
 
 export type CajaReportVenta = {
@@ -17,24 +39,36 @@ export type CajaReportVenta = {
     fecha: string;
     metodo: string;
     subtotal: number;
-    descuento_general?: number;
-    descuento_general_percent?: number;
-    descuento_general_amount?: number;
+    descuento_lineas: number;
     tarjeta_cargo: number;
-    descuento_lineas?: number;
-    descuento_total?: number;
     totalventa: number;
+    ingreso_real: number;
+    costo_total: number;
+    ganancia_total: number;
     ie: number;
     concepto: string;
     recibo: number;
     cambio: number;
     vendedor: string;
     lineas: CajaReportLine[];
+    providers: CajaReportProvider[];
+};
+
+export type CajaReportSummary = {
+    ventas_total: number;
+    subtotal: number;
+    descuento_lineas: number;
+    tarjeta_cargo: number;
+    total_totalventa: number;
+    ingreso_real: number;
+    costo_total: number;
+    ganancia_total: number;
 };
 
 export type CajaReportResponse = {
     from_date: string;
     to_date: string;
+    summary: CajaReportSummary;
     ventas: CajaReportVenta[];
 };
 

@@ -77,6 +77,14 @@ const options: Array<{ value: ReportType; label: string }> = [
 type InventarioSort = 'producto' | 'existencia' | 'proveedor';
 type SortDirection = 'asc' | 'desc';
 type MensualidadStatusFilter = 'todos' | 'pendiente' | 'pagado';
+type CajaSortColumn = 'fecha' | 'metodo' | 'vendedor' | 'total' | 'id';
+const cajaSortLabels: Record<CajaSortColumn, string> = {
+    fecha: 'Fecha',
+    metodo: 'Método de pago',
+    vendedor: 'Vendedor',
+    total: 'Total venta',
+    id: 'ID de venta',
+};
 
 const inventarioSortOptions: Array<{ value: InventarioSort; label: string }> = [
     { value: 'producto', label: 'Producto' },
@@ -98,6 +106,10 @@ const cajaError = ref('');
 const cajaData = ref<CajaReportResponse | null>(null);
 const cajaSearch = ref('');
 const cajaDisplayLimit = ref(200);
+const cajaMetodoFilter = ref('');
+const cajaVendedorFilter = ref('');
+const cajaSortColumn = ref<CajaSortColumn>('fecha');
+const cajaSortDirection = ref<SortDirection>('desc');
 
 const entradasLoading = ref(false);
 const entradasError = ref('');
@@ -227,6 +239,10 @@ async function fetchCajaReport(download = false) {
                 cajaData.value = data;
                 cajaDisplayLimit.value = 200;
                 cajaSearch.value = '';
+                cajaMetodoFilter.value = '';
+                cajaVendedorFilter.value = '';
+                cajaSortColumn.value = 'fecha';
+                cajaSortDirection.value = 'desc';
                 expandedVentaIds.value = new Set();
             }
         }
@@ -466,120 +482,162 @@ async function fetchMensualidadReport(download = false) {
     }
 }
 
-type CajaFlatRow = {
-    ventaId: number;
-    fecha: string;
-    metodo: string;
-    vendedor: string;
-    concepto: string;
-    subtotal: number;
-    descuentoGeneralPercent: number;
-    descuentoGeneralAmount: number;
-    descuentoLineas: number;
-    descuentoTotal: number;
-    tarjetaCargo: number;
-    totalVenta: number;
-    grossSubtotal: number;
-    productoId: number;
-    productoNombre: string;
-    proveedorId: number;
-    cantidad: number;
-    precioUnitario: number;
-    totalLinea: number;
-    descuentoProducto: number;
-    promotion?: string;
-};
-
-function computeVentaSubtotal(venta: CajaReportVenta): number {
-    const subtotal = Number(venta.subtotal ?? 0);
-    const totalVenta = Number(venta.totalventa ?? 0);
-    const descuentoGeneral = Number(
-        venta.descuento_general_amount ?? venta.descuento_general ?? 0
-    );
-    const descuentoLineas = Number(venta.descuento_lineas ?? 0);
-    const recargo = Number(venta.tarjeta_cargo ?? 0);
-
-    const computed = totalVenta + descuentoGeneral + descuentoLineas + recargo;
-
-    if (!Number.isFinite(subtotal) || subtotal <= 0) return computed;
-    if (subtotal < totalVenta) return computed;
-    if (Math.abs(subtotal - computed) > 0.05) return computed;
-    return subtotal;
-}
-
 const cajaSummary = computed(() => {
-    if (!cajaData.value) return null;
-    const ventas = cajaData.value.ventas ?? [];
-    const totalVentas = ventas.length;
-    let totalLineas = 0;
-    let totalProductos = 0;
-    let sumSubtotal = 0;
-    let sumDescGeneral = 0;
-    let sumDescLineas = 0;
-    let sumRecargo = 0;
-    let sumTotalVenta = 0;
-
-    ventas.forEach((venta) => {
-        const lineas = venta.lineas ?? [];
-        totalLineas += lineas.length;
-        totalProductos += lineas.reduce((acc, l) => acc + (l.cant ?? 0), 0);
-        sumSubtotal += computeVentaSubtotal(venta);
-        sumDescGeneral += Number(
-            venta.descuento_general_amount ?? venta.descuento_general ?? 0
-        );
-        sumDescLineas += Number(venta.descuento_lineas ?? 0);
-        sumRecargo += Number(venta.tarjeta_cargo ?? 0);
-        sumTotalVenta += Number(venta.totalventa ?? 0);
-    });
-
+    if (!cajaData.value?.summary) return null;
+    const summary = cajaData.value.summary;
     return {
-        totalVentas,
-        totalLineas,
-        totalProductos,
-        sumSubtotal,
-        sumDescGeneral,
-        sumDescLineas,
-        sumRecargo,
-        sumTotalVenta,
+        totalVentas: Number(summary.ventas_total ?? cajaData.value.ventas?.length ?? 0),
+        subtotal: Number(summary.subtotal ?? 0),
+        descuentoLineas: Number(summary.descuento_lineas ?? 0),
+        tarjetaCargo: Number(summary.tarjeta_cargo ?? 0),
+        totalVenta: Number(summary.total_totalventa ?? 0),
+        ingresoReal: Number(summary.ingreso_real ?? summary.total_totalventa ?? 0),
+        costoTotal: Number(summary.costo_total ?? 0),
+        gananciaTotal: Number(summary.ganancia_total ?? 0),
     };
 });
 
-const cajaFlatRows = computed<CajaFlatRow[]>(() => {
-    if (!cajaData.value) return [];
-    const rows: CajaFlatRow[] = [];
-    (cajaData.value.ventas ?? []).forEach((venta: CajaReportVenta) => {
+const providerBadgeStyles: Record<'normal' | 'consigna' | 'porcentaje', { icon: string; label: string; className: string }> = {
+    normal: { icon: '🛒', label: 'Normal', className: 'bg-gray-100 text-gray-700' },
+    consigna: { icon: '📦', label: 'Consigna', className: 'bg-amber-100 text-amber-700' },
+    porcentaje: { icon: '％', label: 'Porcentaje', className: 'bg-indigo-100 text-indigo-700' },
+};
+
+function providerBadgeInfo(
+    type: 'normal' | 'consigna' | 'porcentaje' = 'normal',
+    percent?: number | null
+) {
+    const base = providerBadgeStyles[type] ?? providerBadgeStyles.normal;
+    const label =
+        type === 'porcentaje' && percent != null
+            ? `${base.label} (${percent}%)`
+            : base.label;
+    return { ...base, label };
+}
+
+const cajaMetodoOptions = computed(() => {
+    const metodos = new Set<string>();
+    (cajaData.value?.ventas ?? []).forEach((venta) => {
+        if (venta.metodo) metodos.add(venta.metodo);
+    });
+    return Array.from(metodos).sort((a, b) => a.localeCompare(b));
+});
+
+const cajaVendedorOptions = computed(() => {
+    const vendedores = new Set<string>();
+    (cajaData.value?.ventas ?? []).forEach((venta) => {
+        if (venta.vendedor) vendedores.add(venta.vendedor);
+    });
+    return Array.from(vendedores).sort((a, b) => a.localeCompare(b));
+});
+
+const filteredCajaVentas = computed<CajaReportVenta[]>(() => {
+    const ventas = [...(cajaData.value?.ventas ?? [])];
+    const search = cajaSearch.value.trim().toLowerCase();
+    const metodoFilter = cajaMetodoFilter.value;
+    const vendedorFilter = cajaVendedorFilter.value;
+
+    let result = ventas.filter((venta) => {
+        if (metodoFilter && venta.metodo !== metodoFilter) return false;
+        if (vendedorFilter && venta.vendedor !== vendedorFilter) return false;
+        if (!search) return true;
+
+        const matchesVenta =
+            String(venta.idventa).includes(search) ||
+            (venta.metodo?.toLowerCase?.().includes(search) ?? false) ||
+            (venta.vendedor?.toLowerCase?.().includes(search) ?? false) ||
+            (venta.concepto?.toLowerCase?.().includes(search) ?? false);
+
+        if (matchesVenta) return true;
+
+        const providers = venta.providers ?? [];
+        if (
+            providers.some(
+                (prov) =>
+                    prov.nombre?.toLowerCase()?.includes(search) ||
+                    String(prov.proveedor_id).includes(search)
+            )
+        ) {
+            return true;
+        }
+
         const lineas = venta.lineas ?? [];
-        const grossSubtotal = computeVentaSubtotal(venta);
-        lineas.forEach((linea) => {
-            rows.push({
-                ventaId: venta.idventa,
-                fecha: venta.fecha,
-                metodo: venta.metodo,
-                vendedor: venta.vendedor,
-                concepto: venta.concepto,
-                subtotal: Number(venta.subtotal ?? 0),
-                descuentoGeneralPercent: Number(venta.descuento_general_percent ?? 0),
-                descuentoGeneralAmount: Number(
-                    venta.descuento_general_amount ?? venta.descuento_general ?? 0
-                ),
-                descuentoLineas: Number(venta.descuento_lineas ?? 0),
-                descuentoTotal: Number(venta.descuento_total ?? 0),
-                tarjetaCargo: Number(venta.tarjeta_cargo ?? 0),
-                totalVenta: Number(venta.totalventa ?? 0),
-                grossSubtotal,
-                productoId: linea.idprod,
-                productoNombre: linea.nombre,
-                proveedorId: Number(linea.proveedor ?? 0),
-                cantidad: Number(linea.cant ?? 0),
-                precioUnitario: Number(linea.puni ?? 0),
-                totalLinea: Number(linea.total ?? 0),
-                descuentoProducto: Number(linea.descuento_producto ?? linea.product_desc ?? 0),
-                promotion: linea.promotion,
-            });
+        return lineas.some((linea) => {
+            return (
+                linea.nombre?.toLowerCase()?.includes(search) ||
+                String(linea.idprod).includes(search) ||
+                String(linea.proveedor).includes(search)
+            );
         });
     });
-    return rows;
+
+    const direction = cajaSortDirection.value === 'asc' ? 1 : -1;
+    const column = cajaSortColumn.value;
+
+    result.sort((a, b) => {
+        switch (column) {
+            case 'metodo':
+                return ((a.metodo ?? '').localeCompare(b.metodo ?? '')) * direction;
+            case 'vendedor':
+                return ((a.vendedor ?? '').localeCompare(b.vendedor ?? '')) * direction;
+            case 'total':
+                return (Number(a.totalventa ?? 0) - Number(b.totalventa ?? 0)) * direction;
+            case 'id':
+                return (Number(a.idventa ?? 0) - Number(b.idventa ?? 0)) * direction;
+            case 'fecha':
+            default:
+                const aDate = a.fecha ? Date.parse(a.fecha) : NaN;
+                const bDate = b.fecha ? Date.parse(b.fecha) : NaN;
+                const safeADate = Number.isNaN(aDate) ? 0 : aDate;
+                const safeBDate = Number.isNaN(bDate) ? 0 : bDate;
+                return (safeADate - safeBDate) * direction;
+        }
+    });
+
+    return result;
 });
+
+const expandedVentaIds = ref<Set<number>>(new Set());
+
+function toggleVenta(ventaId: number) {
+    const current = new Set(expandedVentaIds.value);
+    if (current.has(ventaId)) {
+        current.delete(ventaId);
+    } else {
+        current.add(ventaId);
+    }
+    expandedVentaIds.value = current;
+}
+
+const visibleCajaVentas = computed(() => {
+    const limit = cajaDisplayLimit.value;
+    return filteredCajaVentas.value.slice(0, limit);
+});
+
+function loadMoreCajaVentas() {
+    cajaDisplayLimit.value += 10;
+}
+
+function setCajaSort(column: CajaSortColumn) {
+    if (cajaSortColumn.value === column) {
+        cajaSortDirection.value = cajaSortDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        cajaSortColumn.value = column;
+        cajaSortDirection.value = column === 'fecha' ? 'desc' : 'asc';
+    }
+}
+
+function resetCajaFilters() {
+    cajaSearch.value = '';
+    cajaMetodoFilter.value = '';
+    cajaVendedorFilter.value = '';
+    cajaSortColumn.value = 'fecha';
+    cajaSortDirection.value = 'desc';
+}
+
+function toggleCajaSortDirection() {
+    cajaSortDirection.value = cajaSortDirection.value === 'asc' ? 'desc' : 'asc';
+}
 
 const entradasSummary = computed(() => {
     if (!entradasData.value) return null;
@@ -874,64 +932,6 @@ function downloadProveedorModalCsv() {
     document.body.removeChild(link);
     URL.revokeObjectURL(link.href);
 }
-
-const filteredCajaRows = computed(() => {
-    const search = cajaSearch.value.trim().toLowerCase();
-    if (!search) return cajaFlatRows.value;
-    return cajaFlatRows.value.filter((row) => {
-        return (
-            (row.productoNombre?.toLowerCase?.().includes(search) ?? false) ||
-            (row.vendedor?.toLowerCase?.().includes(search) ?? false) ||
-            (row.metodo?.toLowerCase?.().includes(search) ?? false) ||
-            String(row.ventaId).includes(search) ||
-            String(row.productoId).includes(search) ||
-            String(row.proveedorId).includes(search)
-        );
-    });
-});
-
-function loadMoreCajaRows() {
-    cajaDisplayLimit.value += 200;
-}
-
-const expandedVentaIds = ref<Set<number>>(new Set());
-
-function toggleVenta(ventaId: number) {
-    const current = new Set(expandedVentaIds.value);
-    if (current.has(ventaId)) {
-        current.delete(ventaId);
-    } else {
-        current.add(ventaId);
-    }
-    expandedVentaIds.value = current;
-}
-
-const groupedRows = computed(() => {
-    const groups = new Map<number, { venta: CajaFlatRow; lineas: CajaFlatRow[] }>();
-    filteredCajaRows.value.forEach((row) => {
-        const entry = groups.get(row.ventaId);
-        if (!entry) {
-            groups.set(row.ventaId, { venta: row, lineas: [row] });
-        } else {
-            entry.lineas.push(row);
-        }
-    });
-    return Array.from(groups.values());
-});
-
-const groupedVisibleRows = computed(() => {
-    const limit = cajaDisplayLimit.value;
-    const rows: { venta: CajaFlatRow; lineas: CajaFlatRow[] }[] = [];
-    let count = 0;
-    for (const group of groupedRows.value) {
-        if (count >= limit) break;
-        rows.push(group);
-        count += group.lineas.length;
-    }
-    return rows;
-});
-
-
 
 // --- Productos (All Products) Report state ---
 const prodLoading = ref(false);
@@ -1285,132 +1285,252 @@ onBeforeUnmount(() => {
                                         <span class="font-semibold text-gray-900">{{ cajaData.to_date }}</span>
                                     </div>
                                     <div v-if="cajaSummary"
-                                        class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 sm:grid-cols-5">
+                                        class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 sm:grid-cols-6 lg:grid-cols-8">
                                         <div><span class="block font-semibold text-gray-900">{{ cajaSummary.totalVentas
                                                 }}</span><span>Ventas</span></div>
                                         <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.sumSubtotal) }}</span><span>Subtotal</span>
+                                                formatCurrency(cajaSummary.subtotal) }}</span><span>Subtotal</span>
                                         </div>
                                         <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.sumDescGeneral + cajaSummary.sumDescLineas)
+                                                formatCurrency(cajaSummary.descuentoLineas)
                                                 }}</span><span>Descuentos</span></div>
                                         <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.sumTotalVenta) }}</span><span>Total
-                                                neto</span></div>
+                                                formatCurrency(cajaSummary.tarjetaCargo) }}</span><span>Recargo
+                                                tarjeta</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{
+                                                formatCurrency(cajaSummary.totalVenta) }}</span><span>Total
+                                                vendido</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{
+                                                formatCurrency(cajaSummary.ingresoReal) }}</span><span>Ingreso
+                                                real</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{
+                                                formatCurrency(cajaSummary.costoTotal) }}</span><span>Costo
+                                                proveedores</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{
+                                                formatCurrency(cajaSummary.gananciaTotal)
+                                                }}</span><span>Ganancia admin</span></div>
                                     </div>
                                 </div>
 
-                                <div class="flex flex-wrap items-center justify-between gap-2">
-                                    <p class="text-xs text-gray-500">
-                                        Registros: <span class="font-semibold text-gray-900">{{ filteredCajaRows.length
-                                            }}</span>
-                                    </p>
-                                    <input v-model="cajaSearch" type="search"
-                                        placeholder="Buscar producto, vendedor, método…"
-                                        class="w-full max-w-xs rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
-                                </div>
+                                <div class="space-y-4">
+                                    <div class="rounded-xl border border-gray-200 bg-white/70 p-4">
+                                        <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
+                                            <p>
+                                                Ventas encontradas:
+                                                <span class="font-semibold text-gray-900">{{ filteredCajaVentas.length }}</span>
+                                            </p>
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span>Ordenado por
+                                                    <span class="font-semibold text-gray-900">{{ cajaSortLabels[cajaSortColumn] }}</span>
+                                                    ({{ cajaSortDirection === 'asc' ? 'asc' : 'desc' }})
+                                                </span>
+                                                <button type="button"
+                                                    class="rounded-full border border-gray-300 px-3 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                                                    @click="toggleCajaSortDirection">
+                                                    Cambiar dirección
+                                                </button>
+                                                <button type="button"
+                                                    class="rounded-full border border-gray-300 px-3 py-1 text-[11px] text-gray-600 hover:bg-gray-50"
+                                                    @click="resetCajaFilters">
+                                                    Limpiar filtros
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                                            <label class="text-xs text-gray-500">
+                                                <span class="mb-1 block font-medium text-gray-700">Buscar</span>
+                                                <input v-model="cajaSearch" type="search"
+                                                    placeholder="Producto, vendedor, método…"
+                                                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                                            </label>
+                                            <label class="text-xs text-gray-500">
+                                                <span class="mb-1 block font-medium text-gray-700">Método de pago</span>
+                                                <select v-model="cajaMetodoFilter"
+                                                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-gray-900 focus:ring-gray-900">
+                                                    <option value="">Todos</option>
+                                                    <option v-for="metodo in cajaMetodoOptions" :key="metodo" :value="metodo">
+                                                        {{ metodo?.toUpperCase?.() ?? metodo }}
+                                                    </option>
+                                                </select>
+                                            </label>
+                                            <label class="text-xs text-gray-500">
+                                                <span class="mb-1 block font-medium text-gray-700">Vendedor</span>
+                                                <select v-model="cajaVendedorFilter"
+                                                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-gray-900 focus:ring-gray-900">
+                                                    <option value="">Todos</option>
+                                                    <option v-for="vendedor in cajaVendedorOptions" :key="vendedor" :value="vendedor">
+                                                        {{ vendedor }}
+                                                    </option>
+                                                </select>
+                                            </label>
+                                            <label class="text-xs text-gray-500">
+                                                <span class="mb-1 block font-medium text-gray-700">Ordenar por</span>
+                                                <select :value="cajaSortColumn"
+                                                    @change="setCajaSort(($event.target as HTMLSelectElement).value as CajaSortColumn)"
+                                                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-gray-900 focus:ring-gray-900">
+                                                    <option value="fecha">Fecha</option>
+                                                    <option value="id">ID de venta</option>
+                                                    <option value="metodo">Método de pago</option>
+                                                    <option value="vendedor">Vendedor</option>
+                                                    <option value="total">Total venta</option>
+                                                </select>
+                                            </label>
+                                        </div>
+                                    </div>
 
-                                <div :class="tableClasses.wrapper">
-                                    <table :class="tableClasses.table">
-                                        <thead :class="tableClasses.head">
-                                            <tr>
-                                                <th class="px-3 py-2"></th>
-                                                <th class="px-3 py-2">Venta ID</th>
-                                                <th class="px-3 py-2">Fecha</th>
-                                                <th class="px-3 py-2">Método</th>
-                                                <th class="px-3 py-2">Vendedor</th>
-                                                <th class="px-3 py-2">Concepto</th>
-                                                <th class="px-3 py-2 text-right">Subtotal</th>
-                                                <th class="px-3 py-2 text-right">Desc. general</th>
-                                                <th class="px-3 py-2 text-right">Desc. líneas*</th>
-                                                <th class="px-3 py-2 text-right">Recargo tarjeta*</th>
-                                                <th class="px-3 py-2 text-right">Total venta</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody :class="tableClasses.body">
-                                            <template v-for="group in groupedVisibleRows" :key="group.venta.ventaId">
-                                                <tr :class="tableClasses.row">
-                                                    <td class="px-3 py-2">
-                                                        <button type="button"
-                                                            class="inline-flex h-5 w-5 items-center justify-center rounded border border-gray-300 text-xs hover:bg-gray-50"
-                                                            @click="toggleVenta(group.venta.ventaId)">
-                                                            {{ expandedVentaIds.has(group.venta.ventaId) ? '-' : '+' }}
+                                    <div :class="tableClasses.wrapper">
+                                        <table :class="tableClasses.table">
+                                            <thead :class="tableClasses.head">
+                                                <tr>
+                                                    <th class="px-3 py-2">
+                                                        <button type="button" class="flex items-center gap-1" @click="setCajaSort('id')">
+                                                            Venta
+                                                            <span v-if="cajaSortColumn === 'id'">{{ cajaSortDirection === 'asc' ? '↑' : '↓' }}</span>
                                                         </button>
-                                                    </td>
-                                                    <td class="px-3 py-2 font-semibold text-gray-900">{{
-                                                        group.venta.ventaId }}</td>
-                                                    <td class="px-3 py-2">{{ group.venta.fecha }}</td>
-                                                    <td class="px-3 py-2 capitalize">{{ group.venta.metodo }}</td>
-                                                    <td class="px-3 py-2">{{ group.venta.vendedor }}</td>
-                                                    <td class="px-3 py-2">{{ group.venta.concepto }}</td>
-                                                    <td class="px-3 py-2 text-right">{{
-                                                        formatCurrency(group.venta.grossSubtotal) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{
-                                                        formatCurrency(group.venta.descuentoGeneralAmount) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{
-                                                        formatCurrency(group.venta.descuentoLineas) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{
-                                                        formatCurrency(group.venta.tarjetaCargo) }}</td>
-                                                    <td class="px-3 py-2 text-right font-semibold text-gray-900">{{
-                                                        formatCurrency(group.venta.totalVenta) }}</td>
+                                                    </th>
+                                                    <th class="px-3 py-2">
+                                                        <button type="button" class="flex items-center gap-1" @click="setCajaSort('fecha')">
+                                                            Fecha
+                                                            <span v-if="cajaSortColumn === 'fecha'">{{ cajaSortDirection === 'asc' ? '↑' : '↓' }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2">
+                                                        <button type="button" class="flex items-center gap-1" @click="setCajaSort('metodo')">
+                                                            Método
+                                                            <span v-if="cajaSortColumn === 'metodo'">{{ cajaSortDirection === 'asc' ? '↑' : '↓' }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2">
+                                                        <button type="button" class="flex items-center gap-1" @click="setCajaSort('vendedor')">
+                                                            Vendedor
+                                                            <span v-if="cajaSortColumn === 'vendedor'">{{ cajaSortDirection === 'asc' ? '↑' : '↓' }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2">Concepto</th>
+                                                    <th class="px-3 py-2 text-right">Líneas</th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button type="button" class="flex items-center gap-1" @click="setCajaSort('total')">
+                                                            Total venta
+                                                            <span v-if="cajaSortColumn === 'total'">{{ cajaSortDirection === 'asc' ? '↑' : '↓' }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2 text-right">Ingreso real</th>
                                                 </tr>
-                                                <template v-if="expandedVentaIds.has(group.venta.ventaId)">
-                                                    <tr class="bg-gray-50 text-[11px] text-gray-500">
-                                                        <th class="px-3 py-2"></th>
-                                                        <th class="px-3 py-2">Prod. ID</th>
-                                                        <th class="px-3 py-2" colspan="2">Producto</th>
-                                                        <th class="px-3 py-2">Proveedor</th>
-                                                        <th class="px-3 py-2 text-right">Cant.</th>
-                                                        <th class="px-3 py-2 text-right">P. unitario</th>
-                                                        <th class="px-3 py-2 text-right">Total línea</th>
-                                                        <th class="px-3 py-2 text-right">Desc. línea</th>
-                                                        <th class="px-3 py-2" colspan="2">Promoción</th>
-                                                    </tr>
-                                                    <tr v-for="linea in group.lineas"
-                                                        :key="`${group.venta.ventaId}-${linea.productoId}`"
-                                                        class="text-gray-700">
-                                                        <td class="px-3 py-2"></td>
-                                                        <td class="px-3 py-2 text-gray-900">{{ linea.productoId }}</td>
-                                                        <td class="px-3 py-2" colspan="2">{{ linea.productoNombre }}
-                                                        </td>
-                                                        <td class="px-3 py-2">{{ linea.proveedorId }}</td>
-                                                        <td class="px-3 py-2 text-right">{{ linea.cantidad }}</td>
-                                                        <td class="px-3 py-2 text-right">{{
-                                                            formatCurrency(linea.precioUnitario) }}</td>
-                                                        <td class="px-3 py-2 text-right">{{
-                                                            formatCurrency(linea.totalLinea) }}</td>
-                                                        <td class="px-3 py-2 text-right">{{
-                                                            formatCurrency(linea.descuentoProducto) }}</td>
-                                                        <td class="px-3 py-2" colspan="2">{{ linea.promotion || '—' }}
-                                                        </td>
-                                                    </tr>
+                                            </thead>
+                                            <tbody :class="tableClasses.body">
+                                                <tr v-if="visibleCajaVentas.length === 0">
+                                                    <td :class="tableClasses.emptyRow" colspan="8">
+                                                        No hay ventas que coincidan con los criterios seleccionados.
+                                                    </td>
+                                                </tr>
+                                                <template v-else>
+                                                    <template v-for="venta in visibleCajaVentas" :key="venta.idventa">
+                                                        <tr :class="tableClasses.row">
+                                                            <td class="px-3 py-2 text-sm font-semibold text-gray-900">
+                                                                <button type="button"
+                                                                    class="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 text-[10px]"
+                                                                    @click="toggleVenta(venta.idventa)">
+                                                                    {{ expandedVentaIds.has(venta.idventa) ? '−' : '+' }}
+                                                                </button>
+                                                                #{{ venta.idventa }}
+                                                            </td>
+                                                            <td class="px-3 py-2 text-xs text-gray-600">{{ venta.fecha }}</td>
+                                                            <td class="px-3 py-2 text-xs uppercase text-gray-600">{{ venta.metodo?.toUpperCase?.() ?? '—' }}</td>
+                                                            <td class="px-3 py-2 text-xs text-gray-700">{{ venta.vendedor || '—' }}</td>
+                                                            <td class="px-3 py-2 text-xs text-gray-700">{{ venta.concepto || '—' }}</td>
+                                                            <td class="px-3 py-2 text-right text-xs font-semibold text-gray-900">{{ venta.lineas?.length ?? 0 }}</td>
+                                                            <td class="px-3 py-2 text-right text-sm font-semibold text-gray-900">{{ formatCurrency(venta.totalventa ?? 0) }}</td>
+                                                            <td class="px-3 py-2 text-right text-sm font-semibold text-gray-900">{{ formatCurrency(venta.ingreso_real ?? venta.totalventa ?? 0) }}</td>
+                                                        </tr>
+                                                        <tr v-if="expandedVentaIds.has(venta.idventa)">
+                                                            <td colspan="8" class="bg-gray-50 px-6 py-4 text-xs text-gray-600">
+                                                                <div class="space-y-4">
+                                                                    <div class="grid gap-3 text-[11px] text-gray-500 sm:grid-cols-2 md:grid-cols-4">
+                                                                        <div class="rounded-lg border border-gray-200 bg-white p-3">
+                                                                            <p class="text-[10px] uppercase tracking-wide text-gray-400">Subtotal</p>
+                                                                            <p class="text-sm font-semibold text-gray-900">{{ formatCurrency(venta.subtotal ?? 0) }}</p>
+                                                                        </div>
+                                                                        <div class="rounded-lg border border-gray-200 bg-white p-3">
+                                                                            <p class="text-[10px] uppercase tracking-wide text-gray-400">Descuento líneas</p>
+                                                                            <p class="text-sm font-semibold text-rose-700">-{{ formatCurrency(venta.descuento_lineas ?? 0) }}</p>
+                                                                        </div>
+                                                                        <div class="rounded-lg border border-gray-200 bg-white p-3">
+                                                                            <p class="text-[10px] uppercase tracking-wide text-gray-400">Recargo tarjeta</p>
+                                                                            <p class="text-sm font-semibold text-gray-900">{{ formatCurrency(venta.tarjeta_cargo ?? 0) }}</p>
+                                                                        </div>
+                                                                        <div class="rounded-lg border border-gray-200 bg-white p-3">
+                                                                            <p class="text-[10px] uppercase tracking-wide text-gray-400">Ganancia admin</p>
+                                                                            <p class="text-sm font-semibold text-emerald-700">+{{ formatCurrency(venta.ganancia_total ?? 0) }}</p>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div class="flex flex-wrap items-center gap-2">
+                                                                        <span class="text-[11px] uppercase tracking-wide text-gray-400">Proveedores</span>
+                                                                        <template v-if="venta.providers?.length">
+                                                                            <span v-for="prov in venta.providers" :key="prov.proveedor_id"
+                                                                                class="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-3 py-1 text-[12px]">
+                                                                                <span class="font-semibold text-gray-900">{{ prov.nombre || 'Proveedor #' + prov.proveedor_id }}</span>
+                                                                                <span class="text-gray-400">ID {{ prov.proveedor_id }}</span>
+                                                                            </span>
+                                                                        </template>
+                                                                        <span v-else class="text-gray-400">No hay proveedores asociados.</span>
+                                                                    </div>
+
+                                                                    <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+                                                                        <table class="min-w-full text-[11px]">
+                                                                            <thead class="bg-gray-50 text-left text-[10px] uppercase tracking-wide text-gray-500">
+                                                                                <tr>
+                                                                                    <th class="px-3 py-2">Producto</th>
+                                                                                    <th class="px-3 py-2 text-right">Cant.</th>
+                                                                                    <th class="px-3 py-2 text-right">P. unit</th>
+                                                                                    <th class="px-3 py-2 text-right">Subtotal</th>
+                                                                                    <th class="px-3 py-2 text-right">Desc. producto</th>
+                                                                                    <th class="px-3 py-2 text-right">Cargo tarjeta</th>
+                                                                                    <th class="px-3 py-2 text-right">Proveedor bruto</th>
+                                                                                    <th class="px-3 py-2 text-right">Desc. proveedor</th>
+                                                                                    <th class="px-3 py-2 text-right">Proveedor neto</th>
+                                                                                    <th class="px-3 py-2 text-right">Ganancia admin</th>
+                                                                                    <th class="px-3 py-2">Promoción</th>
+                                                                                </tr>
+                                                                            </thead>
+                                                                            <tbody class="divide-y divide-gray-100 text-gray-700">
+                                                                                <tr v-for="linea in venta.lineas ?? []" :key="linea.idprod + '-' + linea.proveedor">
+                                                                                    <td class="px-3 py-2">
+                                                                                        <div class="flex flex-col">
+                                                                                            <span class="font-semibold text-gray-900">{{ linea.nombre }}</span>
+                                                                                            <span class="text-[10px] text-gray-500">Prov. #{{ linea.proveedor }} · {{ providerBadgeInfo(linea.proveedor_tipo as any, linea.proveedor_porcentaje).label }}</span>
+                                                                                        </div>
+                                                                                    </td>
+                                                                                    <td class="px-3 py-2 text-right">{{ linea.cant }}</td>
+                                                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(linea.puni) }}</td>
+                                                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(linea.total) }}</td>
+                                                                                    <td class="px-3 py-2 text-right text-rose-700">-{{ formatCurrency(linea.descuento_producto ?? 0) }}</td>
+                                                                                    <td class="px-3 py-2 text-right text-rose-700">-{{ formatCurrency(linea.cargo_tarjeta_proveedor ?? 0) }}</td>
+                                                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(linea.proveedor_bruto ?? 0) }}</td>
+                                                                                    <td class="px-3 py-2 text-right text-rose-700">-{{ formatCurrency(linea.proveedor_descuento ?? 0) }}</td>
+                                                                                    <td class="px-3 py-2 text-right font-semibold text-gray-900">{{ formatCurrency(linea.proveedor_neto ?? 0) }}</td>
+                                                                                    <td class="px-3 py-2 text-right text-emerald-700">+{{ formatCurrency(linea.admin_ganancia ?? 0) }}</td>
+                                                                                    <td class="px-3 py-2">{{ linea.promotion || '—' }}</td>
+                                                                                </tr>
+                                                                            </tbody>
+                                                                        </table>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    </template>
                                                 </template>
-                                            </template>
-                                        </tbody>
-                                        <tfoot v-if="cajaSummary"
-                                            class="bg-gray-100 text-[11px] uppercase tracking-wide text-gray-600">
-                                            <tr>
-                                                <td class="px-3 py-2" colspan="6">Totales</td>
-                                                <td class="px-3 py-2 text-right">{{
-                                                    formatCurrency(cajaSummary.sumSubtotal) }}</td>
-                                                <td class="px-3 py-2 text-right">{{
-                                                    formatCurrency(cajaSummary.sumDescGeneral) }}</td>
-                                                <td class="px-3 py-2 text-right">{{
-                                                    formatCurrency(cajaSummary.sumDescLineas) }}</td>
-                                                <td class="px-3 py-2 text-right">{{
-                                                    formatCurrency(cajaSummary.sumRecargo) }}</td>
-                                                <td class="px-3 py-2 text-right font-semibold text-gray-900">{{
-                                                    formatCurrency(cajaSummary.sumTotalVenta) }}</td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                </div>
-                                <div v-if="filteredCajaRows.length > cajaDisplayLimit" class="flex justify-center">
-                                    <button type="button"
-                                        class="rounded-lg border border-gray-300 px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
-                                        @click="loadMoreCajaRows">
-                                        Cargar más resultados
-                                    </button>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <div v-if="visibleCajaVentas.length < filteredCajaVentas.length" class="flex justify-center">
+                                        <button type="button"
+                                            class="rounded-lg border border-gray-300 px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
+                                            @click="loadMoreCajaVentas">
+                                            Cargar más ventas
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                             <div v-else class="text-xs text-gray-500">
