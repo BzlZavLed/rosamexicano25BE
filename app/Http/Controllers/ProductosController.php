@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ProductosController extends Controller
 {
@@ -184,6 +185,7 @@ class ProductosController extends Controller
                 return response()->json(['message' => 'No autenticado.'], 401);
             }
 
+            $data = $this->normalizeProductPricing($data);
             $producto = Producto::create($data);
 
             return new ProductoResource($producto->load('proveedor'));
@@ -207,8 +209,25 @@ class ProductosController extends Controller
     // PUT/PATCH /api/productos/{producto}
     public function update(UpdateProductoRequest $request, Producto $producto)
     {
-        $producto->update($request->validated());
-        return new ProductoResource($producto->load('proveedor'));
+        try {
+            $changes = $request->validated();
+            $changes = $this->normalizeProductPricing($changes, $producto);
+            $producto->fill($changes);
+            if ($producto->isDirty()) {
+                $producto->save();
+            }
+            return new ProductoResource($producto->load('proveedor'));
+        } catch (Throwable $e) {
+            Log::error('Producto update failed', [
+                'ex' => $e,
+                'payload' => $request->all(),
+                'user_id' => Auth::id(),
+            ]);
+            if ($e instanceof ValidationException) {
+                throw $e;
+            }
+            return response()->json(['message' => 'No se pudo actualizar el producto.'], 500);
+        }
     }
 
     // DELETE /api/productos/{producto}
@@ -414,6 +433,20 @@ class ProductosController extends Controller
                 }
                 $precio = round((float) $normalizedPrecio, 2);
 
+                $rawPrecioProveedor = $data['precio_proveedor'] ?? null;
+                $precioProveedor = null;
+                if ($rawPrecioProveedor !== null && $rawPrecioProveedor !== '') {
+                    $normalizedCosto = preg_replace('/[^0-9,.\-]/', '', $rawPrecioProveedor);
+                    if (Str::contains($normalizedCosto, ',') && !Str::contains($normalizedCosto, '.')) {
+                        $normalizedCosto = str_replace(',', '.', $normalizedCosto);
+                    } else {
+                        $normalizedCosto = str_replace(',', '', $normalizedCosto);
+                    }
+                    if (is_numeric($normalizedCosto)) {
+                        $precioProveedor = round((float) $normalizedCosto, 2);
+                    }
+                }
+
                 $payload = [
                     'ident'       => $ident,
                     'nombre'      => $nombre,
@@ -422,9 +455,21 @@ class ProductosController extends Controller
                     'proveedorid' => $proveedorIdent,
                     'usuario'     => (string) $userId,
                     'precio'      => $precio,
+                    'precio_proveedor' => $precioProveedor,
                 ];
 
                 $producto = Producto::where('ident', $ident)->first();
+
+                try {
+                    $payload = $this->normalizeProductPricing($payload, $producto);
+                } catch (ValidationException $e) {
+                    $errors[] = [
+                        'line' => $line,
+                        'message' => implode(' ', $e->validator->errors()->all()),
+                    ];
+                    $skipped++;
+                    continue;
+                }
 
                 if ($producto) {
                     if (!$updateExisting) {
@@ -466,5 +511,63 @@ class ProductosController extends Controller
             'skipped' => $skipped,
             'errors'  => $errors,
         ], $status);
+    }
+
+    private function normalizeProductPricing(array $data, ?Producto $current = null): array
+    {
+        $providerIdent = $data['proveedorid'] ?? $current?->proveedorid;
+        if (!$providerIdent) {
+            throw ValidationException::withMessages([
+                'proveedorid' => 'Debes seleccionar un proveedor.',
+            ]);
+        }
+
+        $proveedor = Proveedor::where('ident', $providerIdent)->first();
+        if (!$proveedor) {
+            throw ValidationException::withMessages([
+                'proveedorid' => 'El proveedor seleccionado no existe.',
+            ]);
+        }
+
+        $publicPrice = array_key_exists('precio', $data)
+            ? $data['precio']
+            : ($current?->precio);
+
+        if ($publicPrice === null) {
+            throw ValidationException::withMessages([
+                'precio' => 'Debes capturar el precio público.',
+            ]);
+        }
+
+        $providerPrice = array_key_exists('precio_proveedor', $data)
+            ? $data['precio_proveedor']
+            : ($current?->precio_proveedor);
+
+        $tipo = $proveedor->tipo ?? 'normal';
+        if ($tipo === 'porcentaje') {
+            $pct = (int) ($proveedor->porcentaje_comision ?? 0);
+            if ($pct <= 0) {
+                throw ValidationException::withMessages([
+                    'proveedorid' => 'El proveedor porcentaje no tiene comisión configurada (20/30%).',
+                ]);
+            }
+            if ($providerPrice === null) {
+                $providerPrice = round($publicPrice * (1 - ($pct / 100)), 2);
+            }
+        } elseif ($tipo === 'consigna') {
+            if ($providerPrice === null) {
+                throw ValidationException::withMessages([
+                    'precio_proveedor' => 'Debes capturar el costo base para proveedores en consigna.',
+                ]);
+            }
+        } else {
+            $providerPrice = $providerPrice ?? $publicPrice;
+        }
+
+        $data['proveedorid'] = $providerIdent;
+        $data['precio'] = $publicPrice;
+        $data['precio_proveedor'] = $providerPrice;
+
+        return $data;
     }
 }

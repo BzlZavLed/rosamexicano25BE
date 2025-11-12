@@ -18,7 +18,8 @@ class StoreProductoRequest extends FormRequest
             'descripcion' => ['nullable','string','max:100'],
             'fecha'       => ['required','string','max:10'],  // stays as varchar(10)
             'proveedorid' => ['required','integer','exists:proveedores,ident'],
-            'precio'      => ['required','numeric'],
+            'precio'      => ['required','numeric','min:0'],
+            'precio_proveedor' => ['nullable','numeric','min:0'],
         ];
     }
 

@@ -15,9 +15,10 @@ class UpdateProductoRequest extends FormRequest
             'nombre'      => ['sometimes','string','max:100'],
             'descripcion' => ['sometimes','nullable','string','max:100'],
             'fecha'       => ['sometimes','string','max:10'],
-            'proveedorid' => ['sometimes','integer','exists:proveedores,id'],
+            'proveedorid' => ['sometimes','integer','exists:proveedores,ident'],
             'usuario'     => ['sometimes','string','max:80'],
-            'precio'      => ['sometimes','numeric'],
+            'precio'      => ['sometimes','numeric','min:0'],
+            'precio_proveedor' => ['sometimes','nullable','numeric','min:0'],
         ];
     }
 }

@@ -198,6 +198,7 @@ type FormT = {
     descripcion: string;
     proveedorid: number | null;
     precio: number | null;
+    precio_proveedor: number | null;
     fecha: string; // YYYY-MM-DD
     cantidadInicial: number | null; // for inventory
 };
@@ -208,6 +209,7 @@ const form = reactive<FormT>({
     descripcion: '',
     proveedorid: null,
     precio: null,
+    precio_proveedor: null,
     fecha: new Date().toISOString().slice(0, 10),
     cantidadInicial: null,
 });
@@ -236,11 +238,50 @@ function resetForm() {
     form.descripcion = '';
     form.proveedorid = null;
     form.precio = null;
+    form.precio_proveedor = null;
     form.fecha = new Date().toISOString().slice(0, 10);
     form.cantidadInicial = null;
     selectedId.value = null;
     message.value = '';
     error.value = '';
+}
+
+const currentProveedor = computed(() => proveedores.value.find((p) => p.ident === form.proveedorid) ?? null);
+const proveedorTipo = computed(() => currentProveedor.value?.tipo ?? 'normal');
+const proveedorPorcentaje = computed(() => currentProveedor.value?.porcentaje_comision ?? null);
+const requiereCostoProveedor = computed(() => proveedorTipo.value === 'consigna');
+const esPorcentajeProveedor = computed(() => proveedorTipo.value === 'porcentaje');
+
+watch(() => form.proveedorid, () => {
+    syncPrecioProveedor('provider');
+});
+
+watch(() => form.precio, () => {
+    syncPrecioProveedor('price');
+});
+
+function syncPrecioProveedor(trigger: 'provider' | 'price') {
+    const prov = currentProveedor.value;
+    if (!prov) {
+        if (trigger === 'provider') {
+            form.precio_proveedor = null;
+        }
+        return;
+    }
+
+    if (prov.tipo === 'porcentaje') {
+        if (form.precio != null && prov.porcentaje_comision) {
+            form.precio_proveedor = Number(
+                (form.precio * (1 - prov.porcentaje_comision / 100)).toFixed(2)
+            );
+        }
+    } else if (prov.tipo === 'normal') {
+        if (form.precio != null) {
+            form.precio_proveedor = form.precio;
+        }
+    } else if (prov.tipo === 'consigna' && trigger === 'provider' && form.precio_proveedor == null) {
+        form.precio_proveedor = null;
+    }
 }
 
 function buildListParams(overrides: Partial<ListProductosParams> = {}): ListProductosParams {
@@ -262,7 +303,6 @@ async function loadList() {
     try {
         const params = buildListParams();
         const resp = await listProductos(params);
-        console.log('Productos response:', resp);
         const rows = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : []);
         productos.value = rows;
 
@@ -285,13 +325,7 @@ async function loadList() {
 async function loadProveedores() {
     try {
         const resp = await listProveedores();
-        if (Array.isArray(resp)) {
-            proveedores.value = resp;
-        } else if (resp && Array.isArray((resp as { data?: unknown }).data)) {
-            proveedores.value = (resp as { data: Proveedor[] }).data;
-        } else {
-            proveedores.value = [];
-        }
+        proveedores.value = Array.isArray(resp) ? resp : [];
     } catch { /* ignore */ }
 }
 async function selectRow(p: Producto) {
@@ -302,15 +336,22 @@ async function selectRow(p: Producto) {
     form.descripcion = p.descripcion || '';
     form.proveedorid = p.proveedorid;
     form.precio = p.precio;
+    form.precio_proveedor = (p as any).precio_proveedor ?? p.precio ?? null;
     form.fecha = p.fecha || new Date().toISOString().slice(0, 10);
     form.cantidadInicial = null;
     message.value = ''; error.value = '';
+    syncPrecioProveedor('provider');
 }
 async function submitCreateOrUpdate() {
     error.value = ''; message.value = '';
     if (!form.ident) form.ident = randIdent();
     if (!form.nombre || !form.proveedorid || !form.precio) {
         error.value = 'Nombre, Proveedor y Precio son obligatorios';
+        console.log(form);
+        return;
+    }
+    if ((requiereCostoProveedor.value || esPorcentajeProveedor.value) && (form.precio_proveedor == null)) {
+        error.value = 'Debes capturar el costo del proveedor';
         console.log(form);
         return;
     }
@@ -321,13 +362,15 @@ async function submitCreateOrUpdate() {
         if (form.id) {
             saved = await updateProducto(form.id, {
                 ident: form.ident!, nombre: form.nombre, descripcion: form.descripcion,
-                proveedorid: form.proveedorid!, precio: form.precio!, fecha: form.fecha
+                proveedorid: form.proveedorid!, precio: form.precio!, fecha: form.fecha,
+                precio_proveedor: form.precio_proveedor,
             });
             message.value = 'Producto actualizado';
         } else {
             saved = await createProducto({
                 ident: form.ident!, nombre: form.nombre, descripcion: form.descripcion,
-                proveedorid: form.proveedorid!, precio: form.precio!, fecha: form.fecha
+                proveedorid: form.proveedorid!, precio: form.precio!, fecha: form.fecha,
+                precio_proveedor: form.precio_proveedor,
             });
             message.value = 'Producto creado';
             form.id = saved.id;
@@ -543,6 +586,12 @@ onMounted(async () => {
                             <option :value="null" disabled>Selecciona proveedor</option>
                             <option v-for="p in proveedores" :key="p.ident" :value="p.ident">{{ p.nombre }}</option>
                         </select>
+                        <p class="text-xs text-gray-500 mt-1" v-if="currentProveedor">
+                            Tipo: <b>{{ currentProveedor?.tipo || 'normal' }}</b>
+                            <span v-if="currentProveedor?.tipo === 'porcentaje' && currentProveedor?.porcentaje_comision">
+                                — {{ currentProveedor?.porcentaje_comision }}% de comisión
+                            </span>
+                        </p>
                     </div>
 
                     <!-- Nombre -->
@@ -566,6 +615,25 @@ onMounted(async () => {
                         <input v-model.number="form.precio" type="number" step="0.01" min="0"
                             class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
                             placeholder="Precio unitario" />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Costo proveedor</label>
+                        <input v-model.number="form.precio_proveedor" type="number" step="0.01" min="0"
+                            :disabled="esPorcentajeProveedor || !currentProveedor"
+                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-500"
+                            placeholder="Costo base para este proveedor" />
+                        <p class="text-xs text-gray-500 mt-1" v-if="!currentProveedor">
+                            Selecciona un proveedor para definir cómo se calcula este costo.
+                        </p>
+                        <p class="text-xs text-gray-500 mt-1" v-else-if="requiereCostoProveedor">
+                            Para proveedores en consigna capturamos el costo base que se pagará al proveedor.
+                        </p>
+                        <p class="text-xs text-gray-500 mt-1" v-else-if="esPorcentajeProveedor && proveedorPorcentaje">
+                            Se calcula automáticamente aplicando {{ proveedorPorcentaje }}% al precio público.
+                        </p>
+                        <p class="text-xs text-gray-500 mt-1" v-else>
+                            Para proveedores normales igualamos el costo al precio de venta.
+                        </p>
                     </div>
 
                     <!-- Cantidad inicial -->

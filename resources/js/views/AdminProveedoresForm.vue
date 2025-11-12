@@ -58,6 +58,13 @@ const pageInfo = computed(() => {
     return { start, end };
 });
 
+const tipoOptions = [
+    { value: 'normal', label: 'Normal' },
+    { value: 'consigna', label: 'Consigna' },
+    { value: 'porcentaje', label: 'Por porcentaje' },
+] as const;
+const porcentajeOptions = [20, 30];
+
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const importResult = ref<ProveedorImportSummary | null>(null);
 const importOptions = reactive({
@@ -84,6 +91,8 @@ type FormT = {
     bancaria: string;     // cuenta
     sucursal: string;     // banco
     importe: number | null; // cobro mensual
+    tipo: 'normal' | 'consigna' | 'porcentaje';
+    porcentaje_comision: number | null;
 };
 const form = reactive<FormT>({
     id: null,
@@ -96,9 +105,27 @@ const form = reactive<FormT>({
     bancaria: '',
     sucursal: '',
     importe: null,
+    tipo: 'normal',
+    porcentaje_comision: null,
 });
 
 function randIdent(): number { return Math.floor(100000 + Math.random() * 900000); }
+
+const showImporteField = computed(() => form.tipo === 'normal');
+const showPorcentajeField = computed(() => form.tipo === 'porcentaje');
+const tipoLabel = computed(() => {
+    const option = tipoOptions.find((opt) => opt.value === form.tipo);
+    return option?.label ?? form.tipo;
+});
+
+watch(() => form.tipo, (value) => {
+    if (value !== 'porcentaje') {
+        form.porcentaje_comision = null;
+    }
+    if (value !== 'normal') {
+        form.importe = null;
+    }
+});
 
 function formatCurrency(amount: number, currencyCode = 'MXN', locale = 'es-MX') {
     if (!Number.isFinite(amount)) return '$0.00';
@@ -120,6 +147,8 @@ function resetForm() {
     form.bancaria = '';
     form.sucursal = '';
     form.importe = null;
+    form.tipo = 'normal';
+    form.porcentaje_comision = null;
     selectedId.value = null;
     message.value = '';
     error.value = '';
@@ -157,6 +186,8 @@ async function selectRow(row: Proveedor) {
     form.bancaria = row.bancaria || '';
     form.sucursal = row.sucursal || '';   // banco
     form.importe = (row.importe as any) != null ? Number(row.importe) : null;
+    form.tipo = (row as any).tipo || 'normal';
+    form.porcentaje_comision = (row as any).porcentaje_comision ?? null;
     message.value = ''; error.value = '';
 }
 
@@ -178,6 +209,8 @@ async function submitCreateOrUpdate() {
             bancaria: form.bancaria || null,
             sucursal: form.sucursal || null,
             importe: form.importe != null ? Number(form.importe) : null,
+            tipo: form.tipo,
+            porcentaje_comision: form.porcentaje_comision,
         };
 
         if (form.id) {
@@ -361,6 +394,25 @@ onMounted(async () => {
                                 placeholder="Nombre del proveedor" />
                         </div>
                         <div class="space-y-1">
+                            <label class="block text-sm font-medium text-gray-700">Tipo de proveedor</label>
+                            <select v-model="form.tipo"
+                                class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                                <option v-for="opt in tipoOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                            </select>
+                            <p class="text-xs text-gray-500">
+                                Normal: cuota mensual. Consigna: costo base diferenciado. Por porcentaje: comisión 20/30%.
+                            </p>
+                        </div>
+                        <div class="space-y-1" v-if="showPorcentajeField">
+                            <label class="block text-sm font-medium text-gray-700">Porcentaje</label>
+                            <select v-model.number="form.porcentaje_comision"
+                                class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                                <option :value="null" disabled>Selecciona %</option>
+                                <option v-for="pct in porcentajeOptions" :key="pct" :value="pct">{{ pct }}%</option>
+                            </select>
+                            <p class="text-xs text-gray-500">Usaremos este porcentaje para calcular el pago al proveedor.</p>
+                        </div>
+                        <div class="space-y-1">
                             <label class="block text-sm font-medium text-gray-700">Fecha de alta</label>
                             <input v-model="form.fecha" type="date"
                                 class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
@@ -380,8 +432,12 @@ onMounted(async () => {
                         <div class="space-y-1">
                             <label class="block text-sm font-medium text-gray-700">Cobro mensual</label>
                             <input v-model.number="form.importe" type="number" min="0" step="0.01"
-                                class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                                placeholder="Ej. 1500.00" />
+                                :disabled="!showImporteField"
+                                class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-400"
+                                placeholder="Solo aplica a proveedores normales" />
+                            <p class="text-xs text-gray-500" v-if="!showImporteField">
+                                Solo los proveedores tipo <b>normal</b> generan cobros mensuales.
+                            </p>
                         </div>
                         <div class="space-y-1">
                             <label class="block text-sm font-medium text-gray-700">Ciudad / Municipio</label>
@@ -519,6 +575,7 @@ onMounted(async () => {
                                 <th class="text-left font-medium px-3 py-2">Tel</th>
                                 <th class="text-left font-medium px-3 py-2">Email</th>
                                 <th class="text-left font-medium px-3 py-2">Ciudad</th>
+                                <th class="text-left font-medium px-3 py-2">Tipo</th>
                                 <th class="text-left font-medium px-3 py-2">Importe</th>
                             </tr>
                         </thead>
@@ -531,6 +588,10 @@ onMounted(async () => {
                                 <td class="px-3 py-2">{{ p.tel || '—' }}</td>
                                 <td class="px-3 py-2">{{ p.email || '—' }}</td>
                                 <td class="px-3 py-2">{{ p.ciudad || '—' }}</td>
+                                <td class="px-3 py-2 text-xs">
+                                    <span class="font-medium capitalize">{{ (p.tipo || 'normal') }}</span>
+                                    <span v-if="p.tipo === 'porcentaje' && p.porcentaje_comision" class="text-gray-500">({{ p.porcentaje_comision }}%)</span>
+                                </td>
                                 <td class="px-3 py-2 text-xs sm:text-[12px] whitespace-nowrap">{{ p.importe != null ? formatCurrency(Number(p.importe)) : '—' }}</td>
                             </tr>
                             <tr v-if="!loading && visibleProveedores.length === 0">
@@ -556,6 +617,7 @@ onMounted(async () => {
                                 <div><span class="font-medium text-gray-700">Email:</span> {{ p.email || '—' }}</div>
                                 <div><span class="font-medium text-gray-700">Ciudad:</span> {{ p.ciudad || '—' }}</div>
                                 <div><span class="font-medium text-gray-700">Banco:</span> {{ p.sucursal || '—' }}</div>
+                                <div><span class="font-medium text-gray-700">Tipo:</span> {{ p.tipo || 'normal' }} <span v-if="p.tipo === 'porcentaje' && p.porcentaje_comision">({{ p.porcentaje_comision }}%)</span></div>
                                 <div class="col-span-2"><span class="font-medium text-gray-700">Importe:</span> {{ p.importe != null ? formatCurrency(Number(p.importe)) : '—' }}</div>
                             </div>
                         </button>

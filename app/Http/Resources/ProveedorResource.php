@@ -21,6 +21,8 @@ class ProveedorResource extends JsonResource
             'ciudad'   => $this->ciudad,
             'importe'  => $this->importe,
             'sucursal' => $this->sucursal,
+            'tipo'     => $this->tipo,
+            'porcentaje_comision' => $this->porcentaje_comision,
         ];
     }
 }

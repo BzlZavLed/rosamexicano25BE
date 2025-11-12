@@ -14,6 +14,7 @@ use App\Models\VentaDesg;
 use App\Models\Promocion;
 use App\Models\Producto;
 use App\Models\Inventario;
+use App\Models\Proveedor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -204,6 +205,8 @@ class CashierLegacyController extends Controller
                 $providerLines = [];
 
                 // 1) validar stock + preparar renglones
+                $providerCache = [];
+
                 foreach ($items as $index => $it) {
                     $ident = (int) $it['ident'];
                     $qty = (int) $it['qty'];
@@ -242,6 +245,20 @@ class CashierLegacyController extends Controller
                     $netBeforeOrder = max(0, $gross - $itemDiscount);
 
                     $providerId = (int) ($producto->proveedorid ?? 0);
+                    if ($providerId && !array_key_exists($providerId, $providerCache)) {
+                        $providerCache[$providerId] = Proveedor::where('ident', $providerId)->first();
+                    }
+                    $provider = $providerCache[$providerId] ?? null;
+                    $providerType = $provider->tipo ?? 'normal';
+                    $providerPct = $providerType === 'porcentaje' ? (int) ($provider->porcentaje_comision ?? 0) : null;
+                    $providerUnitCost = $producto->precio_proveedor ?? null;
+                    if ($providerUnitCost === null) {
+                        if ($providerType === 'porcentaje' && $providerPct) {
+                            $providerUnitCost = round($unit * (1 - ($providerPct / 100)), 2);
+                        } else {
+                            $providerUnitCost = $unit;
+                        }
+                    }
 
                     $lines[] = [
                         'producto' => $producto,
@@ -252,9 +269,15 @@ class CashierLegacyController extends Controller
                         'item_discount' => $itemDiscount,
                         'net_before_order' => $netBeforeOrder,
                         'provider_id' => $providerId,
-                        'provider_charge' => 0.0, // se calcula si método es tarjeta
+                        'provider_type' => $providerType,
+                        'provider_pct' => $providerPct,
+                        'provider_unit_cost' => $providerUnitCost,
+                        'provider_charge' => 0.0,
                     ];
 
+                    if (!isset($providerLines[$providerId])) {
+                        $providerLines[$providerId] = [];
+                    }
                     $providerLines[$providerId][] = $index;
                 }
 
@@ -418,18 +441,20 @@ class CashierLegacyController extends Controller
                     VentaDesg::create([
                         'idventa' => $nextIdVenta,
                         'fecha' => $fechaHoy,
-                        'idprod' => (int) $ln['producto']->ident, // barcode
+                        'idprod' => (int) $ln['producto']->ident,
                         'nombre' => (string) $ln['producto']->nombre,
                         'proveedor' => (int) $ln['producto']->proveedorid,
                         'puni' => (float) $ln['unit'],
                         'cant' => (int) $ln['qty'],
                         'total' => (float) $ln['gross'],
-                        // Solo el descuento manual por producto aquí
                         'descuento_producto' => $lineItemDiscount,
-                        // Nuevo: recargo por tarjeta al proveedor separado
                         'cargo_tarjeta_proveedor' => ($lineProviderCharge > 0 ? $lineProviderCharge : null),
                         'promotion' => $promotionFlag,
                         'hora' => $hora,
+                        'proveedor_pago' => round(($ln['provider_unit_cost'] ?? 0) * (int) $ln['qty'], 2),
+                        'proveedor_porcentaje' => $ln['provider_type'] === 'porcentaje'
+                            ? ($ln['provider_pct'] ?? null)
+                            : null,
                     ]);
 
                     // disminuir inventario

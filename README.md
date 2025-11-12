@@ -119,3 +119,13 @@ SUPERADMIN_PASSWORD=strong-password
 ```
 
 Visit `/superadmin/login` to authenticate; upon success you’ll be redirected to `/superadmin/backups` where you can download the available SQL dumps or log out. Credentials are stored only in the session (no browser pop-up prompts).
+
+### Tipos de proveedores
+
+Los proveedores ahora se clasifican en tres tipos:
+
+- `normal`: pagan una cuota mensual (`importe`). Solo estos proveedores reciben correos automáticos de cobro/pago.
+- `consigna`: no tienen cuota mensual; cada producto debe capturar su costo base (`precio_proveedor`) y se vende con un precio público independiente.
+- `porcentaje`: la tienda retiene 20% o 30% de cada venta. El costo del proveedor se calcula aplicando ese porcentaje al precio de venta y también se descuenta cualquier 4.5% por ventas con tarjeta (prorrateado entre todos los proveedores de la venta).
+
+Los productos almacenan ambos precios (público y costo proveedor) y las ventas registran, por renglón, cuánto debe pagarse al proveedor (`ventadesg.proveedor_pago`) junto con el porcentaje aplicado cuando sea necesario.

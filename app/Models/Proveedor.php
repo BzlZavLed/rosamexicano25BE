@@ -25,12 +25,15 @@ class Proveedor extends Authenticatable
         'ciudad',
         'importe',
         'sucursal',
-        // 'passhash', // <- add this ONLY if you'll mass-assign it
+        'tipo',
+        'porcentaje_comision',
+        // 'passhash',
     ];
 
     protected $casts = [
         'ident'   => 'integer',
         'importe' => 'decimal:2',
+        'porcentaje_comision' => 'integer',
     ];
 
     protected $hidden = ['passhash'];

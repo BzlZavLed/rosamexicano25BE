@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateProveedorRequest extends FormRequest
 {
@@ -24,6 +25,21 @@ class UpdateProveedorRequest extends FormRequest
             'ciudad'   => ['sometimes','nullable','string','max:100'],
             'importe'  => ['sometimes','nullable','numeric'],
             'sucursal' => ['sometimes','nullable','string','max:100'],
+            'tipo'     => ['sometimes', Rule::in(['normal','consigna','porcentaje'])],
+            'porcentaje_comision' => ['sometimes','nullable','integer','in:20,30'],
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('tipo')) {
+            $tipo = $this->input('tipo');
+            if ($tipo !== 'porcentaje') {
+                $this->merge(['porcentaje_comision' => null]);
+            }
+            if ($tipo !== 'normal') {
+                $this->merge(['importe' => null]);
+            }
+        }
     }
 }

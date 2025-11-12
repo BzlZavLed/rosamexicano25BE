@@ -75,13 +75,19 @@ class MensualidadController extends Controller
         }
 
         $proveedor = Proveedor::find($data['proveedor_id']);
+        if (!$proveedor) {
+            return response()->json(['message' => 'Proveedor no encontrado'], 404);
+        }
+        if ($proveedor->tipo !== 'normal') {
+            return response()->json(['message' => 'Solo los proveedores de tipo "normal" generan cobros mensuales.'], 422);
+        }
         $mensualidadData['nombre'] = $proveedor?->nombre ?? 'PROVEEDOR';
 
         $mensualidad = Mensualidad::create($mensualidadData);
         $mensualidad->load('proveedor');
 
         $mailStatus = null;
-        if ($proveedor && filled($proveedor->email)) {
+        if ($proveedor && $proveedor->tipo === 'normal' && filled($proveedor->email)) {
             $mailStatus = $this->sendChargeEmail($proveedor, $mensualidad, $receiptBinary);
         }
 
@@ -210,7 +216,7 @@ class MensualidadController extends Controller
                 DB::transaction(function () use ($cobros, $mesCobro, $fechaCobro, $nota, $concepto, &$created, &$skipped, &$mailSent, &$mailFailed) {
             foreach ($cobros as $cobro) {
                 $prov = Proveedor::find($cobro['proveedor_id']);
-                if (!$prov) {
+                if (!$prov || $prov->tipo !== 'normal') {
                     $skipped[] = $cobro['proveedor_id'];
                     continue;
                 }
@@ -310,6 +316,9 @@ class MensualidadController extends Controller
         $proveedor = Proveedor::find($providerId);
         if (!$proveedor) {
             return response()->json(['message' => 'Proveedor no encontrado'], 404);
+        }
+        if ($proveedor->tipo !== 'normal') {
+            return response()->json(['message' => 'Solo los proveedores de tipo "normal" tienen pagos mensuales.'], 422);
         }
 
         $providerEmail = $request->input('email') ?? $proveedor->email;

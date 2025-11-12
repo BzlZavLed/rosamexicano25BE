@@ -11,6 +11,8 @@ export type Proveedor = {
     bancaria?: string;  // cuenta
     sucursal?: string;  // banco (opcional si tu schema lo usa así)
     importe?: number;   // cobro mensual
+    tipo: 'normal' | 'consigna' | 'porcentaje';
+    porcentaje_comision?: number | null;
 };
 
 export async function listProveedores(params?: { search?: string; page?: number; per_page?: number }) {

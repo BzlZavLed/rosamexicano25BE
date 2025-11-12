@@ -39,7 +39,16 @@ class ProveedoresController extends Controller
     // POST /api/proveedores
     public function store(StoreProveedorRequest $request)
     {
-        $proveedor = Proveedor::create($request->validated());
+        $data = $request->validated();
+        $data['tipo'] = $data['tipo'] ?? 'normal';
+        if ($data['tipo'] !== 'normal') {
+            $data['importe'] = null;
+        }
+        if ($data['tipo'] !== 'porcentaje') {
+            $data['porcentaje_comision'] = null;
+        }
+
+        $proveedor = Proveedor::create($data);
         return new ProveedorResource($proveedor);
     }
 
@@ -53,6 +62,15 @@ class ProveedoresController extends Controller
     public function update(UpdateProveedorRequest $request, Proveedor $proveedor)
     {
         $changes = $request->validated();
+        if (array_key_exists('tipo', $changes)) {
+            if ($changes['tipo'] !== 'normal') {
+                $changes['importe'] = null;
+            }
+            if ($changes['tipo'] !== 'porcentaje') {
+                $changes['porcentaje_comision'] = null;
+            }
+        }
+
         $proveedor->fill($changes);
         if ($proveedor->isDirty()) {
             $proveedor->save();
@@ -123,6 +141,10 @@ class ProveedoresController extends Controller
             'monto_mensual'=> 'importe',
             'sucursal'     => 'sucursal',
             'banco'        => 'sucursal',
+            'tipo'         => 'tipo',
+            'tipo_proveedor' => 'tipo',
+            'porcentaje'   => 'porcentaje_comision',
+            'porcentaje_comision' => 'porcentaje_comision',
         ];
 
         $mappedHeader = [];
@@ -201,6 +223,25 @@ class ProveedoresController extends Controller
             if (isset($payload['importe']) && $payload['importe'] !== null) {
                 $importeRaw = preg_replace('/[^\d\.\-]/', '', (string) $payload['importe']);
                 $payload['importe'] = $importeRaw === '' ? null : (float) $importeRaw;
+            }
+
+            $payload['tipo'] = $payload['tipo'] ?? 'normal';
+            if ($payload['tipo'] === 'porcentaje') {
+                $pct = isset($payload['porcentaje_comision']) ? (int) $payload['porcentaje_comision'] : null;
+                if (!in_array($pct, [20, 30], true)) {
+                    $errors[] = [
+                        'line' => $lineNumber,
+                        'message' => 'Los proveedores por porcentaje deben indicar 20 o 30 en la columna porcentaje.',
+                    ];
+                    $skipped++;
+                    continue;
+                }
+                $payload['porcentaje_comision'] = $pct;
+            } else {
+                $payload['porcentaje_comision'] = null;
+            }
+            if ($payload['tipo'] !== 'normal') {
+                $payload['importe'] = null;
             }
 
             if (isset($payload['tel']) && $payload['tel'] !== null) {

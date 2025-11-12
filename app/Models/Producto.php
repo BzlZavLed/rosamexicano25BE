@@ -18,13 +18,15 @@ class Producto extends Model
         'fecha',
         'proveedorid',
         'usuario',
-        'precio'
+        'precio',
+        'precio_proveedor',
     ];
 
     protected $casts = [
         'ident' => 'integer',
         'proveedorid' => 'integer',
         'precio' => 'decimal:2',
+        'precio_proveedor' => 'decimal:2',
     ];
 
     public function proveedor()
