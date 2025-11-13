@@ -110,6 +110,7 @@ const cajaMetodoFilter = ref('');
 const cajaVendedorFilter = ref('');
 const cajaSortColumn = ref<CajaSortColumn>('fecha');
 const cajaSortDirection = ref<SortDirection>('desc');
+const cajaExtrasOpen = ref(false);
 
 const entradasLoading = ref(false);
 const entradasError = ref('');
@@ -243,6 +244,7 @@ async function fetchCajaReport(download = false) {
                 cajaVendedorFilter.value = '';
                 cajaSortColumn.value = 'fecha';
                 cajaSortDirection.value = 'desc';
+                cajaExtrasOpen.value = false;
                 expandedVentaIds.value = new Set();
             }
         }
@@ -514,6 +516,59 @@ function providerBadgeInfo(
             : base.label;
     return { ...base, label };
 }
+
+const cajaBasics = computed(() => {
+    if (!cajaData.value?.basics) return null;
+    const basics = cajaData.value.basics;
+    const basicsRecord = basics as Record<string, number>;
+    return {
+        totalVentas: Number(basics.total_ventas ?? basicsRecord.totalVentas ?? 0),
+        totalUnidades: Number(basics.total_unidades ?? basicsRecord.totalUnidades ?? 0),
+        totalIngresos: Number(basics.total_ingresos ?? basicsRecord.totalIngresos ?? 0),
+    };
+});
+
+const cajaPaymentSummary = computed(() => {
+    if (!cajaData.value?.payment_summary) return null;
+    const summary = cajaData.value.payment_summary;
+    return {
+        channels: {
+            cash: Number(summary.channels?.cash ?? 0),
+            card: Number(summary.channels?.card ?? 0),
+            transfer: Number(summary.channels?.transfer ?? 0),
+            other: Number(summary.channels?.other ?? 0),
+        },
+        total: Number(summary.total ?? 0),
+        methods: summary.methods?.map((method) => ({
+            label: method.label,
+            amount: Number(method.amount ?? 0),
+        })) ?? [],
+    };
+});
+
+const cajaProviderDiscounts = computed(() => {
+    if (!cajaData.value?.provider_discounts) return [];
+    return cajaData.value.provider_discounts.map((prov) => ({
+        proveedor_id: prov.proveedor_id,
+        nombre: prov.nombre,
+        tipo: prov.tipo as 'normal' | 'consigna' | 'porcentaje' | string,
+        porcentaje: prov.porcentaje,
+        ventasBrutas: Number(prov.ventas_brutas ?? 0),
+        cardCharge: Number(prov.card_charge ?? 0),
+        descuentos: Number(prov.descuentos ?? 0),
+        neto: Number(prov.neto ?? 0),
+    }));
+});
+
+const cajaTopProducts = computed(() => {
+    if (!cajaData.value?.top_products) return [];
+    return cajaData.value.top_products.map((prod) => ({
+        nombre: prod.nombre,
+        proveedor: prod.proveedor,
+        unidades: Number(prod.unidades ?? 0),
+        total: Number(prod.total ?? 0),
+    }));
+});
 
 const cajaMetodoOptions = computed(() => {
     const metodos = new Set<string>();
@@ -1276,7 +1331,7 @@ onBeforeUnmount(() => {
                         </p>
                         <div v-else class="mt-4 space-y-4">
                             <div v-if="cajaLoading" class="text-xs text-gray-500">Cargando datos…</div>
-                            <div v-else-if="cajaData" class="space-y-4">
+                            <div v-else-if="cajaData" class="space-y-6">
                                 <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
                                     <div>
                                         Periodo:
@@ -1286,33 +1341,18 @@ onBeforeUnmount(() => {
                                     </div>
                                     <div v-if="cajaSummary"
                                         class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 sm:grid-cols-6 lg:grid-cols-8">
-                                        <div><span class="block font-semibold text-gray-900">{{ cajaSummary.totalVentas
-                                                }}</span><span>Ventas</span></div>
-                                        <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.subtotal) }}</span><span>Subtotal</span>
-                                        </div>
-                                        <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.descuentoLineas)
-                                                }}</span><span>Descuentos</span></div>
-                                        <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.tarjetaCargo) }}</span><span>Recargo
-                                                tarjeta</span></div>
-                                        <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.totalVenta) }}</span><span>Total
-                                                vendido</span></div>
-                                        <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.ingresoReal) }}</span><span>Ingreso
-                                                real</span></div>
-                                        <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.costoTotal) }}</span><span>Costo
-                                                proveedores</span></div>
-                                        <div><span class="block font-semibold text-gray-900">{{
-                                                formatCurrency(cajaSummary.gananciaTotal)
-                                                }}</span><span>Ganancia admin</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ cajaSummary.totalVentas }}</span><span>Ventas</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ formatCurrency(cajaSummary.subtotal) }}</span><span>Subtotal</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ formatCurrency(cajaSummary.descuentoLineas) }}</span><span>Descuentos</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ formatCurrency(cajaSummary.tarjetaCargo) }}</span><span>Recargo tarjeta</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ formatCurrency(cajaSummary.totalVenta) }}</span><span>Total vendido</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ formatCurrency(cajaSummary.ingresoReal) }}</span><span>Ingreso real</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ formatCurrency(cajaSummary.costoTotal) }}</span><span>Costo proveedores</span></div>
+                                        <div><span class="block font-semibold text-gray-900">{{ formatCurrency(cajaSummary.gananciaTotal) }}</span><span>Ganancia admin</span></div>
                                     </div>
                                 </div>
 
-                                <div class="space-y-4">
+                                <div class="space-y-6">
                                     <div class="rounded-xl border border-gray-200 bg-white/70 p-4">
                                         <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
                                             <p>
@@ -1527,10 +1567,131 @@ onBeforeUnmount(() => {
                                     <div v-if="visibleCajaVentas.length < filteredCajaVentas.length" class="flex justify-center">
                                         <button type="button"
                                             class="rounded-lg border border-gray-300 px-4 py-2 text-xs text-gray-700 hover:bg-gray-50"
-                                            @click="loadMoreCajaVentas">
+                                            @click="loadMoreCajaVentas()">
                                             Cargar más ventas
                                         </button>
                                     </div>
+
+                                    <div v-if="cajaProviderDiscounts.length" class="space-y-3">
+                                        <div class="flex items-center justify-between">
+                                            <p class="text-sm font-semibold text-gray-900">Descuentos por proveedor</p>
+                                            <span class="text-xs text-gray-500">Normal = sin descuento · Consigna/porcentaje aplican cargos</span>
+                                        </div>
+                                        <div :class="tableClasses.wrapper">
+                                            <table :class="tableClasses.table">
+                                                <thead :class="tableClasses.head">
+                                                    <tr>
+                                                        <th class="px-3 py-2">Proveedor</th>
+                                                        <th class="px-3 py-2">Tipo</th>
+                                                        <th class="px-3 py-2 text-right">Ventas brutas</th>
+                                                        <th class="px-3 py-2 text-right">Cargo tarjeta</th>
+                                                        <th class="px-3 py-2 text-right">Desc. asignado</th>
+                                                        <th class="px-3 py-2 text-right">Neto a pagar</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody :class="tableClasses.body">
+                                                    <tr v-for="prov in cajaProviderDiscounts" :key="prov.proveedor_id + '-' + prov.nombre" :class="tableClasses.row">
+                                                        <td class="px-3 py-2 text-sm font-semibold text-gray-900">{{ prov.nombre }}</td>
+                                                        <td class="px-3 py-2 text-xs capitalize text-gray-600">
+                                                            {{ prov.tipo }}
+                                                            <span v-if="prov.tipo === 'porcentaje' && prov.porcentaje">({{ prov.porcentaje }}%)</span>
+                                                        </td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(prov.ventasBrutas) }}</td>
+                                                        <td class="px-3 py-2 text-right text-rose-700">-{{ formatCurrency(prov.cardCharge) }}</td>
+                                                        <td class="px-3 py-2 text-right text-rose-700">-{{ formatCurrency(prov.descuentos) }}</td>
+                                                        <td class="px-3 py-2 text-right text-sm font-semibold text-gray-900">{{ formatCurrency(prov.neto) }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white/80 px-4 py-3 text-sm text-gray-600">
+                                        <div>
+                                            <p class="font-semibold text-gray-900">Resumen y cobranzas</p>
+                                            <p class="text-xs text-gray-500">Muestra tarjetas, ingresos y productos destacados.</p>
+                                        </div>
+                                        <button type="button"
+                                            class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                            @click="cajaExtrasOpen = !cajaExtrasOpen">
+                                            {{ cajaExtrasOpen ? 'Ocultar resumen' : 'Ver resumen' }}
+                                        </button>
+                                    </div>
+
+                                    <transition name="fade">
+                                        <div v-if="cajaExtrasOpen" class="space-y-6">
+                                            <div v-if="cajaBasics" class="grid gap-4 text-sm text-gray-600 sm:grid-cols-3">
+                                                <div class="rounded-xl border border-gray-200 bg-white p-4">
+                                                    <p class="text-xs uppercase tracking-wide text-gray-400">Ventas</p>
+                                                    <p class="mt-2 text-2xl font-semibold text-gray-900">{{ cajaBasics.totalVentas }}</p>
+                                                    <p class="text-[11px] text-gray-500">Movimientos en el periodo</p>
+                                                </div>
+                                                <div class="rounded-xl border border-gray-200 bg-white p-4">
+                                                    <p class="text-xs uppercase tracking-wide text-gray-400">Unidades vendidas</p>
+                                                    <p class="mt-2 text-2xl font-semibold text-gray-900">{{ cajaBasics.totalUnidades }}</p>
+                                                    <p class="text-[11px] text-gray-500">Suma reportada</p>
+                                                </div>
+                                                <div class="rounded-xl border border-gray-200 bg-white p-4">
+                                                    <p class="text-xs uppercase tracking-wide text-gray-400">Ingreso neto</p>
+                                                    <p class="mt-2 text-2xl font-semibold text-gray-900">{{ formatCurrency(cajaBasics.totalIngresos) }}</p>
+                                                    <p class="text-[11px] text-gray-500">Recibo - cambio / tarjetas</p>
+                                                </div>
+                                            </div>
+
+                                            <div v-if="cajaPaymentSummary" class="grid gap-4 lg:grid-cols-2">
+                                                <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                                                    <p class="text-sm font-semibold text-gray-900">Entradas por canal</p>
+                                                    <div class="mt-4 grid gap-3 text-sm text-gray-600 sm:grid-cols-2">
+                                                        <div>
+                                                            <p class="text-xs uppercase tracking-wide text-gray-400">Caja</p>
+                                                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(cajaPaymentSummary.channels.cash) }}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p class="text-xs uppercase tracking-wide text-gray-400">Tarjetas / bancos</p>
+                                                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(cajaPaymentSummary.channels.card + cajaPaymentSummary.channels.transfer) }}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p class="text-xs uppercase tracking-wide text-gray-400">Transferencias</p>
+                                                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(cajaPaymentSummary.channels.transfer) }}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p class="text-xs uppercase tracking-wide text-gray-400">Otros métodos</p>
+                                                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(cajaPaymentSummary.channels.other) }}</p>
+                                                        </div>
+                                                    </div>
+                                                    <p class="mt-4 text-xs text-gray-500">Total ingresado: {{ formatCurrency(cajaPaymentSummary.total) }}</p>
+                                                </div>
+                                                <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                                                    <p class="text-sm font-semibold text-gray-900">Métodos de cobro</p>
+                                                    <ul class="mt-3 space-y-2 text-sm text-gray-600">
+                                                        <li v-for="method in cajaPaymentSummary.methods" :key="method.label"
+                                                            class="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                                            <span class="font-medium text-gray-900">{{ method.label }}</span>
+                                                            <span>{{ formatCurrency(method.amount) }}</span>
+                                                        </li>
+                                                        <li v-if="cajaPaymentSummary.methods.length === 0" class="text-xs text-gray-500">Sin ventas registradas.</li>
+                                                    </ul>
+                                                </div>
+                                            </div>
+
+                                            <div v-if="cajaTopProducts.length" class="space-y-3">
+                                                <p class="text-sm font-semibold text-gray-900">Productos más vendidos</p>
+                                                <div class="grid gap-3 md:grid-cols-2">
+                                                    <div v-for="prod in cajaTopProducts" :key="prod.nombre"
+                                                        class="rounded-xl border border-gray-200 bg-white/80 p-4 text-sm text-gray-600">
+                                                        <div class="flex items-center justify-between">
+                                                            <p class="font-semibold text-gray-900">{{ prod.nombre }}</p>
+                                                            <span class="text-xs text-gray-400">{{ prod.proveedor || 'Proveedor no definido' }}</span>
+                                                        </div>
+                                                        <div class="mt-3 flex items-center justify-between text-sm">
+                                                            <span>Unidades: <strong class="text-gray-900">{{ prod.unidades }}</strong></span>
+                                                            <span>Total: <strong class="text-gray-900">{{ formatCurrency(prod.total) }}</strong></span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </transition>
                                 </div>
                             </div>
                             <div v-else class="text-xs text-gray-500">

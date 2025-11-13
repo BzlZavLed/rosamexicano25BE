@@ -53,36 +53,14 @@ class CashierController extends Controller
         return Carbon::parse($value)->format('Y-m-d');
     }
 
-    private function legacyFecha(string $fechaIso): ?string
-    {
-        try {
-            return Carbon::createFromFormat('Y-m-d', $fechaIso)->format('d/m/y');
-        } catch (\Throwable $e) {
-            return null;
-        }
-    }
-
     private function cajaByFechaQuery(string $fechaIso)
     {
-        $legacy = $this->legacyFecha($fechaIso);
-
-        return EstadoCaja::query()->where(function ($query) use ($fechaIso, $legacy) {
-            $query->where('fecha', $fechaIso);
-            if ($legacy && $legacy !== $fechaIso) {
-                $query->orWhere('fecha', $legacy);
-            }
-        });
+        return EstadoCaja::query()->where('fecha', $fechaIso);
     }
 
     private function applyVentaFechaFilter($query, string $fechaIso)
     {
-        $legacy = $this->legacyFecha($fechaIso);
-        $query->where(function ($q) use ($fechaIso, $legacy) {
-            $q->where('fecha', $fechaIso);
-            if ($legacy && $legacy !== $fechaIso) {
-                $q->orWhere('fecha', $legacy);
-            }
-        });
+        $query->where('fecha', $fechaIso);
     }
 
     private function cashSummary(string $fechaIso): array

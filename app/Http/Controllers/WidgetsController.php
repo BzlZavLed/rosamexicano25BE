@@ -17,15 +17,17 @@ class WidgetsController extends Controller
         if ($fecha) {
             try {
                 $fechaCarbon = Carbon::parse($fecha);
-                $fecha = $fechaCarbon->format('d/m/y');
             } catch (\Throwable $e) {
                 return response()->json(['message' => 'Formato de fecha inválido.'], 422);
             }
         } else {
-            $fecha = date('d/m/y');
+            $fechaCarbon = Carbon::today();
         }
 
-        $ventasDelDia = Venta::where('fecha', $fecha);
+        $fechaQuery = $fechaCarbon->toDateString();
+        $fechaDisplay = $fechaCarbon->format('d/m/y');
+
+        $ventasDelDia = Venta::whereDate('fecha', $fechaQuery);
 
         $entradas = (clone $ventasDelDia)->where('ie', 1)->sum('totalventa');
         $salidas = (clone $ventasDelDia)->where('ie', 0)->sum('totalventa');
@@ -45,7 +47,7 @@ class WidgetsController extends Controller
             });
 
         return response()->json([
-            'fecha' => $fecha,
+            'fecha' => $fechaDisplay,
             'entradas_total' => (float) $entradas,
             'salidas_total' => (float) $salidas,
             'transacciones' => [
@@ -62,8 +64,8 @@ class WidgetsController extends Controller
         $today = Carbon::today();
         $fromDate = $today->copy()->subDays(9); // include today + 9 previous = 10 days
 
-        $from = $fromDate->format('d/m/y');
-        $to = $today->format('d/m/y');
+        $from = $fromDate->toDateString();
+        $to = $today->toDateString();
 
         $top = VentaDesg::selectRaw('idprod, nombre, proveedor, SUM(cant) as total_cantidad')
             ->whereBetween('fecha', [$from, $to])
@@ -89,8 +91,8 @@ class WidgetsController extends Controller
             });
 
         return response()->json([
-            'desde' => $from,
-            'hasta' => $to,
+            'desde' => $fromDate->format('d/m/y'),
+            'hasta' => $today->format('d/m/y'),
             'productos' => $top,
         ]);
     }

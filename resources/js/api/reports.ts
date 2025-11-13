@@ -54,6 +54,36 @@ export type CajaReportVenta = {
     providers: CajaReportProvider[];
 };
 
+export type CajaBasicsSummary = {
+    total_ventas: number;
+    total_unidades: number;
+    total_ingresos: number;
+};
+
+export type CajaPaymentSummary = {
+    channels: Record<'cash' | 'card' | 'transfer' | 'other', number>;
+    total: number;
+    methods: Array<{ label: string; amount: number }>;
+};
+
+export type CajaProviderDiscount = {
+    proveedor_id: number;
+    nombre: string;
+    tipo: string;
+    porcentaje?: number | null;
+    ventas_brutas: number;
+    card_charge: number;
+    descuentos: number;
+    neto: number;
+};
+
+export type CajaTopProduct = {
+    nombre: string;
+    proveedor: string | number | null;
+    unidades: number;
+    total: number;
+};
+
 export type CajaReportSummary = {
     ventas_total: number;
     subtotal: number;
@@ -70,6 +100,10 @@ export type CajaReportResponse = {
     to_date: string;
     summary: CajaReportSummary;
     ventas: CajaReportVenta[];
+    basics?: CajaBasicsSummary;
+    payment_summary?: CajaPaymentSummary;
+    provider_discounts?: CajaProviderDiscount[];
+    top_products?: CajaTopProduct[];
 };
 
 export type EgresoCajaMovimiento = {

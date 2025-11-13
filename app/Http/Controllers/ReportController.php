@@ -112,7 +112,28 @@ class ReportController extends Controller
             'ganancia_total' => 0.0,
         ];
 
-        $mapped = $ventas->map(function (Venta $venta) use ($providerMap, &$summaryTotals) {
+        $channelTotals = [
+            'cash' => 0.0,
+            'card' => 0.0,
+            'transfer' => 0.0,
+            'other' => 0.0,
+        ];
+        $methodTotals = [];
+        $providerGlobal = [];
+        $productTotals = [];
+        $totalUnidades = 0;
+        $totalIngresos = 0.0;
+
+        $mapped = $ventas->map(function (Venta $venta) use (
+            $providerMap,
+            &$summaryTotals,
+            &$channelTotals,
+            &$methodTotals,
+            &$providerGlobal,
+            &$productTotals,
+            &$totalUnidades,
+            &$totalIngresos
+        ) {
             $lineas = $venta->lineas;
             $lineDiscountTotal = (float) $lineas->sum(function ($linea) {
                 return (float) ($linea->descuento_producto ?? 0);
@@ -172,6 +193,19 @@ class ReportController extends Controller
                     'admin_ganancia' => $adminGanancia,
                 ];
 
+                $totalUnidades += (int) $linea->cant;
+                $productKey = $linea->idprod ? (string) $linea->idprod : ($linea->nombre ?? uniqid('prod_', true));
+                if (!isset($productTotals[$productKey])) {
+                    $productTotals[$productKey] = [
+                        'nombre' => $linea->nombre,
+                        'proveedor' => $providerName,
+                        'unidades' => 0,
+                        'total' => 0.0,
+                    ];
+                }
+                $productTotals[$productKey]['unidades'] += (int) $linea->cant;
+                $productTotals[$productKey]['total'] += $lineTotal;
+
                 if ($pid > 0) {
                     if (!isset($providerSummary[$pid])) {
                         $providerSummary[$pid] = [
@@ -209,8 +243,36 @@ class ReportController extends Controller
                 return $entry;
             }, array_values($providerSummary));
 
+            foreach ($providerSummary as $provEntry) {
+                $provKey = $provEntry['proveedor_id'] . '|' . $provEntry['nombre'];
+                if (!isset($providerGlobal[$provKey])) {
+                    $providerGlobal[$provKey] = [
+                        'proveedor_id' => $provEntry['proveedor_id'],
+                        'nombre' => $provEntry['nombre'],
+                        'tipo' => $provEntry['tipo'],
+                        'porcentaje' => $provEntry['porcentaje'],
+                        'ventas_brutas' => 0.0,
+                        'card_charge' => 0.0,
+                        'descuentos' => 0.0,
+                        'neto' => 0.0,
+                    ];
+                }
+                $providerGlobal[$provKey]['ventas_brutas'] += $provEntry['publico_total'];
+                $providerGlobal[$provKey]['card_charge'] += $provEntry['provider_card_charge'];
+                $providerGlobal[$provKey]['descuentos'] += $provEntry['proveedor_descuento'];
+                $providerGlobal[$provKey]['neto'] += $provEntry['proveedor_neto'];
+            }
+
             $costoTotal = (float) ($venta->costo_total ?? array_sum(array_column($providerSummary, 'proveedor_neto')));
             $gananciaTotal = (float) ($venta->ganancia_total ?? array_sum(array_column($providerSummary, 'admin_ganancia')));
+
+            $channel = $this->classifyMetodoChannel($venta->metodo);
+            $cobroNeto = max((float) ($venta->recibo ?? 0) - (float) ($venta->cambio ?? 0), 0);
+            $amountForChannel = $channel === 'cash' ? $cobroNeto : $totalventa;
+            $channelTotals[$channel] += $amountForChannel;
+            $methodLabel = strtoupper($venta->metodo ?? '—');
+            $methodTotals[$methodLabel] = ($methodTotals[$methodLabel] ?? 0) + $amountForChannel;
+            $totalIngresos += $amountForChannel;
 
             $summaryTotals['ventas_total']++;
             $summaryTotals['subtotal'] += $subtotal;
@@ -252,6 +314,54 @@ class ReportController extends Controller
             'costo_total' => round($summaryTotals['costo_total'], 2),
             'ganancia_total' => round($summaryTotals['ganancia_total'], 2),
         ];
+
+        $basics = [
+            'total_ventas' => $summaryTotals['ventas_total'],
+            'total_unidades' => $totalUnidades,
+            'total_ingresos' => round($totalIngresos, 2),
+        ];
+
+        $paymentSummary = [
+            'channels' => array_map(fn ($value) => round($value, 2), $channelTotals),
+            'total' => round(array_sum($channelTotals), 2),
+            'methods' => collect($methodTotals)
+                ->map(fn ($amount, $label) => ['label' => $label, 'amount' => round($amount, 2)])
+                ->sortByDesc('amount')
+                ->values()
+                ->all(),
+        ];
+
+        $providerDiscounts = collect($providerGlobal)
+            ->map(fn ($entry) => [
+                'proveedor_id' => $entry['proveedor_id'],
+                'nombre' => $entry['nombre'],
+                'tipo' => $entry['tipo'],
+                'porcentaje' => $entry['porcentaje'],
+                'ventas_brutas' => round($entry['ventas_brutas'], 2),
+                'card_charge' => round($entry['card_charge'], 2),
+                'descuentos' => round($entry['descuentos'], 2),
+                'neto' => round($entry['neto'], 2),
+            ])
+            ->sort(function ($a, $b) {
+                if ($a['card_charge'] === $b['card_charge']) {
+                    return $b['ventas_brutas'] <=> $a['ventas_brutas'];
+                }
+                return $b['card_charge'] <=> $a['card_charge'];
+            })
+            ->values()
+            ->all();
+
+        $topProducts = collect($productTotals)
+            ->map(fn ($entry) => [
+                'nombre' => $entry['nombre'],
+                'proveedor' => $entry['proveedor'],
+                'unidades' => $entry['unidades'],
+                'total' => round($entry['total'], 2),
+            ])
+            ->sortByDesc('total')
+            ->take(10)
+            ->values()
+            ->all();
 
         Log::info('Reporte de caja generado', [
             'from' => $inicioString,
@@ -388,7 +498,37 @@ class ReportController extends Controller
             'to_date' => $finString,
             'summary' => $summaryPayload,
             'ventas' => $mapped,
+            'basics' => $basics,
+            'payment_summary' => $paymentSummary,
+            'provider_discounts' => $providerDiscounts,
+            'top_products' => $topProducts,
         ]);
+    }
+
+    protected function classifyMetodoChannel(?string $metodo): string
+    {
+        if (!$metodo) {
+            return 'other';
+        }
+
+        $normalized = strtolower($metodo);
+        $map = [
+            'efectivo' => 'cash',
+            'cash' => 'cash',
+            'contado' => 'cash',
+            'tarjeta' => 'card',
+            'credito' => 'card',
+            'debito' => 'card',
+            'visa' => 'card',
+            'mastercard' => 'card',
+            'amex' => 'card',
+            'transferencia' => 'transfer',
+            'transfer' => 'transfer',
+            'spei' => 'transfer',
+            'banco' => 'transfer',
+        ];
+
+        return $map[$normalized] ?? 'other';
     }
 
     public function egresosCaja(Request $request)
