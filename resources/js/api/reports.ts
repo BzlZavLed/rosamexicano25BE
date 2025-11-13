@@ -304,10 +304,11 @@ export interface CajaProveedorItem {
     cantidad: number;
     precio_unitario: number;
     total: number;
-    descuento_producto: number;
-    cargo_tarjeta: number;
-    descuento_total: number;
-    ganancia: number;
+    card_fee: number;
+    provider_discount: number;
+    expected_earning: number;
+    proveedor_tipo?: string | null;
+    proveedor_porcentaje?: number | null;
     metodo: string;
     vendedor: string;
     venta_total: number;
@@ -315,13 +316,15 @@ export interface CajaProveedorItem {
 }
 
 export interface CajaProveedorGroup {
-    proveedor_id: number;
-    proveedor_ident: string;
+    proveedor_id: number | null;
+    proveedor_ident: string | null;
     proveedor_nombre: string;
-    ventas_brutas: number;
-    descuentos: number;
-    cargos_tarjeta: number;
-    ganancia_total: number;
+    proveedor_tipo: string;
+    proveedor_porcentaje?: number | null;
+    total_vendido: number;
+    card_fee_total: number;
+    tipo_descuento_total: number;
+    expected_earning: number;
     items: CajaProveedorItem[];
 }
 

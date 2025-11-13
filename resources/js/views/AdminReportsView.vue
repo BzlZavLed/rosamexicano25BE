@@ -49,6 +49,7 @@ type MensualidadSortableColumn =
     | 'status'
     | 'fecha_cobro'
     | 'payment_date';
+type ProveedorTipoFilter = 'todos' | 'normal' | 'consigna' | 'porcentaje';
 type ProveedorModalSort =
     | 'fecha'
     | 'producto'
@@ -56,10 +57,9 @@ type ProveedorModalSort =
     | 'cantidad'
     | 'precio'
     | 'total'
-    | 'desc_producto'
-    | 'cargo_tarjeta'
-    | 'desc_total'
-    | 'ganancia'
+    | 'provider_discount'
+    | 'card_fee'
+    | 'expected'
     | 'metodo'
     | 'vendedor'
     | 'promocion';
@@ -120,6 +120,13 @@ const cajaCondensadoLoading = ref(false);
 const cajaCondensadoError = ref('');
 const cajaCondensadoData = ref<CajaProveedoresResponse | null>(null);
 const cajaCondensadoView = ref<'cards' | 'table'>('table');
+const cajaCondensadoTipoFilter = ref<ProveedorTipoFilter>('todos');
+const cajaCondensadoTipoOptions: Array<{ value: ProveedorTipoFilter; label: string }> = [
+    { value: 'todos', label: 'Todos los tipos' },
+    { value: 'normal', label: 'Normal' },
+    { value: 'consigna', label: 'Consigna' },
+    { value: 'porcentaje', label: 'Porcentaje' },
+];
 const proveedorModalOpen = ref(false);
 const proveedorModalData = ref<CajaProveedorGroup | null>(null);
 const proveedorModalSort = ref<ProveedorModalSort>('fecha');
@@ -517,6 +524,15 @@ function providerBadgeInfo(
     return { ...base, label };
 }
 
+function normalizeProveedorTipo(value?: string | null): 'normal' | 'consigna' | 'porcentaje' {
+    if (value === 'consigna' || value === 'porcentaje') return value;
+    return 'normal';
+}
+
+function providerCondensadoBadge(proveedor: { proveedor_tipo?: string | null; proveedor_porcentaje?: number | null }) {
+    return providerBadgeInfo(normalizeProveedorTipo(proveedor.proveedor_tipo), proveedor.proveedor_porcentaje);
+}
+
 const cajaBasics = computed(() => {
     if (!cajaData.value?.basics) return null;
     const basics = cajaData.value.basics;
@@ -705,16 +721,55 @@ const entradasSummary = computed(() => {
     };
 });
 
+const filteredCajaCondensadoProviders = computed(() => {
+    if (!cajaCondensadoData.value) return [] as CajaProveedorGroup[];
+    const providers = cajaCondensadoData.value.proveedores ?? [];
+    const filter = cajaCondensadoTipoFilter.value;
+    if (filter === 'todos') return providers;
+    return providers.filter((prov) => normalizeProveedorTipo(prov.proveedor_tipo) === filter);
+});
+
 const cajaCondensadoResumen = computed(() => {
     if (!cajaCondensadoData.value) return null;
-    const res = cajaCondensadoData.value.resumen;
+    if (cajaCondensadoTipoFilter.value === 'todos') {
+        const res = cajaCondensadoData.value.resumen;
+        const ventas = Number(res.ventas_brutas ?? 0);
+        const descuentos = Number(res.descuentos ?? 0);
+        const cargos = Number(res.cargos_tarjeta ?? 0);
+        const ganancias = Number(res.ganancias ?? 0);
+        return {
+            totalVendido: ventas,
+            ventasBrutas: ventas,
+            descuentoTipo: descuentos,
+            descuentos,
+            cargosTarjeta: cargos,
+            ganancias,
+            totalProveedores: cajaCondensadoData.value.proveedores?.length ?? 0,
+        };
+    }
+
+    const providers = filteredCajaCondensadoProviders.value;
+    const totals = providers.reduce(
+        (acc, prov) => {
+            acc.totalVendido += Number(prov.total_vendido ?? 0);
+            acc.descuentoTipo += Number(prov.tipo_descuento_total ?? 0);
+            acc.cargosTarjeta += Number(prov.card_fee_total ?? 0);
+            acc.ganancias += Number(prov.expected_earning ?? 0);
+            return acc;
+        },
+        {
+            totalVendido: 0,
+            descuentoTipo: 0,
+            cargosTarjeta: 0,
+            ganancias: 0,
+        }
+    );
+
     return {
-        ventasBrutas: Number(res.ventas_brutas ?? 0),
-        descuentos: Number(res.descuentos ?? 0),
-        cargosTarjeta: Number(res.cargos_tarjeta ?? 0),
-        descuentoGeneral: Number(res.descuento_general ?? 0),
-        ganancias: Number(res.ganancias ?? 0),
-        totalProveedores: cajaCondensadoData.value.proveedores?.length ?? 0,
+        ...totals,
+        ventasBrutas: totals.totalVendido,
+        descuentos: totals.descuentoTipo,
+        totalProveedores: providers.length,
     };
 });
 
@@ -761,10 +816,9 @@ const proveedorModalTotals = computed(() => {
         return {
             cantidad: 0,
             total: 0,
-            descProducto: 0,
-            cargoTarjeta: 0,
-            descTotal: 0,
-            ganancia: 0,
+            tipoDescuento: 0,
+            cardFee: 0,
+            expected: 0,
         };
     }
     return providerItemTotals(proveedorModalData.value);
@@ -835,19 +889,17 @@ function providerItemTotals(proveedor: CajaProveedorGroup) {
         (acc, item) => {
             acc.cantidad += Number(item.cantidad ?? 0);
             acc.total += Number(item.total ?? 0);
-            acc.descProducto += Number(item.descuento_producto ?? 0);
-            acc.cargoTarjeta += Number(item.cargo_tarjeta ?? 0);
-            acc.descTotal += Number(item.descuento_total ?? 0);
-            acc.ganancia += Number(item.ganancia ?? 0);
+            acc.tipoDescuento += Number(item.provider_discount ?? 0);
+            acc.cardFee += Number(item.card_fee ?? 0);
+            acc.expected += Number(item.expected_earning ?? 0);
             return acc;
         },
         {
             cantidad: 0,
             total: 0,
-            descProducto: 0,
-            cargoTarjeta: 0,
-            descTotal: 0,
-            ganancia: 0,
+            tipoDescuento: 0,
+            cardFee: 0,
+            expected: 0,
         }
     );
 }
@@ -885,14 +937,12 @@ const proveedorModalSortedItems = computed(() => {
                 return Number(item.precio_unitario ?? 0);
             case 'total':
                 return Number(item.total ?? 0);
-            case 'desc_producto':
-                return Number(item.descuento_producto ?? 0);
-            case 'cargo_tarjeta':
-                return Number(item.cargo_tarjeta ?? 0);
-            case 'desc_total':
-                return Number(item.descuento_total ?? 0);
-            case 'ganancia':
-                return Number(item.ganancia ?? 0);
+            case 'provider_discount':
+                return Number(item.provider_discount ?? 0);
+            case 'card_fee':
+                return Number(item.card_fee ?? 0);
+            case 'expected':
+                return Number(item.expected_earning ?? 0);
             case 'metodo':
                 return item.metodo ?? '';
             case 'vendedor':
@@ -951,10 +1001,10 @@ function downloadProveedorModalCsv() {
         'Cantidad',
         'Precio unitario',
         'Total',
-        'Desc. producto',
+        'Desc. proveedor',
         'Cargo tarjeta',
-        'Desc. total',
-        'Ganancia',
+        'Ganancia esperada',
+        'Tipo proveedor',
         'Método',
         'Vendedor',
         'Promoción',
@@ -966,10 +1016,10 @@ function downloadProveedorModalCsv() {
         item.cantidad ?? '',
         item.precio_unitario ?? '',
         item.total ?? '',
-        item.descuento_producto ?? '',
-        item.cargo_tarjeta ?? '',
-        item.descuento_total ?? '',
-        item.ganancia ?? '',
+        item.provider_discount ?? '',
+        item.card_fee ?? '',
+        item.expected_earning ?? '',
+        item.proveedor_tipo ?? '',
         item.metodo ?? '',
         item.vendedor ?? '',
         item.promotion ?? '',
@@ -2122,6 +2172,18 @@ onBeforeUnmount(() => {
                                         Tabla
                                     </button>
                                 </div>
+                                <div class="flex items-center gap-1 text-xs text-gray-500">
+                                    <label for="caja-condensado-tipo" class="font-medium text-gray-600">Tipo:</label>
+                                    <select
+                                        id="caja-condensado-tipo"
+                                        v-model="cajaCondensadoTipoFilter"
+                                        class="rounded border border-gray-300 bg-white px-2 py-1 text-xs focus:border-gray-900 focus:ring-gray-900"
+                                    >
+                                        <option v-for="option in cajaCondensadoTipoOptions" :key="option.value" :value="option.value">
+                                            {{ option.label }}
+                                        </option>
+                                    </select>
+                                </div>
                                 <span class="text-xs text-gray-500">Resumen por proveedor de ventas en el periodo seleccionado.</span>
                             </div>
 
@@ -2142,24 +2204,20 @@ onBeforeUnmount(() => {
                                         </div>
                                         <div v-if="cajaCondensadoResumen" class="flex flex-wrap gap-4 text-[11px] text-gray-500">
                                             <div>
-                                                <span class="block font-semibold text-gray-900">{{ formatCurrency(cajaCondensadoResumen.ventasBrutas) }}</span>
-                                                <span>Ventas brutas</span>
+                                                <span class="block font-semibold text-gray-900">{{ formatCurrency(cajaCondensadoResumen.totalVendido) }}</span>
+                                                <span>Vendido</span>
                                             </div>
                                             <div>
-                                                <span class="block font-semibold text-gray-900">{{ formatCurrency(cajaCondensadoResumen.descuentos) }}</span>
-                                                <span>Descuentos</span>
+                                                <span class="block font-semibold text-gray-900">{{ formatCurrency(cajaCondensadoResumen.descuentoTipo) }}</span>
+                                                <span>Desc. por tipo</span>
                                             </div>
                                             <div>
                                                 <span class="block font-semibold text-gray-900">{{ formatCurrency(cajaCondensadoResumen.cargosTarjeta) }}</span>
                                                 <span>Cargos tarjeta</span>
                                             </div>
                                             <div>
-                                                <span class="block font-semibold text-gray-900">{{ formatCurrency(cajaCondensadoResumen.descuentoGeneral) }}</span>
-                                                <span>Desc. general</span>
-                                            </div>
-                                            <div>
                                                 <span class="block font-semibold text-gray-900">{{ formatCurrency(cajaCondensadoResumen.ganancias) }}</span>
-                                                <span>Ganancias</span>
+                                                <span>Ganancia esperada</span>
                                             </div>
                                             <div>
                                                 <span class="block font-semibold text-gray-900">{{ cajaCondensadoResumen.totalProveedores }}</span>
@@ -2170,12 +2228,16 @@ onBeforeUnmount(() => {
 
                                     <template v-if="cajaCondensadoView === 'cards'">
                                         <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" style="border: 1px solid #eee; border-radius: 8px; padding: 8px;">
-                                            <article v-for="proveedor in cajaCondensadoData.proveedores" :key="proveedor.proveedor_id"
+                                            <article v-for="proveedor in filteredCajaCondensadoProviders" :key="proveedor.proveedor_id"
                                                 class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm">
                                                 <div class="flex items-start justify-between gap-2">
                                                     <div>
                                                         <h3 class="text-base font-semibold text-gray-900">{{ proveedor.proveedor_nombre }}</h3>
                                                         <p class="text-xs text-gray-500">Ident {{ proveedor.proveedor_ident }}</p>
+                                                        <span class="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]"
+                                                            :class="providerCondensadoBadge(proveedor).className">
+                                                            <span>{{ providerCondensadoBadge(proveedor).label }}</span>
+                                                        </span>
                                                     </div>
                                                     <button type="button"
                                                         class="inline-flex items-center justify-center rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
@@ -2185,20 +2247,20 @@ onBeforeUnmount(() => {
                                                 </div>
                                                 <dl class="grid grid-cols-2 gap-2 text-[11px] text-gray-600">
                                                     <div>
-                                                        <dt class="text-gray-500">Ventas brutas</dt>
-                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.ventas_brutas) }}</dd>
+                                                        <dt class="text-gray-500">Vendido</dt>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.total_vendido) }}</dd>
                                                     </div>
                                                     <div>
-                                                        <dt class="text-gray-500">Descuentos</dt>
-                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.descuentos) }}</dd>
+                                                        <dt class="text-gray-500">Desc. por tipo</dt>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.tipo_descuento_total) }}</dd>
                                                     </div>
                                                     <div>
                                                         <dt class="text-gray-500">Cargos tarjeta</dt>
-                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.cargos_tarjeta) }}</dd>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.card_fee_total) }}</dd>
                                                     </div>
                                                     <div>
-                                                        <dt class="text-gray-500">Ganancia</dt>
-                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.ganancia_total) }}</dd>
+                                                        <dt class="text-gray-500">Ganancia esperada</dt>
+                                                        <dd class="font-semibold text-gray-900">{{ formatCurrency(proveedor.expected_earning) }}</dd>
                                                     </div>
                                                 </dl>
                                                 <div class="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
@@ -2211,24 +2273,20 @@ onBeforeUnmount(() => {
                                                         <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).total) }}</span>
                                                     </div>
                                                     <div class="flex justify-between">
-                                                        <span>Desc. prod</span>
-                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).descProducto) }}</span>
+                                                        <span>Desc. proveedor</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).tipoDescuento) }}</span>
                                                     </div>
                                                     <div class="flex justify-between">
                                                         <span>Cargo tarjeta</span>
-                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).cargoTarjeta) }}</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).cardFee) }}</span>
                                                     </div>
                                                     <div class="flex justify-between">
-                                                        <span>Desc. total</span>
-                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).descTotal) }}</span>
-                                                    </div>
-                                                    <div class="flex justify-between">
-                                                        <span>Ganancia</span>
-                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).ganancia) }}</span>
+                                                        <span>Ganancia esperada</span>
+                                                        <span class="font-semibold text-gray-900">{{ formatCurrency(providerItemTotals(proveedor).expected) }}</span>
                                                     </div>
                                                 </div>
                                             </article>
-                                            <div v-if="(cajaCondensadoData.proveedores?.length ?? 0) === 0"
+                                            <div v-if="filteredCajaCondensadoProviders.length === 0"
                                                 class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-500 md:col-span-2 lg:col-span-3">
                                                 No se encontraron proveedores en el periodo seleccionado.
                                             </div>
@@ -2241,21 +2299,28 @@ onBeforeUnmount(() => {
                                                     <tr>
                                                         <th class="px-3 py-2">Proveedor</th>
                                                         <th class="px-3 py-2">Ident</th>
+                                                        <th class="px-3 py-2">Tipo</th>
                                                         <th class="px-3 py-2 text-right">Ventas brutas</th>
-                                                        <th class="px-3 py-2 text-right">Descuentos</th>
+                                                        <th class="px-3 py-2 text-right">Desc. proveedor</th>
                                                         <th class="px-3 py-2 text-right">Cargos tarjeta</th>
-                                                        <th class="px-3 py-2 text-right">Ganancia</th>
+                                                        <th class="px-3 py-2 text-right">Ganancia esperada</th>
                                                         <th class="px-3 py-2 text-right">Movimientos</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody :class="tableClasses.body">
-                                                    <tr v-for="proveedor in cajaCondensadoData.proveedores" :key="proveedor.proveedor_id" :class="tableClasses.row">
+                                                    <tr v-for="proveedor in filteredCajaCondensadoProviders" :key="proveedor.proveedor_id" :class="tableClasses.row">
                                                         <td class="px-3 py-2 font-semibold text-gray-900">{{ proveedor.proveedor_nombre }}</td>
                                                         <td class="px-3 py-2">{{ proveedor.proveedor_ident }}</td>
-                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.ventas_brutas) }}</td>
-                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.descuentos) }}</td>
-                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.cargos_tarjeta) }}</td>
-                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.ganancia_total) }}</td>
+                                                        <td class="px-3 py-2">
+                                                            <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]"
+                                                                :class="providerCondensadoBadge(proveedor).className">
+                                                                {{ providerCondensadoBadge(proveedor).label }}
+                                                            </span>
+                                                        </td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.total_vendido) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.tipo_descuento_total) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.card_fee_total) }}</td>
+                                                        <td class="px-3 py-2 text-right">{{ formatCurrency(proveedor.expected_earning) }}</td>
                                                         <td class="px-3 py-2 text-right">
                                                             <button type="button"
                                                                 class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
@@ -2264,15 +2329,15 @@ onBeforeUnmount(() => {
                                                             </button>
                                                         </td>
                                                     </tr>
-                                                    <tr v-if="(cajaCondensadoData.proveedores?.length ?? 0) === 0">
-                                                        <td :class="tableClasses.emptyRow" colspan="7">
+                                                    <tr v-if="filteredCajaCondensadoProviders.length === 0">
+                                                        <td :class="tableClasses.emptyRow" colspan="8">
                                                             No se encontraron proveedores en el periodo seleccionado.
                                                         </td>
                                                     </tr>
                                                 </tbody>
                                                 <tfoot v-if="cajaCondensadoResumen" class="bg-gray-100 text-[11px] uppercase tracking-wide text-gray-600">
                                                     <tr>
-                                                        <td class="px-3 py-2" colspan="2">Totales</td>
+                                                        <td class="px-3 py-2" colspan="3">Totales</td>
                                                         <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.ventasBrutas) }}</td>
                                                         <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.descuentos) }}</td>
                                                         <td class="px-3 py-2 text-right">{{ formatCurrency(cajaCondensadoResumen.cargosTarjeta) }}</td>
@@ -2560,6 +2625,10 @@ onBeforeUnmount(() => {
                                 {{ proveedorModalData?.proveedor_nombre }}
                             </h3>
                             <p class="text-xs text-gray-500">Ident {{ proveedorModalData?.proveedor_ident }}</p>
+                            <span v-if="proveedorModalData" class="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px]"
+                                :class="providerCondensadoBadge(proveedorModalData).className">
+                                {{ providerCondensadoBadge(proveedorModalData).label }}
+                            </span>
                         </div>
                         <div class="flex items-center gap-2">
                             <button type="button"
@@ -2585,16 +2654,16 @@ onBeforeUnmount(() => {
                                 <span>Ventas</span>
                             </div>
                             <div>
-                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.descProducto) }}</span>
-                                <span>Desc. producto</span>
+                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.tipoDescuento) }}</span>
+                                <span>Desc. proveedor</span>
                             </div>
                             <div>
-                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.cargoTarjeta) }}</span>
+                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.cardFee) }}</span>
                                 <span>Cargo tarjeta</span>
                             </div>
                             <div>
-                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.ganancia) }}</span>
-                                <span>Ganancia</span>
+                                <span class="block font-semibold text-gray-900">{{ formatCurrency(proveedorModalTotals.expected) }}</span>
+                                <span>Ganancia esperada</span>
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -2648,27 +2717,21 @@ onBeforeUnmount(() => {
                                                 </button>
                                             </th>
                                             <th class="px-3 py-2 text-right">
-                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('desc_producto')">
-                                                    Desc. producto
-                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('desc_producto') }}</span>
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('provider_discount')">
+                                                    Desc. proveedor
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('provider_discount') }}</span>
                                                 </button>
                                             </th>
                                             <th class="px-3 py-2 text-right">
-                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('cargo_tarjeta')">
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('card_fee')">
                                                     Cargo tarjeta
-                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('cargo_tarjeta') }}</span>
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('card_fee') }}</span>
                                                 </button>
                                             </th>
                                             <th class="px-3 py-2 text-right">
-                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('desc_total')">
-                                                    Desc. total*
-                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('desc_total') }}</span>
-                                                </button>
-                                            </th>
-                                            <th class="px-3 py-2 text-right">
-                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('ganancia')">
-                                                    Ganancia
-                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('ganancia') }}</span>
+                                                <button type="button" class="flex w-full items-center justify-end gap-1 font-semibold" @click="toggleProveedorModalSort('expected')">
+                                                    Ganancia esperada
+                                                    <span class="text-[10px]">{{ proveedorModalSortIcon('expected') }}</span>
                                                 </button>
                                             </th>
                                             <th class="px-3 py-2">
@@ -2693,7 +2756,7 @@ onBeforeUnmount(() => {
                                     </thead>
                                     <tbody :class="tableClasses.body">
                                         <tr v-if="proveedorModalSortedItems.length === 0">
-                                            <td :class="tableClasses.emptyRow" colspan="13">
+                                            <td :class="tableClasses.emptyRow" colspan="12">
                                                 No hay movimientos para este proveedor.
                                             </td>
                                         </tr>
@@ -2704,10 +2767,9 @@ onBeforeUnmount(() => {
                                             <td class="px-3 py-2 text-right">{{ item.cantidad }}</td>
                                             <td class="px-3 py-2 text-right">{{ formatCurrency(item.precio_unitario) }}</td>
                                             <td class="px-3 py-2 text-right">{{ formatCurrency(item.total) }}</td>
-                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.descuento_producto) }}</td>
-                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.cargo_tarjeta) }}</td>
-                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.descuento_total) }}</td>
-                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.ganancia) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.provider_discount) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.card_fee) }}</td>
+                                            <td class="px-3 py-2 text-right">{{ formatCurrency(item.expected_earning) }}</td>
                                             <td class="px-3 py-2 capitalize">{{ item.metodo }}</td>
                                             <td class="px-3 py-2">{{ item.vendedor }}</td>
                                             <td class="px-3 py-2">{{ item.promotion ?? 'normal' }}</td>
@@ -2715,7 +2777,6 @@ onBeforeUnmount(() => {
                                     </tbody>
                                 </table>
                             </div>
-                            <p class="text-[10px] text-gray-500 mt-2">* Desc. total = Desc. producto + Cargo tarjeta.</p>
                         </div>
                     </div>
                 </div>
