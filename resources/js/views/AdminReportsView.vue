@@ -2254,7 +2254,18 @@ onBeforeUnmount(() => {
                                                     <td class="px-3 py-2 text-right font-semibold text-rose-600">{{ formatCurrency(row.egresos) }}</td>
                                                     <td class="px-3 py-2 text-right">
                                                         <template v-if="Number(row.saldo_cierre ?? 0) !== 0">
-                                                            <span class="font-semibold text-gray-900">{{ formatCurrency(row.saldo_cierre) }}</span>
+                                                            <div class="flex items-center justify-end gap-1">
+                                                                <span class="font-semibold text-gray-900">{{ formatCurrency(row.saldo_cierre) }}</span>
+                                                                <span
+                                                                    class="relative inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-gray-300 text-[10px] text-gray-500 group"
+                                                                    aria-label="Efectivo al cierre del día">
+                                                                    i
+                                                                    <span
+                                                                        class="pointer-events-none absolute bottom-full right-0 z-10 mb-1 hidden whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[10px] text-white group-hover:block">
+                                                                        Efectivo al cierre del día
+                                                                    </span>
+                                                                </span>
+                                                            </div>
                                                         </template>
                                                         <span v-else
                                                             class="inline-flex items-center justify-end gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800">
