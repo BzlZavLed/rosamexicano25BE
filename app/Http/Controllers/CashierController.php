@@ -5,8 +5,11 @@ namespace App\Http\Controllers;
 use App\Http\Requests\CajaOpenRequest;
 use App\Http\Requests\CajaCloseRequest;
 use App\Http\Requests\CheckoutRequest;
+use App\Http\Requests\ExpenseRequest;
 use App\Http\Resources\ProductoResource;
 use App\Models\EstadoCaja;
+use App\Models\DailyCashSummary;
+use App\Models\Egreso;
 use App\Models\Inventario;
 use App\Models\Producto;
 use App\Models\Venta;
@@ -18,6 +21,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use App\Support\ProviderPayout;
+use Illuminate\Validation\ValidationException;
 
 class CashierController extends Controller
 {
@@ -63,27 +67,67 @@ class CashierController extends Controller
         $query->where('fecha', $fechaIso);
     }
 
+    private function getOrCreateDailySummary(string $fecha): DailyCashSummary
+    {
+        if ($summary = $this->findDailySummary($fecha)) {
+            return $summary;
+        }
+
+        return DailyCashSummary::create([
+            'fecha' => $fecha,
+            'saldo_inicial' => 0,
+            'efectivo' => 0,
+            'transferencia' => 0,
+            'tarjeta' => 0,
+            'egresos' => 0,
+            'saldo_cierre' => 0,
+        ]);
+    }
+
+    private function findDailySummary(string $fecha): ?DailyCashSummary
+    {
+        return DailyCashSummary::whereDate('fecha', $fecha)->first();
+    }
+
     private function cashSummary(string $fechaIso): array
     {
-        $methods = ['efectivo', 'cash'];
-
-        $ingresosQuery = DB::table('ventas')->whereIn('metodo', $methods)->where('ie', 1);
-        $this->applyVentaFechaFilter($ingresosQuery, $fechaIso);
-        $ingresos = (float) $ingresosQuery
-            ->selectRaw('COALESCE(SUM(COALESCE(ingreso_real, totalventa)), 0) as total')
-            ->value('total');
-
-        $egresosQuery = DB::table('ventas')->whereIn('metodo', $methods)->where('ie', 0);
-        $this->applyVentaFechaFilter($egresosQuery, $fechaIso);
-        $egresos = (float) $egresosQuery
-            ->selectRaw('COALESCE(SUM(COALESCE(ingreso_real, totalventa)), 0) as total')
-            ->value('total');
+        $summary = $this->findDailySummary($fechaIso);
+        $ingresos = $summary?->efectivo ?? 0.0;
+        $egresos = $summary?->egresos ?? 0.0;
 
         return [
             'ingresos' => round($ingresos, 2),
             'egresos' => round($egresos, 2),
             'neto' => round($ingresos - $egresos, 2),
         ];
+    }
+
+    private function applyPaymentToSummary(string $fecha, string $method, float $amount): void
+    {
+        if ($amount <= 0) {
+            return;
+        }
+
+        $column = match (strtolower($method)) {
+            'tarjeta' => 'tarjeta',
+            'transferencia' => 'transferencia',
+            default => 'efectivo',
+        };
+
+        $summary = $this->getOrCreateDailySummary($fecha);
+        $summary->$column = round(($summary->$column ?? 0) + $amount, 2);
+        $summary->save();
+    }
+
+    private function applyExpenseToSummary(string $fecha, float $amount): void
+    {
+        if ($amount <= 0) {
+            return;
+        }
+
+        $summary = $this->getOrCreateDailySummary($fecha);
+        $summary->egresos = round(($summary->egresos ?? 0) + $amount, 2);
+        $summary->save();
     }
 
     public function status()
@@ -128,9 +172,14 @@ class CashierController extends Controller
             'saldoinicial' =>$opening,   // <-- IMPORTANT: map saldo -> saldoinicial
             'saldofinal' => 0.0,                               // not known yet
             'saldosistema' => 0.0,                               // computed at close
+            'saldo_cierre' => 0.0,
             'usuario' => $request->user()->nombre
                 ?? ($request->user()->email ?? 'admin'),
         ]);
+
+        $summary = $this->getOrCreateDailySummary($fecha);
+        $summary->saldo_inicial = round($opening, 2);
+        $summary->save();
 
         return response()->json($row, 201);
     }
@@ -144,15 +193,24 @@ class CashierController extends Controller
             return response()->json(['message' => 'No hay caja abierta para la fecha indicada'], 409);
         }
 
-        // Sum only CASH sales for that date from legacy `ventas` table
-        $cashQuery = DB::table('ventas');
-        $this->applyVentaFechaFilter($cashQuery, $fecha);
-        $cashTotal = (float) $cashQuery
-            ->where('metodo', 'cash')
-            ->sum('totalventa');
+        $summary = $this->getOrCreateDailySummary($fecha);
+        $cashSummary = $this->cashSummary($fecha);
+        $cashTotal = $cashSummary['ingresos'];
+        $cashExpenses = $cashSummary['egresos'];
 
-        // System expected cash at close
-        $sistema = (float) $row->saldoinicial + $cashTotal;
+        $saldoCierre = round(
+            ($summary->saldo_inicial ?? 0)
+            + ($summary->efectivo ?? 0)
+            + ($summary->transferencia ?? 0)
+            + ($summary->tarjeta ?? 0)
+            - ($summary->egresos ?? 0),
+            2
+        );
+        $summary->saldo_cierre = $saldoCierre;
+        $summary->save();
+
+        // System expected cash at close (based on summary totals)
+        $sistema = $saldoCierre;
 
         // Allow optional overrides from request
         if ($request->filled('saldosistema')) {
@@ -163,6 +221,7 @@ class CashierController extends Controller
         }
 
         $row->saldosistema = $sistema;
+        $row->saldo_cierre = $summary->saldo_cierre;
         $row->estado = 0; // cerrada
         $row->save();
 
@@ -172,6 +231,7 @@ class CashierController extends Controller
         return response()->json([
             'caja' => $row,
             'cash_today' => $cashTotal,
+            'cash_expenses' => $cashExpenses,
             'variance' => $variance,
         ]);
     }
@@ -211,48 +271,86 @@ class CashierController extends Controller
 
         $payload = $request->validated();
 
-        $result = DB::transaction(function () use ($payload, $fecha, $hora) {
-            $grossSubtotal = 0;
-            $itemDiscountTotal = 0;
+        $result = DB::transaction(function () use ($payload, $fecha, $hora, $now) {
+            $grossSubtotal = 0.0;
+            $itemDiscountTotal = 0.0;
             $lines = [];
             $lineItems = [];
 
             foreach ($payload['lineas'] as $index => $line) {
                 $ident = (int) $line['idProd'];
-                $producto = \App\Models\Producto::with('proveedor')
+                $producto = Producto::with('proveedor')
                     ->where('ident', $ident)
                     ->firstOrFail();
 
-                $lineBase = (float) $line['pUni'] * (int) $line['cant'];
-                $rawDiscount = $line['product_desc'] ?? $line['totdesc'] ?? 0;
-                $lineItemDiscount = max(0, (float) $rawDiscount);
-                if ($lineItemDiscount > $lineBase) {
-                    $lineItemDiscount = $lineBase;
+                $quantity = max(0, (int) $line['cant']);
+                $unitPrice = round((float) $line['pUni'], 2);
+                $totalDiscount = round((float) ($line['product_desc'] ?? $line['totdesc'] ?? 0), 2);
+                $manualDiscount = round((float) ($line['manual_discount'] ?? 0), 2);
+                if ($manualDiscount > $totalDiscount) {
+                    $manualDiscount = $totalDiscount;
                 }
-                $lineItemDiscount = round($lineItemDiscount, 2);
-                $lineNetBeforeOrder = max(0, $lineBase - $lineItemDiscount);
 
-                $grossSubtotal += $lineBase;
-                $itemDiscountTotal += $lineItemDiscount;
+                $promotionDiscountTotal = round(max(0, $totalDiscount - $manualDiscount), 2);
+                $promotionRules = $this->resolvePromotionRules($producto);
+                [$paidQty, $freeQty, $promotionPercentAmount] = $this->breakdownPromotionDiscount(
+                    $quantity,
+                    $unitPrice,
+                    $promotionRules['percent'] ?? 0.0,
+                    $promotionDiscountTotal
+                );
 
+                if ($promotionDiscountTotal > 0 && $manualDiscount > 0) {
+                    throw ValidationException::withMessages([
+                        "lineas.$index.manual_discount" => 'Los productos con promoción no aceptan descuento manual',
+                    ]);
+                }
+
+                $publicBase = round($unitPrice * $paidQty, 2);
+                $lineNetBeforeManual = max(0, $publicBase - $promotionPercentAmount);
+                if ($manualDiscount > $lineNetBeforeManual) {
+                    $manualDiscount = $lineNetBeforeManual;
+                }
+
+                $grossSubtotal += $publicBase;
+                $itemDiscountTotal += ($promotionPercentAmount + $manualDiscount);
+
+                $provider = $producto->relationLoaded('proveedor')
+                    ? $producto->getRelation('proveedor')
+                    : $producto->proveedor()->first();
+                $providerUnitCost = (float) ($producto->precio_proveedor ?? $unitPrice);
                 $lines[] = [
                     'producto' => $producto,
+                    'proveedor' => $provider,
                     'data' => $line,
-                    'line_base' => $lineBase,
-                    'item_discount' => $lineItemDiscount,
+                    'unit_price' => $unitPrice,
+                    'quantity' => $quantity,
+                    'paid_quantity' => $paidQty,
+                    'free_qty' => $freeQty,
+                    'promotion_percent' => $promotionRules['percent'] ?? 0.0,
+                    'promotion_discount_total' => $promotionDiscountTotal,
+                    'promotion_percent_amount' => $promotionPercentAmount,
+                    'manual_discount' => $manualDiscount,
+                    'public_total' => $publicBase,
+                    'provider_cost' => round($providerUnitCost * $paidQty, 2),
                 ];
 
                 $lineItems[] = [
                     'producto' => $producto,
-                    'proveedor' => $producto->relationLoaded('proveedor') ? $producto->getRelation('proveedor') : null,
-                    'qty' => (int) $line['cant'],
-                    'unit_price' => (float) $line['pUni'],
-                    'discount_amount' => $lineItemDiscount,
+                    'proveedor' => $provider,
+                    'qty' => $quantity,
+                    'paid_quantity' => $paidQty,
+                    'unit_price' => $unitPrice,
+                    'promotion_discount' => $promotionPercentAmount,
+                    'manual_discount' => $manualDiscount,
+                    'provider_unit_cost' => $providerUnitCost,
+                    'provider_type' => $provider?->tipo,
+                    'provider_pct' => $provider?->porcentaje_comision,
                 ];
 
-                $inv = \App\Models\Inventario::where('ident', $producto->ident)->lockForUpdate()->first();
+                $inv = Inventario::where('ident', $producto->ident)->lockForUpdate()->first();
                 if (!$inv) {
-                    $inv = new \App\Models\Inventario([
+                    $inv = new Inventario([
                         'ident' => $producto->ident,
                         'existencia' => 0,
                         'importe' => 0,
@@ -260,24 +358,23 @@ class CashierController extends Controller
                     ]);
                 }
 
-                if ($inv->existencia < $line['cant']) {
+                if ($inv->existencia < $quantity) {
                     throw new \RuntimeException("Stock insuficiente para producto {$producto->nombre}");
                 }
 
-                $inv->existencia -= (int) $line['cant'];
+                $inv->existencia -= $quantity;
                 $inv->importe = $inv->existencia * (float) $producto->precio;
                 $inv->provee = (int) $producto->proveedorid;
                 $inv->save();
             }
 
             $payout = ProviderPayout::calculate($lineItems, $payload['metodo']);
-            $grossSubtotal = $payout['gross_subtotal'];
-            $itemDiscountTotal = $payout['discount_total'];
             $afterDiscount = $payout['after_discount'];
             $providerChargeTotal = $payout['provider_charge_total'];
             $total = $payout['total'];
-            $costoTotal = $payout['costo_total'];
-            $gananciaTotal = $payout['ganancia_total'];
+            $paymentMethod = strtolower($payload['metodo']);
+            $cashDelta = round(max(0, ($payload['recibo'] ?? 0) - ($payload['cambio'] ?? 0)), 2);
+            $ingresoReal = $paymentMethod === 'efectivo' ? $cashDelta : $total;
 
             foreach ($lines as $idx => &$line) {
                 $line['payout'] = $payout['lines'][$idx] ?? [];
@@ -290,74 +387,51 @@ class CashierController extends Controller
                 $ventaId = $ventaId > 0 ? $ventaId + 1 : 1;
             }
 
-            $paymentMethod = strtolower($payload['metodo']);
-            $cashDelta = round(max(0, ($payload['recibo'] ?? 0) - ($payload['cambio'] ?? 0)), 2);
-            $ingresoReal = in_array($paymentMethod, ['efectivo', 'cash'], true) ? $cashDelta : $total;
-
             $venta = Venta::create([
                 'idventa' => $ventaId,
-                'subtotal' => round($grossSubtotal, 2),
-                'tarjeta_cargo' => $providerChargeTotal,
-                'costo_total' => $costoTotal,
-                'ganancia_total' => $gananciaTotal,
-                'ingreso_real' => $ingresoReal,
                 'totalventa' => $total,
                 'metodo' => $payload['metodo'],
-                'recibo' => $payload['recibo'],
+                'total_recibido' => $payload['recibo'],
                 'cambio' => $payload['cambio'],
                 'vendedor' => $payload['vendedor'],
                 'fecha' => $fecha,
-                'ie' => 0,
-                'concepto' => $payload['concepto'] ?? '',
+                'hora' => $hora,
+                'receipt_printed' => false,
+                'receipt_emailed' => false,
             ]);
+
+            $this->applyPaymentToSummary(
+                $fecha,
+                $paymentMethod,
+                $paymentMethod === 'efectivo' ? $ingresoReal : $total
+            );
 
             foreach ($lines as $line) {
                 $lineData = $line['data'];
                 $prod = $line['producto'];
-
-                $lineItemDiscount = round($line['item_discount'], 2);
                 $linePayout = $line['payout'] ?? [];
-                $lineProviderCharge = round($linePayout['provider_charge'] ?? 0.0, 2);
-                $providerBruto = round($linePayout['provider_bruto'] ?? 0.0, 2);
-                $providerDiscount = round($linePayout['provider_total_discount'] ?? 0.0, 2);
-                $providerNet = round($linePayout['provider_net'] ?? max(0, $providerBruto - $providerDiscount), 2);
-                $publicTotal = round($linePayout['public_total'] ?? $line['line_base'], 2);
-                $adminMarkup = round($linePayout['admin_markup'] ?? max(0, $publicTotal - $providerBruto), 2);
-                $providerPct = null;
-                if ($prod->relationLoaded('proveedor')) {
-                    $prov = $prod->getRelation('proveedor');
-                    if ($prov && $prov->tipo === 'porcentaje') {
-                        $providerPct = $prov->porcentaje_comision;
-                    }
-                }
-
-                $promotionFlag = 'normal';
-                if ($lineItemDiscount > 0) {
-                    $promotionFlag = 'descuento - producto';
-                }
-
-                if ($bundleLabel = $this->detectBundlePromotion($prod, (int) ($lineData['cant'] ?? 0))) {
-                    $promotionFlag = $bundleLabel;
-                }
 
                 VentaDesg::create([
                     'idventa' => $ventaId,
                     'fecha' => $fecha,
-                    'idprod' => (int) ($lineData['idProd'] ?? $prod->ident),
-                    'nombre' => $lineData['nombre'],
-                    'proveedor' => $lineData['proveedor'],
-                    'puni' => $lineData['pUni'],
-                    'cant' => $lineData['cant'],
-                    'total' => $line['line_base'],
-                    'descuento_producto' => $lineItemDiscount,
-                    'promotion' => $promotionFlag,
                     'hora' => $hora,
-                    'cargo_tarjeta_proveedor' => $lineProviderCharge > 0 ? $lineProviderCharge : null,
-                    'proveedor_porcentaje' => $providerPct,
-                    'proveedor_bruto' => $providerBruto,
-                    'proveedor_descuento' => $providerDiscount,
-                    'proveedor_neto' => $providerNet,
-                    'admin_ganancia' => $adminMarkup,
+                    'producto_id' => (int) ($lineData['idProd'] ?? $prod->ident),
+                    'nombre' => $lineData['nombre'],
+                    'proveedor_id' => $prod->proveedorid,
+                    'unit_price' => $line['unit_price'],
+                    'quantity' => $line['quantity'],
+                    'free_quantity' => $line['free_qty'],
+                    'public_total' => $line['public_total'],
+                    'venta_total' => $total,
+                    'promotion_discount_percentage' => ($line['promotion_percent'] ?? 0) > 0 ? $line['promotion_percent'] : null,
+                    'promotion_discount_amount' => $line['promotion_discount_total'],
+                    'free_product' => $line['free_qty'] > 0,
+                    'credit_card_discount' => $linePayout['credit_card_discount'] ?? 0.0,
+                    'provider_percentage_discount' => $linePayout['provider_percentage_discount'] ?? 0.0,
+                    'consigna_discount' => $linePayout['consigna_discount'] ?? 0.0,
+                    'provider_cost' => $line['provider_cost'],
+                    'provider_payment' => $linePayout['provider_net'] ?? 0.0,
+                    'admin_earnings' => $linePayout['admin_earnings'] ?? 0.0,
                 ]);
             }
 
@@ -365,8 +439,8 @@ class CashierController extends Controller
 
             return [
                 'venta' => $venta,
-                'subtotal' => $grossSubtotal,
-                'item_discount_total' => $itemDiscountTotal,
+                'subtotal' => round($grossSubtotal, 2),
+                'item_discount_total' => round($itemDiscountTotal, 2),
                 'subtotal_after_item_discounts' => $afterDiscount,
                 'discount_percent' => 0,
                 'discount_amount' => 0,
@@ -374,9 +448,11 @@ class CashierController extends Controller
                 'surcharge_percent' => strtolower($payload['metodo']) === 'tarjeta' ? 4.5 : 0.0,
                 'surcharge_amount' => $providerChargeTotal,
                 'tarjeta_cargo' => $providerChargeTotal,
-                'ingreso_real' => $ingresoReal,
-                'costo_total' => $costoTotal,
-                'ganancia_total' => $gananciaTotal,
+                'ingreso_real' => strtolower($payload['metodo']) === 'efectivo'
+                    ? round(max(0, $payload['recibo'] - $payload['cambio']), 2)
+                    : $total,
+                'costo_total' => $payout['costo_total'],
+                'ganancia_total' => $payout['ganancia_total'],
                 'total' => $total,
             ];
         });
@@ -384,60 +460,108 @@ class CashierController extends Controller
         return response()->json(['data' => $result], 201);
     }
 
-    private function detectBundlePromotion(?Producto $producto, int $quantity): ?string
+    public function registerExpense(ExpenseRequest $request)
     {
-        if (!$producto || $quantity <= 0) {
-            return null;
+        $this->ensureAdmin($request);
+
+        $fecha = $this->normalizeFecha($request->input('fecha'));
+        $caja = $this->cajaByFechaQuery($fecha)->where('estado', 1)->first();
+        if (!$caja) {
+            return response()->json(['message' => 'Debes abrir caja antes de registrar gastos'], 409);
         }
 
+        $descripcion = (string) ($request->input('descripcion') ?? $request->input('concepto') ?? '');
+        $descripcion = trim($descripcion);
+        $monto = $request->input('monto');
+        if ($monto === null) {
+            $monto = $request->input('totalventa');
+        }
+        $monto = round((float) $monto, 2);
+
+        if ($monto <= 0) {
+            return response()->json(['message' => 'El monto del egreso debe ser mayor a cero'], 422);
+        }
+
+        if ($descripcion === '') {
+            return response()->json(['message' => 'La descripción del egreso es obligatoria'], 422);
+        }
+
+        $creadoPor = $request->user()->nombre
+            ?? $request->user()->email
+            ?? ($request->input('vendedor') ?: 'admin');
+
+        $egreso = Egreso::create([
+            'fecha' => $fecha,
+            'descripcion' => $descripcion,
+            'monto' => $monto,
+            'creado_por' => $creadoPor,
+        ]);
+
+        $this->applyExpenseToSummary($fecha, $monto);
+
+        return response()->json(['data' => $egreso], 201);
+    }
+
+    private function resolvePromotionRules(Producto $producto): array
+    {
         $productIdent = (int) ($producto->ident ?? 0);
         $providerIdent = (int) ($producto->proveedorid ?? 0);
-        if ($productIdent === 0 && $providerIdent === 0) {
-            return null;
-        }
+        $cacheKey = $productIdent . ':' . $providerIdent;
 
         static $cache = [];
-        $cacheKey = $productIdent . ':' . $providerIdent . ':' . $quantity;
         if (array_key_exists($cacheKey, $cache)) {
             return $cache[$cacheKey];
         }
 
-        $query = Promocion::query()
-            ->whereIn('tipo', ['bundle', 'gratis'])
-            ->where('estado', true);
+        $productPromos = $productIdent > 0
+            ? Promocion::query()
+                ->where('estado', true)
+                ->where('producto', $productIdent)
+                ->get()
+                ->filter(fn (Promocion $promo) => $promo->activa)
+            : collect();
 
-        if ($productIdent) {
-            $query->where(function ($q) use ($productIdent, $providerIdent) {
-                $q->where('producto', $productIdent);
-                if ($providerIdent) {
-                    $q->orWhere(function ($inner) use ($providerIdent) {
-                        $inner->whereNull('producto')->where('proveedor', $providerIdent);
-                    });
-                }
-            });
-        } elseif ($providerIdent) {
-            $query->whereNull('producto')->where('proveedor', $providerIdent);
-        } else {
-            return $cache[$cacheKey] = null;
+        $providerPromos = $providerIdent > 0
+            ? Promocion::query()
+                ->where('estado', true)
+                ->whereNull('producto')
+                ->where('proveedor', $providerIdent)
+                ->get()
+                ->filter(fn (Promocion $promo) => $promo->activa)
+            : collect();
+
+        $candidates = $productPromos->count() ? $productPromos : $providerPromos;
+        $percentPromo = $candidates->firstWhere('tipo', 'descuento');
+        $bundlePromo = $candidates->first(function (Promocion $promo) {
+            return in_array($promo->tipo, ['bundle', 'gratis']);
+        });
+
+        return $cache[$cacheKey] = [
+            'percent' => $percentPromo ? (float) ($percentPromo->descuento ?? 0) : 0.0,
+            'bundle_min' => $bundlePromo ? (int) ($bundlePromo->mincompra ?? 0) : 0,
+            'bundle_bonus' => $bundlePromo ? (int) ($bundlePromo->gratis ?? 0) : 0,
+        ];
+    }
+
+    private function breakdownPromotionDiscount(int $quantity, float $unitPrice, float $percent, float $promotionDiscount): array
+    {
+        $percent = max(0.0, min(100.0, $percent));
+        $percentFraction = $percent / 100;
+
+        if ($promotionDiscount <= 0 || $unitPrice <= 0) {
+            return [$quantity, 0, 0.0];
         }
 
-        $promo = $query->orderByDesc('mincompra')
-            ->get()
-            ->filter(function (Promocion $promo) use ($quantity) {
-                if (!$promo->activa) {
-                    return false;
-                }
-                if ($promo->mincompra && $quantity < (int) $promo->mincompra) {
-                    return false;
-                }
-                return ($promo->gratis ?? 0) > 0;
-            })
-            ->first();
-
-        if (!$promo) {
-            return $cache[$cacheKey] = null;
+        $unitsFromDiscount = $promotionDiscount / max(0.01, $unitPrice);
+        $denominator = max(0.00001, 1 - $percentFraction);
+        $paidQty = ($quantity - $unitsFromDiscount) / $denominator;
+        $paidQty = (int) round(max(0, min($quantity, $paidQty)));
+        $freeQty = max(0, $quantity - $paidQty);
+        $percentAmount = round($paidQty * $unitPrice * $percentFraction, 2);
+        if ($percentAmount > $promotionDiscount) {
+            $percentAmount = round($promotionDiscount, 2);
         }
 
-        return $cache[$cacheKey] = sprintf('%d gratis', (int) $promo->gratis);
+        return [$paidQty, $freeQty, $percentAmount];
     }
 }

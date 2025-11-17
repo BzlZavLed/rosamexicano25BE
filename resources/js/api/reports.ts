@@ -107,12 +107,11 @@ export type CajaReportResponse = {
 };
 
 export type EgresoCajaMovimiento = {
-    idventa: number;
+    id: number;
     fecha: string;
-    metodo: string;
-    concepto: string;
-    totalventa: number;
-    vendedor: string;
+    descripcion: string;
+    monto: number;
+    creado_por: string | null;
 };
 
 export type EgresosCajaSummary = {

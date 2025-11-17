@@ -29,10 +29,11 @@ class WidgetsController extends Controller
 
         $ventasDelDia = Venta::whereDate('fecha', $fechaQuery);
 
-        $entradas = (clone $ventasDelDia)->where('ie', 1)->sum('totalventa');
-        $salidas = (clone $ventasDelDia)->where('ie', 0)->sum('totalventa');
+        $entradas = (clone $ventasDelDia)->sum('totalventa');
+        $salidas = (float) \App\Models\Egreso::whereDate('fecha', $fechaQuery)->sum('monto');
+        $salidasCount = (int) \App\Models\Egreso::whereDate('fecha', $fechaQuery)->count();
 
-        $productosVendidos = VentaDesg::where('fecha', $fecha)->sum('cant');
+        $productosVendidos = VentaDesg::where('fecha', $fechaQuery)->sum('quantity');
 
         $metodos = (clone $ventasDelDia)
             ->selectRaw('metodo, SUM(totalventa) as total, COUNT(*) as transacciones')
@@ -51,8 +52,8 @@ class WidgetsController extends Controller
             'entradas_total' => (float) $entradas,
             'salidas_total' => (float) $salidas,
             'transacciones' => [
-                'entradas' => (clone $ventasDelDia)->where('ie', 1)->count(),
-                'salidas' => (clone $ventasDelDia)->where('ie', 0)->count(),
+                'entradas' => (clone $ventasDelDia)->count(),
+                'salidas' => $salidasCount,
             ],
             'productos_vendidos' => (int) $productosVendidos,
             'metodos' => $metodos,
@@ -67,24 +68,24 @@ class WidgetsController extends Controller
         $from = $fromDate->toDateString();
         $to = $today->toDateString();
 
-        $top = VentaDesg::selectRaw('idprod, nombre, proveedor, SUM(cant) as total_cantidad')
+        $top = VentaDesg::selectRaw('producto_id, nombre, proveedor_id, SUM(quantity) as total_cantidad')
             ->whereBetween('fecha', [$from, $to])
-            ->groupBy('idprod', 'nombre', 'proveedor')
+            ->groupBy('producto_id', 'nombre', 'proveedor_id')
             ->orderByDesc('total_cantidad')
             ->limit(5)
             ->get()
             ->map(function ($item) {
                 $proveedorNombre = null;
-                if ($item->proveedor) {
+                if ($item->proveedor_id) {
                     $proveedorNombre = optional(
-                        Proveedor::where('ident', (int) $item->proveedor)->first()
+                        Proveedor::where('ident', (int) $item->proveedor_id)->first()
                     )->nombre;
                 }
 
                 return [
-                    'producto_id' => (int) $item->idprod,
+                    'producto_id' => (int) $item->producto_id,
                     'producto_nombre' => $item->nombre,
-                    'proveedor_id' => (int) $item->proveedor,
+                    'proveedor_id' => (int) $item->proveedor_id,
                     'proveedor_nombre' => $proveedorNombre,
                     'cantidad_vendida' => (int) $item->total_cantidad,
                 ];

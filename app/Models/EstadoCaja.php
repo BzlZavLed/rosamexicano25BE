@@ -16,6 +16,7 @@ class EstadoCaja extends Model
         'saldoinicial',  // float
         'saldofinal',    // float
         'saldosistema',  // float
+        'saldo_cierre',  // float
         'usuario',       // varchar
     ];
 
@@ -24,6 +25,6 @@ class EstadoCaja extends Model
         'saldoinicial'  => 'float',
         'saldofinal'    => 'float',
         'saldosistema'  => 'float',
+        'saldo_cierre'  => 'float',
     ];
 }
-

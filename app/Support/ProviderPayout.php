@@ -12,7 +12,6 @@ class ProviderPayout
         $lines = [];
         $grossSubtotal = 0.0;
         $discountTotal = 0.0;
-
         $providerPublicTotals = [];
         $providerPostManualTotals = [];
         $providerLines = [];
@@ -28,47 +27,53 @@ class ProviderPayout
                     : $producto->proveedor()->first();
             }
 
-            $qty = (int) ($item['qty'] ?? 0);
-            $unit = (float) ($item['unit_price'] ?? 0);
-            $gross = round($unit * $qty, 2);
-            $discount = min($gross, max(0, (float) ($item['discount_amount'] ?? 0)));
-            $netBefore = $gross - $discount;
+            $unit = round((float) ($item['unit_price'] ?? $producto->precio ?? 0), 2);
+            $totalQty = (int) ($item['qty'] ?? 0);
+            $paidQty = max(0, (int) ($item['paid_quantity'] ?? $totalQty));
+            $promotionDiscount = round((float) ($item['promotion_discount'] ?? 0), 2);
+            $manualDiscount = round((float) ($item['manual_discount'] ?? 0), 2);
+            $publicBase = round($unit * $paidQty, 2);
 
-            $grossSubtotal += $gross;
-            $discountTotal += $discount;
+            $grossSubtotal += $publicBase;
+            $discountTotal += ($promotionDiscount + $manualDiscount);
 
             $providerIdent = $proveedor?->ident ?? (int) ($producto->proveedorid ?? 0);
-            $providerUnitCost = (float) ($producto->precio_proveedor ?? $unit);
-            $providerType = $proveedor->tipo ?? 'normal';
-            $providerPct = $proveedor->porcentaje_comision ?? null;
+            $providerUnitCost = (float) ($item['provider_unit_cost'] ?? $producto->precio_proveedor ?? $unit);
+            $providerType = $item['provider_type'] ?? ($proveedor->tipo ?? 'normal');
+            $providerPct = $item['provider_pct'] ?? ($proveedor->porcentaje_comision ?? null);
 
-            $providerBruto = self::calculateProviderBruto($providerType, $gross, $qty, $providerUnitCost, $providerPct);
-            $providerBruto = min($providerBruto, $gross);
-            $providerManualDiscount = min($providerBruto, $discount);
-            $providerPostManual = max(0, round($providerBruto - $providerManualDiscount, 2));
-            $adminMarkup = max(0, round($gross - $providerBruto, 2));
+            $providerCost = self::calculateProviderBruto($providerType, $publicBase, $paidQty, $providerUnitCost, $providerPct);
+            $providerPercentageDiscount = $providerType === 'porcentaje'
+                ? round(max(0, $publicBase - $providerCost), 2)
+                : 0.0;
+            $consignaDiscount = $providerType === 'consigna'
+                ? round(max(0, ($unit - $providerUnitCost) * $paidQty), 2)
+                : 0.0;
 
-            $lineData = [
+            $providerManualDiscount = min($providerCost, $manualDiscount);
+            $providerPostManual = max(0, round($providerCost - $providerManualDiscount, 2));
+
+            $lines[] = [
                 'producto' => $producto,
                 'proveedor' => $proveedor,
                 'provider_id' => $providerIdent,
-                'qty' => $qty,
                 'unit' => $unit,
-                'gross' => $gross,
-                'discount' => $discount,
-                'net_before' => $netBefore,
-                'provider_bruto' => $providerBruto,
+                'qty' => $totalQty,
+                'paid_qty' => $paidQty,
+                'public_total' => $publicBase,
+                'promotion_discount' => $promotionDiscount,
+                'manual_discount' => $manualDiscount,
+                'provider_cost' => $providerCost,
                 'provider_manual_discount' => $providerManualDiscount,
                 'provider_post_manual' => $providerPostManual,
-                'admin_markup' => $adminMarkup,
-                'provider_charge' => 0.0,
-                'public_total' => $gross,
+                'credit_card_discount' => 0.0,
+                'provider_percentage_discount' => $providerPercentageDiscount,
+                'consigna_discount' => $consignaDiscount,
             ];
 
-            $lines[] = $lineData;
             $providerLines[$providerIdent][] = $index;
             if ($providerIdent > 0) {
-                $providerPublicTotals[$providerIdent] = ($providerPublicTotals[$providerIdent] ?? 0) + $gross;
+                $providerPublicTotals[$providerIdent] = ($providerPublicTotals[$providerIdent] ?? 0) + $publicBase;
                 $providerPostManualTotals[$providerIdent] = ($providerPostManualTotals[$providerIdent] ?? 0) + $providerPostManual;
             }
         }
@@ -102,7 +107,7 @@ class ProviderPayout
                         $remainingCharge -= $lineCharge;
                     }
 
-                    $lines[$lineIdx]['provider_charge'] = round(($lines[$lineIdx]['provider_charge'] ?? 0) + $lineCharge, 2);
+                    $lines[$lineIdx]['credit_card_discount'] = round(($lines[$lineIdx]['credit_card_discount'] ?? 0) + $lineCharge, 2);
                     $remainingCharge -= $lineCharge;
                 }
             }
@@ -115,14 +120,16 @@ class ProviderPayout
         $gananciaTotal = 0.0;
 
         foreach ($lines as &$line) {
-            $providerManual = $line['provider_manual_discount'];
-            $providerCard = $line['provider_charge'];
-            $providerTotalDiscount = round($providerManual + $providerCard, 2);
-            $providerNet = max(0, round($line['provider_bruto'] - $providerTotalDiscount, 2));
-            $line['provider_total_discount'] = $providerTotalDiscount;
+            $providerCard = $line['credit_card_discount'];
+            $providerNet = max(0, round($line['provider_post_manual'] - $providerCard, 2));
             $line['provider_net'] = $providerNet;
+            $line['credit_card_discount'] = $providerCard;
+
+            $adminEarnings = round(max(0, $line['public_total'] - $line['provider_cost']), 2);
+            $line['admin_earnings'] = $adminEarnings;
+
             $costoTotal += $providerNet;
-            $gananciaTotal += $line['admin_markup'];
+            $gananciaTotal += $adminEarnings;
         }
         unset($line);
 

@@ -8,23 +8,25 @@ class Venta extends Model
 {
     protected $table = 'ventas';
     protected $primaryKey = 'id';
-    public $timestamps = false;
+    public $timestamps = true;
 
     protected $fillable = [
         'idventa',
         'totalventa',
-        'ingreso_real',
+        'total_recibido',
         'metodo',
-        'recibo',
         'cambio',
         'vendedor',
         'fecha',
-        'ie',
-        'concepto',
-        'subtotal',
-        'tarjeta_cargo',
-        'costo_total',
-        'ganancia_total',
+        'hora',
+        'receipt_printed',
+        'receipt_emailed',
+    ];
+
+    protected $casts = [
+        'receipt_printed' => 'boolean',
+        'receipt_emailed' => 'boolean',
+        'fecha' => 'date',
     ];
 
     public function lineas()

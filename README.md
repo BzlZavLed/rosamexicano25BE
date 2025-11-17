@@ -129,3 +129,14 @@ Los proveedores ahora se clasifican en tres tipos:
 - `porcentaje`: la tienda retiene 20% o 30% de cada venta. El costo del proveedor se calcula aplicando ese porcentaje al precio de venta y también se descuenta cualquier 4.5% por ventas con tarjeta (prorrateado entre todos los proveedores de la venta).
 
 Los productos almacenan ambos precios (público y costo proveedor) y las ventas registran, por renglón, el costo del proveedor (`ventadesg.proveedor_bruto`), los descuentos que se le cargan (`ventadesg.proveedor_descuento`) y el monto neto a pagar (`ventadesg.proveedor_neto`), junto con el porcentaje aplicado cuando sea necesario.
+
+### Ventas, desglose y egresos (estructura)
+
+Para facilitar los reportes y conciliaciones se reconstruyeron las tablas principales en `database/migrations/2025_11_20_000000_rebuild_ventas_tables.php` y se añadieron dos auxiliares nuevas en los archivos del 20 de noviembre. Los campos relevantes son:
+
+- `ventas`: sólo conserva lo necesario por venta: `idventa`, `fecha`/`hora`, método (`metodo`), total cobrado (`totalventa`), cuánto se recibió en caja (`total_recibido`), el cambio devuelto (`cambio`), el vendedor y banderas de ticket (`receipt_printed`, `receipt_emailed`). Toda la información de costos/ingresos por proveedor ahora vive en el desglose.
+- `ventadesg`: una fila por concepto vendido con columnas para reconstruir precios y promociones: `producto_id`, `nombre`, `unit_price`, `quantity`, `free_quantity`, `free_product` (boolean), `promotion_discount_percentage`, `promotion_discount_amount`, `credit_card_discount`, los descuentos especiales (`provider_percentage_discount`, `consigna_discount`), el costo al proveedor (`provider_cost`), lo que se le pagará (`provider_payment`) y la utilidad del admin (`admin_earnings`). Este esquema está documentado en el modelo `app/Models/VentaDesg.php`.
+- `egresos`: reemplaza los “egresos como ventas”; sólo guarda `fecha`, `descripcion`, `monto` y `creado_por` (ver `database/migrations/2025_11_20_010000_create_egresos_table.php`). El endpoint `/cashier/expenses` ahora escribe aquí.
+- `daily_cash_summaries`: tabla helper (ver `database/migrations/2025_11_20_020000_create_daily_cash_summaries_table.php`) que acumula por día el saldo inicial de caja (`saldo_inicial`), lo cobrado por método (`efectivo`, `transferencia`, `tarjeta`), los egresos en efectivo (`egresos`) y el saldo calculado al cierre (`saldo_cierre`). `CashierController` la actualiza automáticamente durante apertura, ventas, egresos y cierre de caja.
+
+> Nota: `free_quantity` guarda cuántas piezas fueron gratis en una línea, mientras que `free_product` es un flag que indica que el renglón incluyó alguna unidad gratuita. Cuando registres o consumas datos de promociones usa ambos campos según la granularidad que necesites.

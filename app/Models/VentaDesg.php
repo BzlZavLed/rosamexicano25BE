@@ -8,36 +8,42 @@ class VentaDesg extends Model
 {
     protected $table = 'ventadesg';
     protected $primaryKey = 'id';
-    public $timestamps = false;
+    public $timestamps = true;
 
     protected $fillable = [
         'idventa',
         'fecha',
-        'idprod',
-        'nombre',
-        'proveedor',
-        'puni',
-        'cant',
-        'total',
-        'descuento_producto',
-        'promotion',
         'hora',
-        'cargo_tarjeta_proveedor',
-        'proveedor_porcentaje',
-        'proveedor_bruto',
-        'proveedor_descuento',
-        'proveedor_neto',
-        'admin_ganancia',
+        'producto_id',
+        'nombre',
+        'proveedor_id',
+        'unit_price',
+        'quantity',
+        'free_quantity',
+        'public_total',
+        'venta_total',
+        'promotion_discount_percentage',
+        'promotion_discount_amount',
+        'credit_card_discount',
+        'provider_percentage_discount',
+        'consigna_discount',
+        'provider_cost',
+        'provider_payment',
+        'admin_earnings',
+        'free_product',
     ];
 
     protected $casts = [
-        'descuento_producto' => 'decimal:2',
-        'promotion' => 'string',
-        'proveedor_porcentaje' => 'decimal:2',
-        'proveedor_bruto' => 'decimal:2',
-        'proveedor_descuento' => 'decimal:2',
-        'proveedor_neto' => 'decimal:2',
-        'admin_ganancia' => 'decimal:2',
-        'cargo_tarjeta_proveedor' => 'decimal:2',
+        'promotion_discount_percentage' => 'decimal:2',
+        'promotion_discount_amount' => 'decimal:2',
+        'credit_card_discount' => 'decimal:2',
+        'provider_percentage_discount' => 'decimal:2',
+        'consigna_discount' => 'decimal:2',
+        'provider_cost' => 'decimal:2',
+        'provider_payment' => 'decimal:2',
+        'admin_earnings' => 'decimal:2',
+        'has_promotion' => 'boolean',
+        'free_product' => 'boolean',
+        'fecha' => 'date',
     ];
 }

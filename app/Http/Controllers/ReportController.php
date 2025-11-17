@@ -6,6 +6,7 @@ use App\Models\Venta;
 use App\Models\Producto;
 use App\Models\Inventario;
 use App\Models\Entrada;
+use App\Models\Egreso;
 use App\Models\Proveedor;
 use App\Models\Mensualidad;
 use Illuminate\Http\Request;
@@ -556,30 +557,29 @@ class ReportController extends Controller
         $inicioIso = $inicioCarbon->toDateString();
         $finIso = $finCarbon->toDateString();
 
-        $baseQuery = Venta::query()
-            ->whereBetween('fecha', [$inicioIso, $finIso]);
+        $egresos = Egreso::query()
+            ->whereBetween('fecha', [$inicioIso, $finIso])
+            ->orderBy('fecha')
+            ->orderBy('id')
+            ->get();
 
-        $egresosQuery = (clone $baseQuery)->where('ie', 0)->orderBy('fecha')->orderBy('idventa');
-
-        $egresos = $egresosQuery->get();
-        $egresosTotal = (float) $egresos->sum(function (Venta $venta) {
-            return (float) $venta->totalventa;
+        $egresosTotal = (float) $egresos->sum(function (Egreso $egreso) {
+            return (float) $egreso->monto;
         });
 
-        $ingresosTotal = (float) (clone $baseQuery)
-            ->where('ie', 1)
+        $ingresosTotal = (float) Venta::query()
+            ->whereBetween('fecha', [$inicioIso, $finIso])
             ->sum('totalventa');
 
         $saldo = round($ingresosTotal - $egresosTotal, 2);
 
-        $mapped = $egresos->map(function (Venta $venta) {
+        $mapped = $egresos->map(function (Egreso $egreso) {
             return [
-                'idventa' => $venta->idventa,
-                'fecha' => $venta->fecha,
-                'metodo' => $venta->metodo,
-                'concepto' => $venta->concepto,
-                'totalventa' => (float) $venta->totalventa,
-                'vendedor' => $venta->vendedor,
+                'id' => (int) $egreso->id,
+                'fecha' => optional($egreso->fecha)->toDateString(),
+                'descripcion' => $egreso->descripcion,
+                'monto' => (float) $egreso->monto,
+                'creado_por' => $egreso->creado_por,
             ];
         })->values();
 
@@ -592,16 +592,15 @@ class ReportController extends Controller
 
             return response()->streamDownload(function () use ($mapped) {
                 $handle = fopen('php://output', 'w');
-                fputcsv($handle, ['idventa', 'fecha', 'metodo', 'vendedor', 'concepto', 'monto']);
+                fputcsv($handle, ['id', 'fecha', 'descripcion', 'creado_por', 'monto']);
 
                 foreach ($mapped as $row) {
                     fputcsv($handle, [
-                        $row['idventa'],
+                        $row['id'],
                         $row['fecha'],
-                        $row['metodo'],
-                        $row['vendedor'],
-                        $row['concepto'],
-                        $row['totalventa'],
+                        $row['descripcion'],
+                        $row['creado_por'],
+                        $row['monto'],
                     ]);
                 }
 

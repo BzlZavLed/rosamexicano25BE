@@ -1798,34 +1798,32 @@ onBeforeUnmount(() => {
                                     </div>
                                 </div>
                                 <p class="text-[11px] text-gray-500">
-                                    *Ingresos corresponde a la suma de todas las ventas (ie = 1) dentro del periodo seleccionado.
+                                    *Ingresos corresponde a la suma de todas las ventas registradas dentro del periodo seleccionado.
                                 </p>
 
                                 <div :class="tableClasses.wrapper">
                                     <table :class="tableClasses.table">
                                         <thead :class="tableClasses.head">
                                             <tr>
-                                                <th class="px-3 py-2">Venta ID</th>
+                                                <th class="px-3 py-2">#</th>
                                                 <th class="px-3 py-2">Fecha</th>
-                                                <th class="px-3 py-2">Método</th>
-                                                <th class="px-3 py-2">Vendedor</th>
-                                                <th class="px-3 py-2">Concepto</th>
+                                                <th class="px-3 py-2">Descripción</th>
+                                                <th class="px-3 py-2">Registró</th>
                                                 <th class="px-3 py-2 text-right">Monto</th>
                                             </tr>
                                         </thead>
                                         <tbody :class="tableClasses.body">
                                             <tr v-if="egresosData.egresos.length === 0">
-                                                <td class="px-3 py-6 text-center text-gray-500" colspan="6">
-                                                    No hay movimientos con ie = 0 para el periodo seleccionado.
+                                                <td class="px-3 py-6 text-center text-gray-500" colspan="5">
+                                                    No hay egresos capturados para el periodo seleccionado.
                                                 </td>
                                             </tr>
-                                            <tr v-for="mov in egresosData.egresos" :key="mov.idventa" :class="tableClasses.row">
-                                                <td class="px-3 py-2 font-semibold text-gray-900">{{ mov.idventa }}</td>
+                                            <tr v-for="mov in egresosData.egresos" :key="mov.id" :class="tableClasses.row">
+                                                <td class="px-3 py-2 font-semibold text-gray-900">#{{ mov.id }}</td>
                                                 <td class="px-3 py-2">{{ mov.fecha }}</td>
-                                                <td class="px-3 py-2 capitalize">{{ mov.metodo }}</td>
-                                                <td class="px-3 py-2">{{ mov.vendedor }}</td>
-                                                <td class="px-3 py-2">{{ mov.concepto }}</td>
-                                                <td class="px-3 py-2 text-right">{{ formatCurrency(mov.totalventa) }}</td>
+                                                <td class="px-3 py-2">{{ mov.descripcion }}</td>
+                                                <td class="px-3 py-2">{{ mov.creado_por || '—' }}</td>
+                                                <td class="px-3 py-2 text-right">{{ formatCurrency(mov.monto) }}</td>
                                             </tr>
                                         </tbody>
                                     </table>

@@ -15,7 +15,7 @@ import {
     sendSaleTicket,
     registerExpense,
     type CashMethod,
-    type CashMovementPayload,
+    type RegisterExpensePayload,
     type CheckoutLinePayload,
     type CheckoutPayload
 } from '../api/cashier';
@@ -1032,17 +1032,11 @@ async function submitExpense() {
     }
 
     const fecha = (expenseForm.fecha && expenseForm.fecha.trim()) || todayISO();
-    const payload: CashMovementPayload = {
-        totalventa: Number(expenseForm.total),
-        metodo: 'efectivo',
-        recibo: 0,
-        cambio: 0,
-        vendedor: caja.value?.caja?.usuario ?? 'Manual',
+    const payload: RegisterExpensePayload = {
+        monto: Number(expenseForm.total),
+        descripcion: expenseForm.concepto.trim(),
         fecha,
-        ie: 0,
-        concepto: expenseForm.concepto.trim(),
     };
-    console.log('Submitting expense payload:', payload);
     expenseSaving.value = true;
     try {
         await registerExpense(payload);

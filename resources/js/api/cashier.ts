@@ -67,18 +67,13 @@ export async function sendSaleTicket(payload: {
     return data;
 }
 
-export type CashMovementPayload = {
-    totalventa: number;
-    metodo: CashMethod;
-    recibo?: number;
-    cambio?: number;
-    vendedor?: string;
+export type RegisterExpensePayload = {
+    descripcion: string;
+    monto: number;
     fecha: string;
-    ie: 0 | 1;
-    concepto: string;
 };
 
-export async function registerExpense(payload: CashMovementPayload) {
+export async function registerExpense(payload: RegisterExpensePayload) {
     const { data } = await http.post('/cashier/expenses', payload);
     return data;
 }

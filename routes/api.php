@@ -129,7 +129,7 @@ Route::middleware('auth:sanctum')->group(function () {
         ->parameters(['promociones' => 'promocion']);
 
     // Legacy endpoints still waiting for a refactor
-    Route::post('/cashier/expenses', [CashierLegacyController::class, 'registerExpense']);
+    Route::post('/cashier/expenses', [CashierController::class, 'registerExpense']);
     Route::post('/cashier/send-ticket', [CashierLegacyController::class, 'emailTicket']);
 
     // Mailer tracking
