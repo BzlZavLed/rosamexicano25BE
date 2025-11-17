@@ -24,6 +24,7 @@ class VentaDesg extends Model
         'venta_total',
         'promotion_discount_percentage',
         'promotion_discount_amount',
+        'manual_discount_amount',
         'credit_card_discount',
         'provider_percentage_discount',
         'consigna_discount',
@@ -36,6 +37,7 @@ class VentaDesg extends Model
     protected $casts = [
         'promotion_discount_percentage' => 'decimal:2',
         'promotion_discount_amount' => 'decimal:2',
+        'manual_discount_amount' => 'decimal:2',
         'credit_card_discount' => 'decimal:2',
         'provider_percentage_discount' => 'decimal:2',
         'consigna_discount' => 'decimal:2',

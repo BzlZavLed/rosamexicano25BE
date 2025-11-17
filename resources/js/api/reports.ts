@@ -1,98 +1,53 @@
 import http from './http';
 
 export type CajaReportLine = {
-    idprod: number;
+    producto_id: number;
     nombre: string;
-    proveedor: number;
-    proveedor_nombre?: string | null;
-    proveedor_tipo?: 'normal' | 'consigna' | 'porcentaje';
-    proveedor_porcentaje?: number | null;
-    puni: number;
-    cant: number;
-    total: number;
-    product_desc?: number;
-    descuento_producto?: number;
-    cargo_tarjeta_proveedor?: number;
-    promotion?: string;
-    proveedor_bruto?: number;
-    proveedor_descuento?: number;
-    proveedor_neto?: number;
-    admin_ganancia?: number;
-};
-
-export type CajaReportProvider = {
-    proveedor_id: number;
-    nombre: string;
-    tipo: 'normal' | 'consigna' | 'porcentaje';
-    porcentaje?: number | null;
-    publico_total: number;
-    proveedor_bruto: number;
-    proveedor_descuento: number;
-    provider_card_charge: number;
-    proveedor_neto: number;
-    admin_ganancia: number;
-    percent: number;
+    provider: {
+        id: number | null;
+        nombre: string | null;
+        tipo: 'normal' | 'consigna' | 'porcentaje';
+        porcentaje?: number | null;
+    } | null;
+    quantity: number;
+    free_quantity: number;
+    unit_price: number;
+    public_total: number;
+    promotion_discount_amount: number;
+    manual_discount_amount: number;
+    credit_card_discount: number;
+    provider_price: number;
+    provider_discount_type: 'normal' | 'consigna' | 'porcentaje';
+    provider_discount_amount: number;
+    provider_payment: number;
+    admin_earnings: number;
+    free_product: boolean;
 };
 
 export type CajaReportVenta = {
     idventa: number;
     fecha: string;
+    hora: string;
     metodo: string;
-    subtotal: number;
-    descuento_lineas: number;
-    tarjeta_cargo: number;
+    vendedor?: string | null;
     totalventa: number;
-    ingreso_real: number;
-    costo_total: number;
-    ganancia_total: number;
-    ie: number;
-    concepto: string;
-    recibo: number;
+    total_recibido: number;
     cambio: number;
-    vendedor: string;
     lineas: CajaReportLine[];
-    providers: CajaReportProvider[];
 };
 
-export type CajaBasicsSummary = {
-    total_ventas: number;
-    total_unidades: number;
-    total_ingresos: number;
-};
-
-export type CajaPaymentSummary = {
-    channels: Record<'cash' | 'card' | 'transfer' | 'other', number>;
+export type CajaMethodSummary = {
+    metodo: string;
     total: number;
-    methods: Array<{ label: string; amount: number }>;
-};
-
-export type CajaProviderDiscount = {
-    proveedor_id: number;
-    nombre: string;
-    tipo: string;
-    porcentaje?: number | null;
-    ventas_brutas: number;
-    card_charge: number;
-    descuentos: number;
-    neto: number;
-};
-
-export type CajaTopProduct = {
-    nombre: string;
-    proveedor: string | number | null;
-    unidades: number;
-    total: number;
+    count: number;
 };
 
 export type CajaReportSummary = {
     ventas_total: number;
-    subtotal: number;
-    descuento_lineas: number;
-    tarjeta_cargo: number;
     total_totalventa: number;
-    ingreso_real: number;
-    costo_total: number;
-    ganancia_total: number;
+    total_recibido: number;
+    total_cambio: number;
+    metodos: CajaMethodSummary[];
 };
 
 export type CajaReportResponse = {
@@ -100,10 +55,6 @@ export type CajaReportResponse = {
     to_date: string;
     summary: CajaReportSummary;
     ventas: CajaReportVenta[];
-    basics?: CajaBasicsSummary;
-    payment_summary?: CajaPaymentSummary;
-    provider_discounts?: CajaProviderDiscount[];
-    top_products?: CajaTopProduct[];
 };
 
 export type EgresoCajaMovimiento = {
@@ -126,6 +77,35 @@ export type EgresosCajaReportResponse = {
     egresos: EgresoCajaMovimiento[];
     summary: EgresosCajaSummary;
 };
+
+export interface FlujoCajaRow {
+    fecha: string;
+    saldo_inicial: number;
+    efectivo: number;
+    transferencia: number;
+    tarjeta: number;
+    ingresos_total: number;
+    egresos: number;
+    saldo_cierre: number;
+}
+
+export interface FlujoCajaResumen {
+    dias: number;
+    saldo_inicial: number;
+    efectivo: number;
+    transferencia: number;
+    tarjeta: number;
+    ingresos_total: number;
+    egresos: number;
+    saldo_cierre: number;
+}
+
+export interface FlujoCajaResponse {
+    from_date: string;
+    to_date: string;
+    resumen: FlujoCajaResumen;
+    items: FlujoCajaRow[];
+}
 
 type CajaReportParams = {
     from_date: string;
@@ -165,6 +145,24 @@ export async function getEgresosCajaReport(params: { from_date: string; to_date?
     }
 
     const { data } = await http.get<EgresosCajaReportResponse>('/reports/egresos-caja', { params: query });
+    return data;
+}
+
+export async function getFlujoCajaReport(params: { from_date: string; to_date?: string; download?: boolean }) {
+    const { from_date, to_date, download } = params;
+    const query: Record<string, string> = { from_date };
+    if (to_date) query.to_date = to_date;
+    if (download) query.download = '1';
+
+    if (download) {
+        const { data } = await http.get('/reports/flujo-caja', {
+            params: query,
+            responseType: 'blob',
+        });
+        return data as Blob;
+    }
+
+    const { data } = await http.get<FlujoCajaResponse>('/reports/flujo-caja', { params: query });
     return data;
 }
 
@@ -294,18 +292,22 @@ export interface MensualidadReportResponse {
 export interface CajaProveedorItem {
     ventadesg_id: number;
     idventa: number;
-    venta_id: number;
-    fecha: string;
-    fecha_raw: string;
-    fecha_iso: string;
+    venta_id: number | null;
+    fecha: string | null;
+    fecha_raw?: string | null;
+    fecha_iso?: string | null;
     producto_ident: string;
     producto_nombre: string;
     cantidad: number;
     precio_unitario: number;
     total: number;
-    card_fee: number;
     provider_discount: number;
-    expected_earning: number;
+    manual_discount: number;
+    card_fee: number;
+    real_earning: number;
+    expected_earning?: number;
+    provider_price?: number | null;
+    provider_cost_total?: number | null;
     proveedor_tipo?: string | null;
     proveedor_porcentaje?: number | null;
     metodo: string;
@@ -322,14 +324,17 @@ export interface CajaProveedorGroup {
     proveedor_porcentaje?: number | null;
     total_vendido: number;
     card_fee_total: number;
+    manual_discount_total: number;
     tipo_descuento_total: number;
-    expected_earning: number;
+    real_earning: number;
+    expected_earning?: number;
     items: CajaProveedorItem[];
 }
 
 export interface CajaProveedoresResumen {
     ventas_brutas: number;
     descuentos: number;
+    manual_descuentos: number;
     cargos_tarjeta: number;
     descuento_general: number;
     ganancias: number;
@@ -341,6 +346,7 @@ export interface CajaProveedoresResponse {
     resumen: CajaProveedoresResumen;
     descuento_general_total: number;
     cargos_tarjeta_total: number;
+    manual_descuentos_total: number;
     proveedores: CajaProveedorGroup[];
 }
 

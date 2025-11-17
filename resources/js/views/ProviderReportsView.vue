@@ -32,13 +32,18 @@ const resumen = computed(() => report.value?.resumen ?? null);
 const providerTotals = computed(() => {
     const items = providerGroup.value?.items ?? [];
     if (!items.length) return null;
-    const cantidad = items.reduce((sum, item) => sum + item.cantidad, 0);
-    const total = items.reduce((sum, item) => sum + item.total, 0);
-    const descuentos = items.reduce((sum, item) => sum + item.descuento_total, 0);
-    const ganancia = items.reduce((sum, item) => sum + item.ganancia, 0);
+    const cantidad = items.reduce((sum, item) => sum + Number(item.cantidad ?? 0), 0);
+    const total = items.reduce((sum, item) => sum + Number(item.total ?? 0), 0);
+    const providerDiscount = items.reduce((sum, item) => sum + Number(item.provider_discount ?? 0), 0);
+    const manualDiscount = items.reduce((sum, item) => sum + Number(item.manual_discount ?? 0), 0);
+    const cardFee = items.reduce((sum, item) => sum + Number(item.card_fee ?? 0), 0);
+    const ganancia = items.reduce(
+        (sum, item) => sum + Number(item.real_earning ?? item.expected_earning ?? 0),
+        0
+    );
     const precioPromedio =
-        cantidad > 0 ? items.reduce((sum, item) => sum + item.precio_unitario * item.cantidad, 0) / cantidad : 0;
-    return { cantidad, precioPromedio, total, descuentos, ganancia };
+        cantidad > 0 ? items.reduce((sum, item) => sum + Number(item.precio_unitario ?? 0) * Number(item.cantidad ?? 0), 0) / cantidad : 0;
+    return { cantidad, precioPromedio, total, providerDiscount, manualDiscount, cardFee, ganancia };
 });
 
 
@@ -262,21 +267,27 @@ function computeRange() {
                 </p>
 
                 <div v-if="report" class="space-y-4">
-                    <div v-if="resumen" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div v-if="resumen" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Ventas brutas</p>
                             <p class="text-lg font-semibold text-gray-900">${{ resumen.ventas_brutas.toFixed(2) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                            <p class="text-xs uppercase tracking-wide text-gray-500">Descuentos</p>
+                            <p class="text-xs uppercase tracking-wide text-gray-500">Desc. proveedor</p>
                             <p class="text-lg font-semibold text-gray-900">${{ resumen.descuentos.toFixed(2) }}</p>
+                        </div>
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <p class="text-xs uppercase tracking-wide text-gray-500">Desc. manual</p>
+                            <p class="text-lg font-semibold text-gray-900">
+                                ${{ (resumen.manual_descuentos ?? report.manual_descuentos_total ?? 0).toFixed(2) }}
+                            </p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Cargos tarjeta</p>
                             <p class="text-lg font-semibold text-gray-900">${{ resumen.cargos_tarjeta.toFixed(2) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                            <p class="text-xs uppercase tracking-wide text-gray-500">Ganancia total</p>
+                            <p class="text-xs uppercase tracking-wide text-gray-500">Ganancia real</p>
                             <p class="text-lg font-semibold text-gray-900">${{ resumen.ganancias.toFixed(2) }}</p>
                         </div>
                     </div>
@@ -294,13 +305,15 @@ function computeRange() {
                                         <th class="px-4 py-2 text-right">Cantidad</th>
                                         <th class="px-4 py-2 text-right">Precio</th>
                                         <th class="px-4 py-2 text-right">Total</th>
-                                        <th class="px-4 py-2 text-right">Descuentos</th>
-                                        <th class="px-4 py-2 text-right">Ganancia</th>
+                                        <th class="px-4 py-2 text-right">Desc. proveedor</th>
+                                        <th class="px-4 py-2 text-right">Desc. manual</th>
+                                        <th class="px-4 py-2 text-right">Cargo tarjeta</th>
+                                        <th class="px-4 py-2 text-right">Ganancia real</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-gray-100">
                                     <tr v-if="providerGroup.items.length === 0">
-                                        <td colspan="7" class="px-4 py-4 text-center text-gray-500">
+                                        <td colspan="9" class="px-4 py-4 text-center text-gray-500">
                                             No se registraron ventas para la fecha seleccionada.
                                         </td>
                                     </tr>
@@ -313,8 +326,13 @@ function computeRange() {
                                             item.precio_unitario.toFixed(2) }}</td>
                                         <td class="px-4 py-2 text-right text-gray-700">${{ item.total.toFixed(2) }}</td>
                                         <td class="px-4 py-2 text-right text-gray-700">${{
-                                            item.descuento_total.toFixed(2) }}</td>
-                                        <td class="px-4 py-2 text-right text-gray-700">${{ item.ganancia.toFixed(2) }}
+                                            item.provider_discount.toFixed(2) }}</td>
+                                        <td class="px-4 py-2 text-right text-gray-700">${{
+                                            item.manual_discount.toFixed(2) }}</td>
+                                        <td class="px-4 py-2 text-right text-gray-700">${{
+                                            item.card_fee.toFixed(2) }}</td>
+                                        <td class="px-4 py-2 text-right text-gray-700">${{
+                                            (item.real_earning ?? item.expected_earning ?? 0).toFixed(2) }}
                                         </td>
                                     </tr>
                                 </tbody>
@@ -331,7 +349,13 @@ function computeRange() {
                                             ${{ providerTotals.total.toFixed(2) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            ${{ providerTotals.descuentos.toFixed(2) }}
+                                            ${{ providerTotals.providerDiscount.toFixed(2) }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            ${{ providerTotals.manualDiscount.toFixed(2) }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            ${{ providerTotals.cardFee.toFixed(2) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
                                             ${{ providerTotals.ganancia.toFixed(2) }}

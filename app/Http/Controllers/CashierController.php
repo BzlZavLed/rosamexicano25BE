@@ -201,8 +201,6 @@ class CashierController extends Controller
         $saldoCierre = round(
             ($summary->saldo_inicial ?? 0)
             + ($summary->efectivo ?? 0)
-            + ($summary->transferencia ?? 0)
-            + ($summary->tarjeta ?? 0)
             - ($summary->egresos ?? 0),
             2
         );
@@ -425,6 +423,7 @@ class CashierController extends Controller
                     'venta_total' => $total,
                     'promotion_discount_percentage' => ($line['promotion_percent'] ?? 0) > 0 ? $line['promotion_percent'] : null,
                     'promotion_discount_amount' => $line['promotion_discount_total'],
+                    'manual_discount_amount' => $line['manual_discount'],
                     'free_product' => $line['free_qty'] > 0,
                     'credit_card_discount' => $linePayout['credit_card_discount'] ?? 0.0,
                     'provider_percentage_discount' => $linePayout['provider_percentage_discount'] ?? 0.0,

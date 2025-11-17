@@ -33,6 +33,7 @@ const pageNumbers = computed(() => {
     return Array.from({ length: pages }, (_, idx) => idx + 1);
 });
 const filterEmailMode = ref<'all' | 'with' | 'without'>('all');
+const filterTipo = ref<'all' | 'normal' | 'consigna' | 'porcentaje'>('all');
 const filterImporteConValor = ref(false);
 const visibleProveedores = computed(() => {
     return proveedores.value.filter((p) => {
@@ -42,6 +43,11 @@ const visibleProveedores = computed(() => {
         } else if (filterEmailMode.value === 'without') {
             const email = (p.email ?? '').trim();
             if (email) return false;
+        }
+        if (filterTipo.value !== 'all') {
+            const tipo = (p.tipo ?? 'normal') as 'normal' | 'consigna' | 'porcentaje';
+            if (tipo !== filterTipo.value)
+                return false;
         }
         if (filterImporteConValor.value) {
             const amount = Number(p.importe ?? 0);
@@ -515,7 +521,7 @@ onMounted(async () => {
                         class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
                 
                     <div class="flex flex-wrap items-center gap-3 text-xs text-gray-600">
-                        <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-2 flex-wrap">
                             <span>Email:</span>
                             <label class="inline-flex items-center gap-1">
                                 <input type="radio" value="all" v-model="filterEmailMode"
@@ -533,6 +539,16 @@ onMounted(async () => {
                                 <span>Sin email</span>
                             </label>
                         </div>
+                        <label class="inline-flex items-center gap-2">
+                            <span class="font-medium text-gray-700">Tipo</span>
+                            <select v-model="filterTipo"
+                                class="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900">
+                                <option value="all">Todos</option>
+                                <option value="normal">Normal</option>
+                                <option value="consigna">Consigna</option>
+                                <option value="porcentaje">Por porcentaje</option>
+                            </select>
+                        </label>
                         <label class="inline-flex items-center gap-2">
                             <input type="checkbox" v-model="filterImporteConValor"
                                 class="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900">

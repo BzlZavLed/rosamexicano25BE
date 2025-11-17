@@ -3,12 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\Venta;
+use App\Models\VentaDesg;
 use App\Models\Producto;
 use App\Models\Inventario;
 use App\Models\Entrada;
 use App\Models\Egreso;
 use App\Models\Proveedor;
 use App\Models\Mensualidad;
+use App\Models\DailyCashSummary;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -24,12 +26,11 @@ class ReportController extends Controller
         return $user instanceof Proveedor ? $user : null;
     }
 
+
     public function caja(Request $request)
     {
         $fechaInicio = $request->input('from_date');
         $fechaFin = $request->input('to_date');
-        $provider = $this->currentProvider($request);
-        $provider = $this->currentProvider($request);
 
         if (!$fechaInicio) {
             return response()->json(['message' => 'Debe proporcionar al menos from_date.'], 422);
@@ -51,460 +52,203 @@ class ReportController extends Controller
         $inicioIso = $inicioCarbon->toDateString();
         $finIso = $finCarbon->toDateString();
 
-        $connection = DB::connection();
-        $driver = $connection->getDriverName();
-        $connection->enableQueryLog();
+        $ventas = Venta::with(['lineas' => function ($query) use ($inicioIso, $finIso) {
+                $query->whereBetween('fecha', [$inicioIso, $finIso])->orderBy('id');
+            }])
+            ->whereBetween('fecha', [$inicioIso, $finIso])
+            ->orderBy('fecha')
+            ->orderBy('hora')
+            ->orderBy('idventa')
+            ->get();
 
-        $dateFilter = function ($query) use ($inicioIso, $finIso) {
-            $query->whereBetween('fecha', [$inicioIso, $finIso]);
-        };
-
-        $ventasQuery = Venta::with([
-            'lineas' => function ($query) use ($dateFilter, $provider) {
-                $dateFilter($query);
-                if ($provider) {
-                    $query->where('proveedor', $provider->ident);
-                }
-            }
-        ]);
-
-        $dateFilter($ventasQuery);
-
-        if ($provider) {
-            $ventasQuery->whereHas('lineas', function ($query) use ($dateFilter, $provider) {
-                $dateFilter($query);
-                $query->where('proveedor', $provider->ident);
-            });
-        }
-
-        $ventasQuery->orderBy('fecha')->orderBy('idventa');
-
-        $ventas = $ventasQuery->get();
-
-        if ($provider) {
-            $ventas = $ventas->filter(function (Venta $venta) use ($provider) {
-                $filtered = $venta->lineas->where('proveedor', $provider->ident)->values();
-                $venta->setRelation('lineas', $filtered);
-                return $filtered->isNotEmpty();
+        $providerUser = $this->currentProvider($request);
+        if ($providerUser) {
+            $ventas = $ventas->map(function (Venta $venta) use ($providerUser) {
+                $filtradas = $venta->lineas
+                    ->where('proveedor_id', $providerUser->ident)
+                    ->values();
+                $venta->setRelation('lineas', $filtradas);
+                return $venta;
+            })->filter(function (Venta $venta) {
+                return $venta->lineas->isNotEmpty();
             })->values();
         }
 
         $providerIds = [];
         foreach ($ventas as $venta) {
             foreach ($venta->lineas as $linea) {
-                $pid = (int) ($linea->proveedor ?? 0);
+                $pid = (int) ($linea->proveedor_id ?? 0);
                 if ($pid > 0) {
                     $providerIds[$pid] = true;
                 }
             }
         }
-        $providerMap = Proveedor::whereIn('ident', array_keys($providerIds))
-            ->get()
-            ->keyBy('ident');
 
-        $summaryTotals = [
-            'ventas_total' => 0,
-            'subtotal' => 0.0,
-            'descuento_lineas' => 0.0,
-            'tarjeta_cargo' => 0.0,
-            'totalventa' => 0.0,
-            'ingreso_real' => 0.0,
-            'costo_total' => 0.0,
-            'ganancia_total' => 0.0,
-        ];
+        $providerMap = empty($providerIds)
+            ? collect()
+            : Proveedor::whereIn('ident', array_keys($providerIds))->get()->keyBy('ident');
 
-        $channelTotals = [
-            'cash' => 0.0,
-            'card' => 0.0,
-            'transfer' => 0.0,
-            'other' => 0.0,
-        ];
-        $methodTotals = [];
-        $providerGlobal = [];
-        $productTotals = [];
-        $totalUnidades = 0;
-        $totalIngresos = 0.0;
-
-        $mapped = $ventas->map(function (Venta $venta) use (
-            $providerMap,
-            &$summaryTotals,
-            &$channelTotals,
-            &$methodTotals,
-            &$providerGlobal,
-            &$productTotals,
-            &$totalUnidades,
-            &$totalIngresos
-        ) {
-            $lineas = $venta->lineas;
-            $lineDiscountTotal = (float) $lineas->sum(function ($linea) {
-                return (float) ($linea->descuento_producto ?? 0);
-            });
-            $lineCardCharges = (float) $lineas->sum(function ($linea) {
-                return (float) ($linea->cargo_tarjeta_proveedor ?? 0);
-            });
-
-            $lineGrossSubtotal = (float) $lineas->sum(function ($linea) {
-                return (float) ($linea->total ?? 0);
-            });
-
-            $subtotal = (float) ($venta->subtotal ?? $lineGrossSubtotal);
-            if ($subtotal <= 0 || abs($subtotal - $lineGrossSubtotal) <= 0.05) {
-                $subtotal = round($lineGrossSubtotal, 2);
-            }
-
-            $tarjetaCargo = round((float) ($venta->tarjeta_cargo ?? $lineCardCharges), 2);
-            $totalventa = round((float) ($venta->totalventa ?? ($lineGrossSubtotal - $lineDiscountTotal)), 2);
-            $ingresoReal = round((float) ($venta->ingreso_real ?? $totalventa), 2);
-
-            $lineEntries = [];
-            $providerSummary = [];
-
-            foreach ($lineas as $linea) {
-                $pid = (int) ($linea->proveedor ?? 0);
-                $provider = $providerMap->get($pid);
-                $providerName = $provider->nombre ?? "Proveedor {$pid}";
+        $ventasPayload = $ventas->map(function (Venta $venta) use ($providerMap) {
+            $lineas = $venta->lineas->map(function (VentaDesg $linea) use ($providerMap) {
+                $pid = (int) ($linea->proveedor_id ?? 0);
+                $provider = $pid > 0 ? $providerMap->get($pid) : null;
                 $providerType = $provider->tipo ?? 'normal';
-                $providerPct = $providerType === 'porcentaje'
-                    ? ($provider->porcentaje_comision ?? null)
-                    : null;
+                $providerDiscountType = $providerType === 'porcentaje'
+                    ? 'porcentaje'
+                    : ($providerType === 'consigna' ? 'consigna' : 'normal');
 
-                $lineTotal = (float) ($linea->total ?? 0);
-                $providerBruto = (float) ($linea->proveedor_bruto ?? 0);
-                $providerDiscount = (float) ($linea->proveedor_descuento ?? 0);
-                $providerNet = (float) ($linea->proveedor_neto ?? ($providerBruto - $providerDiscount));
-                $providerCardCharge = (float) ($linea->cargo_tarjeta_proveedor ?? 0);
-                $adminGanancia = (float) ($linea->admin_ganancia ?? 0);
+                $providerDiscountAmount = match ($providerDiscountType) {
+                    'porcentaje' => (float) ($linea->provider_percentage_discount ?? 0),
+                    'consigna' => (float) ($linea->consigna_discount ?? 0),
+                    default => 0.0,
+                };
 
-                $lineEntries[] = [
-                    'idprod' => (int) $linea->idprod,
+                $quantity = max(1, (int) $linea->quantity ?: 1);
+                $providerPrice = $quantity > 0 ? round(((float) $linea->provider_cost) / $quantity, 2) : 0.0;
+                $providerDiscountAmount = round($providerDiscountAmount, 2);
+
+                return [
+                    'producto_id' => (int) $linea->producto_id,
                     'nombre' => $linea->nombre,
-                    'proveedor' => $pid,
-                    'proveedor_nombre' => $providerName,
-                    'proveedor_tipo' => $providerType,
-                    'proveedor_porcentaje' => $providerPct,
-                    'puni' => (float) $linea->puni,
-                    'cant' => (int) $linea->cant,
-                    'total' => $lineTotal,
-                    'descuento_producto' => (float) ($linea->descuento_producto ?? 0),
-                    'cargo_tarjeta_proveedor' => $providerCardCharge,
-                    'promotion' => $linea->promotion ?? 'normal',
-                    'proveedor_bruto' => $providerBruto,
-                    'proveedor_descuento' => $providerDiscount,
-                    'proveedor_neto' => $providerNet,
-                    'admin_ganancia' => $adminGanancia,
+                    'provider' => $provider ? [
+                        'id' => (int) $provider->ident,
+                        'nombre' => $provider->nombre,
+                        'tipo' => $providerType,
+                        'porcentaje' => $provider->porcentaje_comision,
+                    ] : null,
+                    'quantity' => (int) $linea->quantity,
+                    'free_quantity' => (int) $linea->free_quantity,
+                    'unit_price' => (float) $linea->unit_price,
+                    'public_total' => (float) $linea->public_total,
+                    'promotion_discount_amount' => (float) ($linea->promotion_discount_amount ?? 0),
+                    'manual_discount_amount' => (float) ($linea->manual_discount_amount ?? 0),
+                    'credit_card_discount' => (float) ($linea->credit_card_discount ?? 0),
+                    'provider_price' => $providerPrice,
+                    'provider_discount_type' => $providerDiscountType,
+                    'provider_discount_amount' => $providerDiscountAmount,
+                    'provider_payment' => (float) ($linea->provider_payment ?? 0),
+                    'admin_earnings' => (float) ($linea->admin_earnings ?? 0),
+                    'free_product' => (bool) ($linea->free_product ?? false),
                 ];
-
-                $totalUnidades += (int) $linea->cant;
-                $productKey = $linea->idprod ? (string) $linea->idprod : ($linea->nombre ?? uniqid('prod_', true));
-                if (!isset($productTotals[$productKey])) {
-                    $productTotals[$productKey] = [
-                        'nombre' => $linea->nombre,
-                        'proveedor' => $providerName,
-                        'unidades' => 0,
-                        'total' => 0.0,
-                    ];
-                }
-                $productTotals[$productKey]['unidades'] += (int) $linea->cant;
-                $productTotals[$productKey]['total'] += $lineTotal;
-
-                if ($pid > 0) {
-                    if (!isset($providerSummary[$pid])) {
-                        $providerSummary[$pid] = [
-                            'proveedor_id' => $pid,
-                            'nombre' => $providerName,
-                            'tipo' => $providerType,
-                            'porcentaje' => $providerPct,
-                            'publico_total' => 0.0,
-                            'proveedor_bruto' => 0.0,
-                            'proveedor_descuento' => 0.0,
-                            'provider_card_charge' => 0.0,
-                            'proveedor_neto' => 0.0,
-                            'admin_ganancia' => 0.0,
-                        ];
-                    }
-                    $providerSummary[$pid]['publico_total'] += $lineTotal;
-                    $providerSummary[$pid]['proveedor_bruto'] += $providerBruto;
-                    $providerSummary[$pid]['proveedor_descuento'] += $providerDiscount;
-                    $providerSummary[$pid]['provider_card_charge'] += $providerCardCharge;
-                    $providerSummary[$pid]['proveedor_neto'] += $providerNet;
-                    $providerSummary[$pid]['admin_ganancia'] += $adminGanancia;
-                }
-            }
-
-            $providerSummary = array_map(function (array $entry) use ($subtotal) {
-                $entry['publico_total'] = round($entry['publico_total'], 2);
-                $entry['proveedor_bruto'] = round($entry['proveedor_bruto'], 2);
-                $entry['proveedor_descuento'] = round($entry['proveedor_descuento'], 2);
-                $entry['provider_card_charge'] = round($entry['provider_card_charge'], 2);
-                $entry['proveedor_neto'] = round($entry['proveedor_neto'], 2);
-                $entry['admin_ganancia'] = round($entry['admin_ganancia'], 2);
-                $entry['percent'] = $subtotal > 0
-                    ? round(($entry['publico_total'] / $subtotal) * 100, 2)
-                    : 0.0;
-                return $entry;
-            }, array_values($providerSummary));
-
-            foreach ($providerSummary as $provEntry) {
-                $provKey = $provEntry['proveedor_id'] . '|' . $provEntry['nombre'];
-                if (!isset($providerGlobal[$provKey])) {
-                    $providerGlobal[$provKey] = [
-                        'proveedor_id' => $provEntry['proveedor_id'],
-                        'nombre' => $provEntry['nombre'],
-                        'tipo' => $provEntry['tipo'],
-                        'porcentaje' => $provEntry['porcentaje'],
-                        'ventas_brutas' => 0.0,
-                        'card_charge' => 0.0,
-                        'descuentos' => 0.0,
-                        'neto' => 0.0,
-                    ];
-                }
-                $providerGlobal[$provKey]['ventas_brutas'] += $provEntry['publico_total'];
-                $providerGlobal[$provKey]['card_charge'] += $provEntry['provider_card_charge'];
-                $providerGlobal[$provKey]['descuentos'] += $provEntry['proveedor_descuento'];
-                $providerGlobal[$provKey]['neto'] += $provEntry['proveedor_neto'];
-            }
-
-            $costoTotal = (float) ($venta->costo_total ?? array_sum(array_column($providerSummary, 'proveedor_neto')));
-            $gananciaTotal = (float) ($venta->ganancia_total ?? array_sum(array_column($providerSummary, 'admin_ganancia')));
-
-            $channel = $this->classifyMetodoChannel($venta->metodo);
-            $cobroNeto = max((float) ($venta->recibo ?? 0) - (float) ($venta->cambio ?? 0), 0);
-            $amountForChannel = $channel === 'cash' ? $cobroNeto : $totalventa;
-            $channelTotals[$channel] += $amountForChannel;
-            $methodLabel = strtoupper($venta->metodo ?? '—');
-            $methodTotals[$methodLabel] = ($methodTotals[$methodLabel] ?? 0) + $amountForChannel;
-            $totalIngresos += $amountForChannel;
-
-            $summaryTotals['ventas_total']++;
-            $summaryTotals['subtotal'] += $subtotal;
-            $summaryTotals['descuento_lineas'] += $lineDiscountTotal;
-            $summaryTotals['tarjeta_cargo'] += $tarjetaCargo;
-            $summaryTotals['totalventa'] += $totalventa;
-            $summaryTotals['ingreso_real'] += $ingresoReal;
-            $summaryTotals['costo_total'] += $costoTotal;
-            $summaryTotals['ganancia_total'] += $gananciaTotal;
+            })->values();
 
             return [
-                'idventa' => $venta->idventa,
-                'fecha' => $venta->fecha,
+                'idventa' => (int) $venta->idventa,
+                'fecha' => (string) $venta->fecha,
+                'hora' => (string) $venta->hora,
                 'metodo' => $venta->metodo,
-                'subtotal' => round($subtotal, 2),
-                'descuento_lineas' => round($lineDiscountTotal, 2),
-                'tarjeta_cargo' => $tarjetaCargo,
-                'totalventa' => $totalventa,
-                'ingreso_real' => $ingresoReal,
-                'costo_total' => round($costoTotal, 2),
-                'ganancia_total' => round($gananciaTotal, 2),
-                'ie' => (int) $venta->ie,
-                'concepto' => $venta->concepto,
-                'recibo' => (float) $venta->recibo,
-                'cambio' => (float) $venta->cambio,
                 'vendedor' => $venta->vendedor,
-                'providers' => $providerSummary,
-                'lineas' => $lineEntries,
+                'totalventa' => (float) $venta->totalventa,
+                'total_recibido' => (float) ($venta->total_recibido ?? 0),
+                'cambio' => (float) ($venta->cambio ?? 0),
+                'lineas' => $lineas,
             ];
-        })->values();
+        });
 
-        $summaryPayload = [
-            'ventas_total' => $summaryTotals['ventas_total'],
-            'subtotal' => round($summaryTotals['subtotal'], 2),
-            'descuento_lineas' => round($summaryTotals['descuento_lineas'], 2),
-            'tarjeta_cargo' => round($summaryTotals['tarjeta_cargo'], 2),
-            'total_totalventa' => round($summaryTotals['totalventa'], 2),
-            'ingreso_real' => round($summaryTotals['ingreso_real'], 2),
-            'costo_total' => round($summaryTotals['costo_total'], 2),
-            'ganancia_total' => round($summaryTotals['ganancia_total'], 2),
-        ];
-
-        $basics = [
-            'total_ventas' => $summaryTotals['ventas_total'],
-            'total_unidades' => $totalUnidades,
-            'total_ingresos' => round($totalIngresos, 2),
-        ];
-
-        $paymentSummary = [
-            'channels' => array_map(fn ($value) => round($value, 2), $channelTotals),
-            'total' => round(array_sum($channelTotals), 2),
-            'methods' => collect($methodTotals)
-                ->map(fn ($amount, $label) => ['label' => $label, 'amount' => round($amount, 2)])
-                ->sortByDesc('amount')
-                ->values()
-                ->all(),
-        ];
-
-        $providerDiscounts = collect($providerGlobal)
-            ->map(fn ($entry) => [
-                'proveedor_id' => $entry['proveedor_id'],
-                'nombre' => $entry['nombre'],
-                'tipo' => $entry['tipo'],
-                'porcentaje' => $entry['porcentaje'],
-                'ventas_brutas' => round($entry['ventas_brutas'], 2),
-                'card_charge' => round($entry['card_charge'], 2),
-                'descuentos' => round($entry['descuentos'], 2),
-                'neto' => round($entry['neto'], 2),
-            ])
-            ->sort(function ($a, $b) {
-                if ($a['card_charge'] === $b['card_charge']) {
-                    return $b['ventas_brutas'] <=> $a['ventas_brutas'];
-                }
-                return $b['card_charge'] <=> $a['card_charge'];
+        $methodSummary = $ventasPayload
+            ->groupBy('metodo')
+            ->map(function ($group, $metodo) {
+                return [
+                    'metodo' => $metodo,
+                    'total' => round($group->sum('totalventa'), 2),
+                    'count' => $group->count(),
+                ];
             })
             ->values()
-            ->all();
-
-        $topProducts = collect($productTotals)
-            ->map(fn ($entry) => [
-                'nombre' => $entry['nombre'],
-                'proveedor' => $entry['proveedor'],
-                'unidades' => $entry['unidades'],
-                'total' => round($entry['total'], 2),
-            ])
             ->sortByDesc('total')
-            ->take(10)
-            ->values()
-            ->all();
+            ->values();
 
-        Log::info('Reporte de caja generado', [
-            'from' => $inicioString,
-            'to' => $finString,
-            'total_ventas' => $mapped->count(),
-        ]);
-
-        foreach (DB::getQueryLog() as $entry) {
-            Log::debug('Consulta de reporte de caja', [
-                'sql' => $entry['query'],
-                'bindings' => $entry['bindings'],
-                'time_ms' => $entry['time'] ?? null,
-            ]);
-        }
+        $summary = [
+            'ventas_total' => $ventasPayload->count(),
+            'total_totalventa' => round($ventasPayload->sum('totalventa'), 2),
+            'total_recibido' => round($ventasPayload->sum('total_recibido'), 2),
+            'total_cambio' => round($ventasPayload->sum('cambio'), 2),
+            'metodos' => $methodSummary,
+        ];
 
         if ($request->boolean('download')) {
-            $filename = sprintf('reporte_caja_%s_%s.csv', str_replace('/', '-', $inicioString), str_replace('/', '-', $finString));
-            $headers = [
-                'Content-Type' => 'text/csv',
-                'Content-Disposition' => "attachment; filename=\"$filename\"",
-            ];
+            $filename = sprintf(
+                'reporte_caja_%s_%s.csv',
+                str_replace('/', '-', $inicioString),
+                str_replace('/', '-', $finString)
+            );
 
-            $callback = function () use ($mapped) {
+            return response()->streamDownload(function () use ($ventasPayload) {
                 $handle = fopen('php://output', 'w');
                 fputcsv($handle, [
-                    'venta_id',
+                    'idventa',
                     'fecha',
+                    'hora',
                     'metodo',
-                    'subtotal',
                     'totalventa',
-                    'ingreso_real',
-                    'tarjeta_cargo',
-                    'costo_total',
-                    'ganancia_total',
-                    'descuento_lineas',
-                    'proveedor_id',
-                    'proveedor_nombre',
+                    'total_recibido',
+                    'cambio',
+                    'producto_id',
+                    'producto',
+                    'proveedor',
                     'proveedor_tipo',
-                    'proveedor_porcentaje',
-                    'proveedor_publico_total',
-                    'proveedor_bruto',
-                    'proveedor_descuento',
-                    'proveedor_cargo_tarjeta',
-                    'proveedor_neto',
-                    'proveedor_ganancia_admin',
-                    'linea_idprod',
-                    'linea_nombre',
-                    'linea_proveedor',
-                    'linea_puni',
-                    'linea_cant',
-                    'linea_total',
-                    'linea_descuento_producto',
-                    'linea_cargo_tarjeta_proveedor',
-                    'linea_proveedor_bruto',
-                    'linea_proveedor_descuento',
-                    'linea_proveedor_neto',
-                    'linea_admin_ganancia',
-                    'linea_promotion',
+                    'free_quantity',
+                    'cantidad',
+                    'precio_publico',
+                    'precio_proveedor',
+                    'promo_descuento',
+                    'manual_descuento',
+                    'tarjeta_descuento',
+                    'desc_proveedor',
+                    'tipo_desc_proveedor',
+                    'pago_proveedor',
+                    'ganancia_admin',
                 ]);
 
-                foreach ($mapped as $venta) {
-                    $lineas = $venta['lineas'] ?? [];
-                    if (empty($lineas)) {
+                foreach ($ventasPayload as $venta) {
+                    foreach ($venta['lineas'] as $linea) {
                         fputcsv($handle, [
                             $venta['idventa'],
                             $venta['fecha'],
+                            $venta['hora'],
                             $venta['metodo'],
-                            $venta['subtotal'],
                             $venta['totalventa'],
-                            $venta['ingreso_real'],
-                            $venta['tarjeta_cargo'],
-                            $venta['costo_total'],
-                            $venta['ganancia_total'],
-                            $venta['descuento_lineas'],
-                            null,
-                            null,
-                            null,
-                            null,
-                            null,
-                            null,
-                            null,
-                            null,
-                        ]);
-                        continue;
-                    }
-
-                    foreach ($lineas as $linea) {
-                        fputcsv($handle, [
-                            $venta['idventa'],
-                            $venta['fecha'],
-                            $venta['metodo'],
-                            $venta['subtotal'],
-                            $venta['totalventa'],
-                            $venta['ingreso_real'],
-                            $venta['tarjeta_cargo'],
-                            $venta['costo_total'],
-                            $venta['ganancia_total'],
-                            $venta['descuento_lineas'],
-                            $linea['proveedor'],
-                            $linea['proveedor_nombre'] ?? null,
-                            $linea['proveedor_tipo'] ?? null,
-                            $linea['proveedor_porcentaje'] ?? null,
-                            $linea['total'],
-                            $linea['proveedor_bruto'],
-                            $linea['proveedor_descuento'],
-                            $linea['cargo_tarjeta_proveedor'],
-                            $linea['proveedor_neto'],
-                            $linea['admin_ganancia'],
-                            $linea['idprod'],
+                            $venta['total_recibido'],
+                            $venta['cambio'],
+                            $linea['producto_id'],
                             $linea['nombre'],
-                            $linea['proveedor'],
-                            $linea['puni'],
-                            $linea['cant'],
-                            $linea['total'],
-                            $linea['descuento_producto'],
-                            $linea['cargo_tarjeta_proveedor'],
-                            $linea['proveedor_bruto'],
-                            $linea['proveedor_descuento'],
-                            $linea['proveedor_neto'],
-                            $linea['admin_ganancia'],
-                            $linea['promotion'],
+                            $linea['provider']['nombre'] ?? null,
+                            $linea['provider']['tipo'] ?? 'normal',
+                            $linea['free_quantity'],
+                            $linea['quantity'],
+                            $linea['unit_price'],
+                            $linea['provider_price'],
+                            $linea['promotion_discount_amount'],
+                            $linea['manual_discount_amount'],
+                            $linea['credit_card_discount'],
+                            $linea['provider_discount_amount'],
+                            $linea['provider_discount_type'],
+                            $linea['provider_payment'],
+                            $linea['admin_earnings'],
                         ]);
                     }
                 }
 
                 fclose($handle);
-            };
-
-            return response()->stream($callback, 200, $headers);
+            }, $filename, [
+                'Content-Type' => 'text/csv',
+            ]);
         }
 
         return response()->json([
             'from_date' => $inicioString,
             'to_date' => $finString,
-            'summary' => $summaryPayload,
-            'ventas' => $mapped,
-            'basics' => $basics,
-            'payment_summary' => $paymentSummary,
-            'provider_discounts' => $providerDiscounts,
-            'top_products' => $topProducts,
+            'summary' => [
+                'ventas_total' => $summary['ventas_total'],
+                'total_totalventa' => $summary['total_totalventa'],
+                'total_recibido' => $summary['total_recibido'],
+                'total_cambio' => $summary['total_cambio'],
+                'metodos' => $summary['metodos']->toArray(),
+            ],
+            'ventas' => $ventasPayload->values()->toArray(),
         ]);
     }
+
 
     protected function classifyMetodoChannel(?string $metodo): string
     {
@@ -619,6 +363,132 @@ class ReportController extends Controller
                 'egresos_total' => round($egresosTotal, 2),
                 'saldo' => $saldo,
             ],
+        ]);
+    }
+
+    public function flujoCaja(Request $request)
+    {
+        $fechaInicio = $request->input('from_date');
+        $fechaFin = $request->input('to_date');
+
+        if (!$fechaInicio) {
+            return response()->json(['message' => 'Debe proporcionar al menos from_date.'], 422);
+        }
+
+        try {
+            $inicioCarbon = $this->parseDateInput($fechaInicio);
+            $finCarbon = $fechaFin ? $this->parseDateInput($fechaFin) : $inicioCarbon;
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Formato de fecha inválido.'], 422);
+        }
+
+        if ($inicioCarbon->gt($finCarbon)) {
+            return response()->json(['message' => 'from_date no puede ser mayor a to_date.'], 422);
+        }
+
+        $inicioIso = $inicioCarbon->toDateString();
+        $finIso = $finCarbon->toDateString();
+
+        $rows = DailyCashSummary::query()
+            ->whereBetween('fecha', [$inicioIso, $finIso])
+            ->orderBy('fecha')
+            ->get();
+
+        $items = $rows->map(function (DailyCashSummary $summary) {
+            $fecha = $summary->fecha instanceof Carbon
+                ? $summary->fecha->toDateString()
+                : Carbon::parse($summary->fecha)->toDateString();
+
+            $saldoInicial = (float) ($summary->saldo_inicial ?? 0);
+            $efectivo = (float) ($summary->efectivo ?? 0);
+            $transferencia = (float) ($summary->transferencia ?? 0);
+            $tarjeta = (float) ($summary->tarjeta ?? 0);
+            $egresos = (float) ($summary->egresos ?? 0);
+            $saldoCierre = (float) ($summary->saldo_cierre ?? 0);
+            $ingresosTotal = round($efectivo + $transferencia + $tarjeta, 2);
+
+            return [
+                'fecha' => $fecha,
+                'saldo_inicial' => round($saldoInicial, 2),
+                'efectivo' => round($efectivo, 2),
+                'transferencia' => round($transferencia, 2),
+                'tarjeta' => round($tarjeta, 2),
+                'ingresos_total' => $ingresosTotal,
+                'egresos' => round($egresos, 2),
+                'saldo_cierre' => round($saldoCierre, 2),
+            ];
+        });
+
+        $resumen = [
+            'dias' => $items->count(),
+            'saldo_inicial' => round($items->sum('saldo_inicial'), 2),
+            'efectivo' => round($items->sum('efectivo'), 2),
+            'transferencia' => round($items->sum('transferencia'), 2),
+            'tarjeta' => round($items->sum('tarjeta'), 2),
+            'ingresos_total' => round($items->sum('ingresos_total'), 2),
+            'egresos' => round($items->sum('egresos'), 2),
+            'saldo_cierre' => round($items->sum('saldo_cierre'), 2),
+        ];
+
+        if ($request->boolean('download')) {
+            $filename = sprintf(
+                'reporte_flujo_caja_%s_%s.csv',
+                Str::of($inicioIso)->replace('-', ''),
+                Str::of($finIso)->replace('-', '')
+            );
+
+            return response()->streamDownload(function () use ($items, $resumen, $inicioIso, $finIso) {
+                $handle = fopen('php://output', 'w');
+
+                fputcsv($handle, ['Reporte flujo de caja']);
+                fputcsv($handle, ['Desde', $inicioIso, 'Hasta', $finIso]);
+                fputcsv($handle, []);
+                fputcsv($handle, ['Resumen']);
+                fputcsv($handle, ['Días', $resumen['dias']]);
+                fputcsv($handle, ['Saldo inicial', $resumen['saldo_inicial']]);
+                fputcsv($handle, ['Efectivo', $resumen['efectivo']]);
+                fputcsv($handle, ['Transferencia', $resumen['transferencia']]);
+                fputcsv($handle, ['Tarjeta', $resumen['tarjeta']]);
+                fputcsv($handle, ['Ingresos totales', $resumen['ingresos_total']]);
+                fputcsv($handle, ['Egresos', $resumen['egresos']]);
+                fputcsv($handle, ['Saldo cierre', $resumen['saldo_cierre']]);
+                fputcsv($handle, []);
+
+                fputcsv($handle, [
+                    'Fecha',
+                    'Saldo inicial',
+                    'Efectivo',
+                    'Transferencia',
+                    'Tarjeta',
+                    'Ingresos totales',
+                    'Egresos',
+                    'Saldo cierre',
+                ]);
+
+                foreach ($items as $item) {
+                    fputcsv($handle, [
+                        $item['fecha'],
+                        $item['saldo_inicial'],
+                        $item['efectivo'],
+                        $item['transferencia'],
+                        $item['tarjeta'],
+                        $item['ingresos_total'],
+                        $item['egresos'],
+                        $item['saldo_cierre'],
+                    ]);
+                }
+
+                fclose($handle);
+            }, $filename, [
+                'Content-Type' => 'text/csv',
+            ]);
+        }
+
+    return response()->json([
+            'from_date' => $inicioIso,
+            'to_date' => $finIso,
+            'resumen' => $resumen,
+            'items' => $items,
         ]);
     }
 
@@ -950,37 +820,37 @@ class ReportController extends Controller
                 'vd.id',
                 'vd.idventa',
                 'vd.fecha as linea_fecha',
-                'vd.idprod',
+                'vd.producto_id',
                 'vd.nombre as producto_nombre',
-                'vd.proveedor as proveedor_ident',
-                'vd.puni',
-                'vd.cant',
-                'vd.total as linea_total',
-                'vd.descuento_producto',
-                'vd.cargo_tarjeta_proveedor',
-                'vd.proveedor_bruto',
-                'vd.proveedor_neto',
-                'vd.proveedor_descuento as linea_proveedor_descuento',
-                'vd.admin_ganancia',
-                'vd.promotion',
+                'vd.proveedor_id',
+                'vd.unit_price',
+                'vd.quantity',
+                'vd.public_total',
+                'vd.manual_discount_amount',
+                'vd.credit_card_discount',
+                'vd.provider_percentage_discount',
+                'vd.consigna_discount',
+                'vd.provider_cost',
+                'vd.provider_payment',
+                'vd.venta_total as linea_venta_total',
+                'vd.promotion_discount_amount',
+                'vd.free_product',
                 'v.id as venta_id',
                 'v.fecha as venta_fecha',
-                'v.subtotal as venta_subtotal',
-                'v.tarjeta_cargo as venta_tarjeta_cargo',
                 'v.metodo as venta_metodo',
                 'v.vendedor as venta_vendedor',
                 'v.totalventa as venta_total',
-                'p.id as proveedor_id',
-                'p.ident as proveedor_ident_real',
+                'p.id as proveedor_pk',
+                'p.ident as proveedor_ident',
                 'p.nombre as proveedor_nombre',
                 'p.tipo as proveedor_tipo',
                 'p.porcentaje_comision as proveedor_porcentaje',
             ])
             ->leftJoin('ventas as v', 'v.idventa', '=', 'vd.idventa')
-            ->leftJoin('proveedores as p', 'p.ident', '=', 'vd.proveedor');
+            ->leftJoin('proveedores as p', 'p.ident', '=', 'vd.proveedor_id');
 
         if ($provider) {
-            $rows->where('vd.proveedor', '=', $provider->ident);
+            $rows->where('vd.proveedor_id', '=', $provider->ident);
         }
 
         $rows->whereBetween('vd.fecha', [$inicioIso, $finIso]);
@@ -988,54 +858,47 @@ class ReportController extends Controller
 
         $collection = collect($rows->get());
 
-        $generalDiscountTotal = 0.0;
-
         $grouped = $collection->groupBy(function ($row) {
-            return $row->proveedor_ident !== null ? (string) $row->proveedor_ident : 'sin_proveedor';
+            if ($row->proveedor_ident !== null) {
+                return (string) $row->proveedor_ident;
+            }
+            if ($row->proveedor_id !== null) {
+                return (string) $row->proveedor_id;
+            }
+            return 'sin_proveedor';
         });
-
-        $controller = $this;
 
         $providers = $grouped->map(function ($group) {
             $first = $group->first();
-            $proveedorId = $first->proveedor_id ? (int) $first->proveedor_id : null;
-            $proveedorIdent = $first->proveedor_ident !== null ? (string) $first->proveedor_ident : null;
+            $proveedorId = $first->proveedor_pk ? (int) $first->proveedor_pk : null;
+            $rawIdent = $first->proveedor_ident ?? $first->proveedor_id;
+            $proveedorIdent = $rawIdent !== null ? (string) $rawIdent : null;
             $proveedorNombre = $first->proveedor_nombre ?: ($proveedorIdent !== null ? "Proveedor {$proveedorIdent}" : 'Sin proveedor');
             $proveedorTipo = $first->proveedor_tipo ?: 'normal';
             $proveedorPorcentaje = $first->proveedor_porcentaje !== null ? (int) $first->proveedor_porcentaje : null;
 
             $details = $group->map(function ($row) use ($proveedorTipo) {
-                $lineGross = round((float) ($row->linea_total ?? 0), 2);
-                $ventaSubtotal = (float) ($row->venta_subtotal ?? 0);
-                $ratio = ($ventaSubtotal > 0 && $lineGross > 0) ? $lineGross / $ventaSubtotal : 0.0;
-
-                $lineProviderCharge = (float) ($row->cargo_tarjeta_proveedor ?? 0);
-                if ($lineProviderCharge === 0.0) {
-                    $providerChargeTotal = (float) ($row->venta_tarjeta_cargo ?? 0);
-                    if ($providerChargeTotal !== 0.0 && $ratio > 0) {
-                        $lineProviderCharge = round($providerChargeTotal * $ratio, 2);
-                    }
-                } else {
-                    $lineProviderCharge = round($lineProviderCharge, 2);
-                }
-
-                $providerBruto = round((float) ($row->proveedor_bruto ?? 0), 2);
-                $adminGanancia = round((float) ($row->admin_ganancia ?? 0), 2);
-                $providerPct = $row->proveedor_porcentaje !== null ? (float) $row->proveedor_porcentaje : null;
+                $lineGross = round((float) ($row->public_total ?? 0), 2);
+                $lineManualDiscount = round((float) ($row->manual_discount_amount ?? 0), 2);
+                $lineProviderCharge = round((float) ($row->credit_card_discount ?? 0), 2);
+                $lineProviderPct = round((float) ($row->provider_percentage_discount ?? 0), 2);
+                $lineConsigna = round((float) ($row->consigna_discount ?? 0), 2);
+                $lineProviderType = $row->proveedor_tipo ?: $proveedorTipo;
+                $lineProviderCost = round((float) ($row->provider_cost ?? 0), 2);
+                $lineQuantity = (int) ($row->quantity ?? 0);
+                $providerUnitCost = $lineQuantity > 0 ? round($lineProviderCost / $lineQuantity, 2) : null;
 
                 $providerTypeDiscount = 0.0;
-                if (in_array($proveedorTipo, ['consigna', 'porcentaje'], true)) {
-                    if ($providerBruto > 0 && $providerBruto <= $lineGross + 0.01) {
-                        $providerTypeDiscount = round(max(0, $lineGross - $providerBruto), 2);
-                    } elseif ($adminGanancia > 0) {
-                        $providerTypeDiscount = $adminGanancia;
-                    } elseif ($proveedorTipo === 'porcentaje' && $providerPct !== null) {
-                        $percent = max(0, min(100, $providerPct));
-                        $providerTypeDiscount = round($lineGross * ($percent / 100), 2);
-                    }
+                if ($lineProviderType === 'consigna') {
+                    $providerTypeDiscount = $lineConsigna;
+                } elseif ($lineProviderType === 'porcentaje') {
+                    $providerTypeDiscount = $lineProviderPct;
                 }
 
-                $expectedEarning = round($lineGross - $lineProviderCharge - $providerTypeDiscount, 2);
+                $realEarning = round($lineGross - $lineProviderCharge - $providerTypeDiscount - $lineManualDiscount, 2);
+                if ($realEarning < 0) {
+                    $realEarning = 0.0;
+                }
 
                 $fecha = $row->venta_fecha ?? $row->linea_fecha;
                 $fechaIso = $fecha ? Carbon::parse($fecha)->toDateString() : null;
@@ -1047,20 +910,24 @@ class ReportController extends Controller
                     'fecha' => $fechaIso,
                     'fecha_raw' => $fechaIso,
                     'fecha_iso' => $fechaIso,
-                    'producto_ident' => (string) $row->idprod,
+                    'producto_ident' => (string) ($row->producto_id ?? ''),
                     'producto_nombre' => $row->producto_nombre,
-                    'cantidad' => (int) ($row->cant ?? 0),
-                    'precio_unitario' => round((float) ($row->puni ?? 0), 2),
+                    'cantidad' => (int) ($row->quantity ?? 0),
+                    'precio_unitario' => round((float) ($row->unit_price ?? 0), 2),
                     'total' => $lineGross,
                     'card_fee' => $lineProviderCharge,
+                    'manual_discount' => $lineManualDiscount,
                     'provider_discount' => $providerTypeDiscount,
-                    'expected_earning' => $expectedEarning,
-                    'proveedor_tipo' => $proveedorTipo,
-                    'proveedor_porcentaje' => $providerPct,
+                    'real_earning' => $realEarning,
+                    'expected_earning' => $realEarning,
+                    'provider_price' => $providerUnitCost,
+                    'provider_cost_total' => $lineProviderCost,
+                    'proveedor_tipo' => $lineProviderType,
+                    'proveedor_porcentaje' => $row->proveedor_porcentaje,
                     'metodo' => $row->venta_metodo,
                     'vendedor' => $row->venta_vendedor,
-                    'venta_total' => round((float) ($row->venta_total ?? 0), 2),
-                    'promotion' => $row->promotion,
+                    'venta_total' => round((float) ($row->venta_total ?? $row->linea_venta_total ?? 0), 2),
+                    'promotion' => ($row->promotion_discount_amount ?? 0) > 0 ? 'promotion' : ($row->free_product ? 'gratis' : null),
                 ];
             })->values();
 
@@ -1072,8 +939,10 @@ class ReportController extends Controller
                 'proveedor_porcentaje' => $proveedorPorcentaje,
                 'total_vendido' => round($details->sum(fn ($item) => $item['total']), 2),
                 'card_fee_total' => round($details->sum(fn ($item) => $item['card_fee']), 2),
+                'manual_discount_total' => round($details->sum(fn ($item) => $item['manual_discount']), 2),
                 'tipo_descuento_total' => round($details->sum(fn ($item) => $item['provider_discount']), 2),
-                'expected_earning' => round($details->sum(fn ($item) => $item['expected_earning']), 2),
+                'real_earning' => round($details->sum(fn ($item) => $item['real_earning']), 2),
+                'expected_earning' => round($details->sum(fn ($item) => $item['real_earning']), 2),
                 'items' => $details,
             ];
         })->values();
@@ -1081,10 +950,12 @@ class ReportController extends Controller
         $totales = [
             'ventas_brutas' => round($providers->sum(fn($row) => $row['total_vendido']), 2),
             'descuentos' => round($providers->sum(fn($row) => $row['tipo_descuento_total']), 2),
+            'manual_descuentos' => round($providers->sum(fn($row) => $row['manual_discount_total']), 2),
             'cargos_tarjeta' => round($providers->sum(fn($row) => $row['card_fee_total']), 2),
-            'descuento_general' => $generalDiscountTotal,
-            'ganancias' => round($providers->sum(fn($row) => $row['expected_earning']), 2),
+            'descuento_general' => round($providers->sum(fn($row) => $row['manual_discount_total']), 2),
+            'ganancias' => round($providers->sum(fn($row) => $row['real_earning']), 2),
         ];
+        $generalDiscountTotal = $totales['manual_descuentos'];
 
         if ($request->boolean('download')) {
             $filename = sprintf(
@@ -1102,8 +973,9 @@ class ReportController extends Controller
                 fputcsv($handle, ['Resumen']);
                 fputcsv($handle, ['Ventas brutas', $totales['ventas_brutas']]);
                 fputcsv($handle, ['Descuento por tipo (consigna/porcentaje)', $totales['descuentos']]);
+                fputcsv($handle, ['Descuento manual', $totales['manual_descuentos']]);
                 fputcsv($handle, ['Cargos por tarjeta', $totales['cargos_tarjeta']]);
-                fputcsv($handle, ['Ganancia estimada', $totales['ganancias']]);
+                fputcsv($handle, ['Ganancia real', $totales['ganancias']]);
                 fputcsv($handle, []);
 
                 fputcsv($handle, [
@@ -1114,8 +986,9 @@ class ReportController extends Controller
                     'Porcentaje',
                     'Ventas brutas',
                     'Descuento por tipo',
+                    'Descuento manual',
                     'Cargos tarjeta',
-                    'Ganancia estimada',
+                    'Ganancia real',
                     'Items count',
                 ]);
 
@@ -1128,8 +1001,9 @@ class ReportController extends Controller
                         $prov['proveedor_porcentaje'],
                         $prov['total_vendido'],
                         $prov['tipo_descuento_total'],
+                        $prov['manual_discount_total'],
                         $prov['card_fee_total'],
-                        $prov['expected_earning'],
+                        $prov['real_earning'],
                         count($prov['items']),
                     ]);
                 }
@@ -1149,8 +1023,9 @@ class ReportController extends Controller
                     'Precio unitario',
                     'Total vendido',
                     'Descuento por tipo',
+                    'Descuento manual',
                     'Cargo tarjeta',
-                    'Ganancia estimada',
+                    'Ganancia real',
                     'Metodo',
                     'Vendedor',
                     'Venta total',
@@ -1173,8 +1048,9 @@ class ReportController extends Controller
                             $item['precio_unitario'],
                             $item['total'],
                             $item['provider_discount'],
+                            $item['manual_discount'],
                             $item['card_fee'],
-                            $item['expected_earning'],
+                            $item['real_earning'],
                             $item['metodo'],
                             $item['vendedor'],
                             $item['venta_total'],
@@ -1196,6 +1072,7 @@ class ReportController extends Controller
             'proveedores' => $providers,
             'descuento_general_total' => $generalDiscountTotal,
             'cargos_tarjeta_total' => $totales['cargos_tarjeta'],
+            'manual_descuentos_total' => $generalDiscountTotal,
             'provider' => $provider ? [
                 'id' => $provider->id,
                 'ident' => $provider->ident,
