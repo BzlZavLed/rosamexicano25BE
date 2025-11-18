@@ -29,11 +29,7 @@ const RestockAlertsWidget = defineAsyncComponent(() => import('../components/wid
                 </Suspense>
 
                 <Suspense>
-                    <MonthlyCobrosWidget
-                        detailsRoute="/admin/cobros"
-                        currency="MXN"
-                        locale="es-MX"
-                    />
+                    <MonthlyCobrosWidget detailsRoute="/admin/cobros" currency="MXN" locale="es-MX" />
                     <template #fallback>
                         <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
                     </template>
@@ -45,19 +41,19 @@ const RestockAlertsWidget = defineAsyncComponent(() => import('../components/wid
                         <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
                     </template>
                 </Suspense>
+
+                <Suspense>
+                    <TopProductsWidget />
+                    <template #fallback>
+                        <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
+                    </template>
+                </Suspense>
                 <Suspense>
                     <RestockAlertsWidget />
                     <template #fallback>
                         <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
                     </template>
                 </Suspense>
-                <Suspense>
-                    <TopProductsWidget />
-                    <template #fallback>
-                        <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
-                    </template>
-                </Suspense>          
-
                 <!-- Future widgets go here -->
             </div>
         </div>

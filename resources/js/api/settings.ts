@@ -1,10 +1,13 @@
 import http from './http';
+import type { RestockHorizon } from './reports';
 
 export type SettingsResponse = {
     restock: {
-        available: Array<'day' | 'week' | 'month'>;
-        horizon: Array<'day' | 'week' | 'month'>;
+        available: Array<RestockHorizon>;
+        horizon: Array<RestockHorizon>;
         last_run?: string | null;
+        include_zero?: boolean;
+        min_days?: number;
     };
     card_charge_percent: number;
     last_closing_balance: number | null;
@@ -16,15 +19,17 @@ export async function getSystemSettings() {
 }
 
 export async function updateSystemSettings(payload: {
-    horizon?: Array<'day' | 'week' | 'month'>;
+    horizon?: Array<RestockHorizon>;
     card_charge_percent?: number;
+    restock_include_zero?: boolean;
+    restock_min_days?: number;
 }) {
     const { data } = await http.post<SettingsResponse>('/settings/general', payload);
     return data;
 }
 
-export async function runRestockForecastManual(horizon: Array<'day' | 'week' | 'month'>) {
-    const { data } = await http.post<{ message: string; horizon: Array<'day' | 'week' | 'month'> }>(
+export async function runRestockForecastManual(horizon: Array<RestockHorizon>) {
+    const { data } = await http.post<{ message: string; horizon: Array<RestockHorizon> }>(
         '/settings/general/run-restock',
         { horizon }
     );

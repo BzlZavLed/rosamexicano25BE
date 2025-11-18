@@ -120,13 +120,13 @@ SUPERADMIN_PASSWORD=strong-password
 
 ### Restock forecasts
 
-Generate the restock suggestions table (per proveedor/producto) by running the artisan command once a day. You can generate multiple horizons in one call (next day/week/month):
+Generate the restock suggestions table (per proveedor/producto) by running the artisan command once a day. The model forecasts demand for the next 2, 4, and 6 weeks (default horizon is 2 weeks) and ensures the global “mínimo de días de inventario” configured in Ajustes:
 
 ```bash
-php artisan restock:forecast --horizon=day,week,month
+php artisan restock:forecast --horizon=2w,4w,6w
 ```
 
-Each horizon uses its own default lookback and lead time (day: 7-day lookback/1-day lead, week: 30/7, month: 60/30). You can override them globally via `--lookback=` / `--leadtime=` if needed. The dashboard widget and `/reports/restock-forecast` endpoint display the latest run for the selected horizon.
+All horizons use a 90-day lookback by default (override with `--lookback=` if desired). The command combines the selected horizon days with the configured minimum inventory days to determine suggested quantities. The dashboard widget and `/reports/restock-forecast` endpoint display the latest run for the selected horizon.
 
 Visit `/superadmin/login` to authenticate; upon success you’ll be redirected to `/superadmin/backups` where you can download the available SQL dumps or log out. Credentials are stored only in the session (no browser pop-up prompts).
 

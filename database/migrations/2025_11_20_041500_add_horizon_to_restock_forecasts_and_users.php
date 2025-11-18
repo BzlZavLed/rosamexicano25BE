@@ -17,7 +17,7 @@ return new class extends Migration {
 
         Schema::table('usuarios', function (Blueprint $table) {
             if (!Schema::hasColumn('usuarios', 'restock_horizon')) {
-                $table->string('restock_horizon', 16)->default('week');
+                $table->string('restock_horizon', 16)->default('2w');
             }
         });
     }

@@ -1,21 +1,24 @@
 <script setup lang="ts">
 import { computed, ref, watch, toRef } from 'vue'
-import type { RestockForecastItem } from '../../api/reports'
+import type { RestockForecastItem, RestockHorizon } from '../../api/reports'
 import { getRestockForecastReport, notifyRestockForecast } from '../../api/reports'
+import { getSystemSettings } from '../../api/settings'
+
+type Horizon = RestockHorizon
 
 const props = withDefaults(defineProps<{
     open: boolean
-    horizon: 'day' | 'week' | 'month'
+    horizon: Horizon
 }>(), {
-    horizon: 'week',
+    horizon: '2w',
 })
 const emit = defineEmits<{ (e: 'close'): void }>()
 const horizonRef = toRef(props, 'horizon')
 
-const horizonLabels: Record<'day' | 'week' | 'month', string> = {
-    day: 'Próximo día',
-    week: 'Próxima semana',
-    month: 'Próximo mes',
+const horizonLabels: Record<Horizon, string> = {
+    '2w': 'Próximas 2 semanas',
+    '4w': 'Próximas 4 semanas',
+    '6w': 'Próximas 6 semanas',
 }
 
 const loading = ref(false)
@@ -26,17 +29,23 @@ const items = ref<RestockForecastItem[]>([])
 const forecastDate = ref<string>('')
 const lookbackDays = ref<number>(0)
 const leadTimeDays = ref<number>(0)
+const minimumDays = ref<number | null>(null)
 const sendingAll = ref(false)
 const sendingProvider = ref<string | null>(null)
+const includeZeroSuggestions = ref(false)
+const settingsLoaded = ref(false)
 
-const filteredItems = computed(() => items.value.filter((item) => item.suggested_order_qty >= 0))
+const filteredItems = computed(() =>
+    items.value.filter((item) => (includeZeroSuggestions.value ? item.suggested_order_qty >= 0 : item.suggested_order_qty > 0))
+)
 const providerCount = computed(() => new Set(filteredItems.value.map((item) => item.provider_ident)).size)
 
 watch(
     () => props.open,
-    (open) => {
+    async (open) => {
         if (open) {
-            loadReport()
+            await ensureSettingsLoaded()
+            await loadReport()
         } else {
             fatalError.value = ''
             actionError.value = ''
@@ -47,12 +56,27 @@ watch(
 
 watch(
     horizonRef,
-    () => {
+    async () => {
         if (props.open) {
-            loadReport()
+            await ensureSettingsLoaded()
+            await loadReport()
         }
     }
 )
+
+async function ensureSettingsLoaded() {
+    if (settingsLoaded.value) {
+        return
+    }
+    try {
+        const data = await getSystemSettings()
+        includeZeroSuggestions.value = Boolean(data.restock.include_zero)
+    } catch (err) {
+        includeZeroSuggestions.value = false
+    } finally {
+        settingsLoaded.value = true
+    }
+}
 
 async function loadReport() {
     loading.value = true
@@ -65,6 +89,7 @@ async function loadReport() {
         forecastDate.value = data.forecast_date
         lookbackDays.value = data.lookback_days
         leadTimeDays.value = data.lead_time_days
+        minimumDays.value = data.minimum_inventory_days ?? null
     } catch (err: any) {
         fatalError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el pronóstico.'
         items.value = []
@@ -116,7 +141,8 @@ async function notifyProvider(ident: string) {
                             <p class="text-xs uppercase tracking-wide text-gray-500">Pronóstico de restock</p>
                             <h2 class="text-xl font-semibold text-gray-900">{{ horizonLabels[horizonRef] }}</h2>
                             <p class="text-xs text-gray-500">
-                                Pronosticado el {{ forecastDate || '—' }} · Ventas últimas {{ lookbackDays }} días · Tiempo de entrega estimado {{ leadTimeDays }} días
+                                Pronosticado el {{ forecastDate || '—' }} · Ventas últimas {{ lookbackDays }} días · Horizonte {{ leadTimeDays }} días · Inventario mínimo {{
+                                    minimumDays ?? '—' }} días
                             </p>
                         </div>
                         <div class="flex items-center gap-2 text-xs">
@@ -136,7 +162,9 @@ async function notifyProvider(ident: string) {
                         <div v-if="loading" class="text-gray-500">Cargando pronóstico…</div>
                         <div v-else-if="fatalError" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{{ fatalError }}</div>
                         <div v-else>
-                            <p v-if="filteredItems.length === 0" class="text-gray-500">No hay productos con sugerencia de resurtido mayor a cero.</p>
+                            <p v-if="filteredItems.length === 0" class="text-gray-500">
+                                {{ includeZeroSuggestions ? 'No hay productos registrados para este pronóstico.' : 'No hay productos con sugerencia de resurtido mayor a cero.' }}
+                            </p>
                             <div v-else class="overflow-x-auto">
                                 <table class="min-w-full divide-y divide-gray-200 text-left text-xs">
                                     <thead class="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">

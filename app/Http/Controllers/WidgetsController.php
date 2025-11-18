@@ -8,12 +8,14 @@ use App\Models\VentaDesg;
 use App\Models\Proveedor;
 use App\Models\ProviderRestockForecast;
 use App\Models\Usuario;
+use App\Support\SystemSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class WidgetsController extends Controller
 {
+    private const RESTOCK_HORIZONS = ['2w', '4w', '6w'];
     public function cashierSummary(Request $request)
     {
         $fecha = $request->input('fecha');
@@ -115,23 +117,49 @@ class WidgetsController extends Controller
             ], 404);
         }
 
-        $items = ProviderRestockForecast::where('forecast_date', $forecastDate)
+        $rows = ProviderRestockForecast::where('forecast_date', $forecastDate)
             ->where('horizon', $horizon)
             ->orderByDesc(DB::raw('suggested_order_qty * GREATEST(avg_daily_sales, 1)'))
             ->limit($limit)
-            ->get()
-            ->map(function (ProviderRestockForecast $row) {
-                return [
-                    'provider_ident' => $row->provider_ident,
-                    'provider_name' => $row->provider_name,
-                    'producto_ident' => $row->producto_ident,
-                    'producto_nombre' => $row->producto_nombre,
-                    'inventory_on_hand' => (int) $row->inventory_on_hand,
-                    'avg_daily_sales' => (float) $row->avg_daily_sales,
-                    'suggested_order_qty' => (int) $row->suggested_order_qty,
-                    'days_of_cover' => $row->days_of_cover !== null ? (float) $row->days_of_cover : null,
-                ];
-            });
+            ->get();
+
+        $productIdents = $rows->pluck('producto_ident')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $inventoryMap = $productIdents->isEmpty()
+            ? collect()
+            : DB::table('inventario as inv')
+                ->select(['inv.ident', 'inv.existencia'])
+                ->whereIn('inv.ident', $productIdents)
+                ->get()
+                ->keyBy(fn ($row) => (string) $row->ident);
+
+        $freshAverages = $this->computeFreshAverageSales($rows);
+        $minimumDays = (int) SystemSettings::get('restock_min_days', 14);
+
+        $items = $rows->map(function (ProviderRestockForecast $row) use ($inventoryMap, $freshAverages, $minimumDays) {
+            $currentInventory = $inventoryMap->get($row->producto_ident);
+            $inventoryOnHand = $currentInventory ? (int) $currentInventory->existencia : (int) $row->inventory_on_hand;
+            $avgKey = $this->avgKey($row->provider_ident, $row->producto_ident, (int) $row->lookback_days);
+            $avgDaily = $freshAverages[$avgKey] ?? (float) $row->avg_daily_sales;
+            $daysOfCover = $avgDaily > 0 ? round($inventoryOnHand / max($avgDaily, 0.0001), 2) : null;
+            $requiredDays = max(1, (int) $row->lead_time_days) + $minimumDays;
+            $requiredUnits = $avgDaily * $requiredDays;
+            $suggested = (int) max(0, ceil($requiredUnits - $inventoryOnHand));
+
+            return [
+                'provider_ident' => $row->provider_ident,
+                'provider_name' => $row->provider_name,
+                'producto_ident' => $row->producto_ident,
+                'producto_nombre' => $row->producto_nombre,
+                'inventory_on_hand' => $inventoryOnHand,
+                'avg_daily_sales' => $avgDaily,
+                'suggested_order_qty' => $suggested,
+                'days_of_cover' => $daysOfCover,
+            ];
+        });
 
         return response()->json([
             'forecast_date' => $forecastDate,
@@ -140,21 +168,88 @@ class WidgetsController extends Controller
         ]);
     }
 
-    private function resolveRestockHorizon(Request $request, string $default = 'week'): string
+    private function resolveRestockHorizon(Request $request, string $default = '2w'): string
     {
-        $input = strtolower((string) $request->input('horizon', ''));
-        if (in_array($input, ['day', 'week', 'month'], true)) {
+        $input = $this->normalizeRestockHorizon($request->input('horizon'));
+        if ($input) {
             return $input;
         }
 
         $user = $request->user();
         if ($user instanceof Usuario) {
-            $pref = strtolower((string) ($user->restock_horizon ?? ''));
-            if (in_array($pref, ['day', 'week', 'month'], true)) {
+            $pref = $this->normalizeRestockHorizon($user->restock_horizon ?? null);
+            if ($pref) {
                 return $pref;
             }
         }
 
         return $default;
+    }
+
+    private function normalizeRestockHorizon($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $value = strtolower(trim((string) $value));
+        $map = [
+            'day' => '2w',
+            'week' => '4w',
+            'month' => '6w',
+            '2w' => '2w',
+            '4w' => '4w',
+            '6w' => '6w',
+            '2weeks' => '2w',
+            '4weeks' => '4w',
+            '6weeks' => '6w',
+        ];
+
+        return $map[$value] ?? (in_array($value, self::RESTOCK_HORIZONS, true) ? $value : null);
+    }
+
+    private function computeFreshAverageSales($rows): array
+    {
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $today = Carbon::today();
+        $todayString = $today->toDateString();
+        $result = [];
+
+        $grouped = $rows->groupBy(fn (ProviderRestockForecast $row) => (int) $row->lookback_days);
+        foreach ($grouped as $lookback => $group) {
+            $days = max(1, (int) $lookback);
+            $startDate = $today->copy()->subDays($days - 1)->toDateString();
+
+            $productIds = $group->pluck('producto_ident')->filter()->unique()->values();
+            if ($productIds->isEmpty()) {
+                continue;
+            }
+
+            $sales = DB::table('ventadesg as vd')
+                ->select([
+                    'vd.proveedor_id',
+                    'vd.producto_id',
+                    DB::raw('SUM(vd.quantity) as unidades'),
+                ])
+                ->whereBetween('vd.fecha', [$startDate, $todayString])
+                ->whereIn('vd.producto_id', $productIds)
+                ->groupBy('vd.proveedor_id', 'vd.producto_id')
+                ->get();
+
+            foreach ($sales as $sale) {
+                $key = $this->avgKey((string) $sale->proveedor_id, (string) $sale->producto_id, $days);
+                $result[$key] = round((float) $sale->unidades / $days, 4);
+            }
+        }
+
+        return $result;
+    }
+
+    private function avgKey(?string $providerIdent, ?string $productIdent, int $days): string
+    {
+        return (string) $providerIdent . ':' . (string) $productIdent . ':' . max(1, $days);
     }
 }

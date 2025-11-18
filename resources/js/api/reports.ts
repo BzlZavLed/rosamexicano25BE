@@ -1,5 +1,7 @@
 import http from './http';
 
+export type RestockHorizon = '2w' | '4w' | '6w';
+
 export type CajaReportLine = {
     producto_id: number;
     nombre: string;
@@ -124,9 +126,10 @@ export interface RestockForecastItem {
 
 export interface RestockForecastResponse {
     forecast_date: string;
-    horizon: 'day' | 'week' | 'month';
+    horizon: RestockHorizon;
     lookback_days: number;
     lead_time_days: number;
+    minimum_inventory_days?: number;
     summary: {
         total_items: number;
         total_suggested: number;
@@ -137,7 +140,7 @@ export interface RestockForecastResponse {
 
 export interface RestockNotifyResponse {
     forecast_date: string;
-    horizon: 'day' | 'week' | 'month';
+    horizon: RestockHorizon;
     sent: number;
     skipped: number;
     providers_notified: Array<{
@@ -212,7 +215,7 @@ export async function getFlujoCajaReport(params: { from_date: string; to_date?: 
     return data;
 }
 
-export async function getRestockForecastReport(params: { forecast_date?: string; provider?: string; horizon?: 'day' | 'week' | 'month' }) {
+export async function getRestockForecastReport(params: { forecast_date?: string; provider?: string; horizon?: RestockHorizon }) {
     const query: Record<string, string> = {};
     if (params.forecast_date) query.forecast_date = params.forecast_date;
     if (params.provider) query.provider = params.provider;
@@ -222,12 +225,12 @@ export async function getRestockForecastReport(params: { forecast_date?: string;
     return data;
 }
 
-export async function updateRestockPreference(horizon: 'day' | 'week' | 'month') {
+export async function updateRestockPreference(horizon: RestockHorizon) {
     const { data } = await http.post('/reports/restock-forecast/preference', { horizon });
-    return data as { horizon: 'day' | 'week' | 'month' };
+    return data as { horizon: RestockHorizon };
 }
 
-export async function notifyRestockForecast(params: { horizon: 'day' | 'week' | 'month'; providers?: string[] }) {
+export async function notifyRestockForecast(params: { horizon: RestockHorizon; providers?: string[] }) {
     const { data } = await http.post<RestockNotifyResponse>('/reports/restock-forecast/notify', params);
     return data;
 }

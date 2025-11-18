@@ -1,4 +1,5 @@
 import http from './http';
+import type { RestockHorizon } from './reports';
 
 export type MetodoResumen = {
     metodo: "efectivo" | "tarjeta" | "transferencia" | string; // keep string to allow future methods
@@ -46,7 +47,7 @@ export async function getTopProducts() {
 
 export interface RestockAlertsResponse {
     forecast_date: string;
-    horizon: 'day' | 'week' | 'month';
+    horizon: RestockHorizon;
     items: Array<{
         provider_ident: string;
         provider_name: string | null;
@@ -59,7 +60,7 @@ export interface RestockAlertsResponse {
     }>;
 }
 
-export async function getRestockAlerts(params: { horizon?: 'day' | 'week' | 'month'; limit?: number } = {}) {
+export async function getRestockAlerts(params: { horizon?: RestockHorizon; limit?: number } = {}) {
     const query: Record<string, string | number> = {};
     if (params.horizon) query.horizon = params.horizon;
     if (params.limit) query.limit = params.limit;

@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { getSystemSettings, updateSystemSettings, runRestockForecastManual } from '../../api/settings'
+import type { RestockHorizon } from '../../api/reports'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-const availableHorizons: Array<'day' | 'week' | 'month'> = ['day', 'week', 'month']
-const horizonLabels: Record<'day' | 'week' | 'month', string> = {
-    day: 'Próximo día',
-    week: 'Próxima semana',
-    month: 'Próximo mes',
+type Horizon = RestockHorizon
+
+const availableHorizons: Horizon[] = ['2w', '4w', '6w']
+const horizonLabels: Record<Horizon, string> = {
+    '2w': 'Próximas 2 semanas',
+    '4w': 'Próximas 4 semanas',
+    '6w': 'Próximas 6 semanas',
 }
 
-const selected = ref<Array<'day' | 'week' | 'month'>>(['week'])
+const selected = ref<Horizon[]>(['2w'])
 const cardPercent = ref(4.5)
+const minDays = ref(14)
 const loading = ref(false)
 const saving = ref(false)
 const running = ref(false)
@@ -21,6 +25,7 @@ const message = ref('')
 const error = ref('')
 const lastRun = ref<string | null>(null)
 const lastClosingBalance = ref<number | null>(null)
+const includeZero = ref(false)
 
 watch(
     () => props.open,
@@ -39,10 +44,14 @@ async function loadSettings() {
     error.value = ''
     try {
         const data = await getSystemSettings()
-        selected.value = data.restock.horizon
+        selected.value = (data.restock.horizon && data.restock.horizon.length
+            ? (data.restock.horizon as Horizon[])
+            : ['2w'])
         cardPercent.value = data.card_charge_percent ?? 4.5
         lastRun.value = data.restock.last_run ?? null
         lastClosingBalance.value = data.last_closing_balance ?? null
+        includeZero.value = Boolean(data.restock.include_zero)
+        minDays.value = data.restock.min_days ?? 14
     } catch (err: any) {
         error.value = err?.response?.data?.message || err?.message || 'No se pudo cargar la configuración.'
     } finally {
@@ -50,7 +59,7 @@ async function loadSettings() {
     }
 }
 
-function toggle(value: 'day' | 'week' | 'month') {
+function toggle(value: Horizon) {
     const set = new Set(selected.value)
     if (set.has(value)) {
         set.delete(value)
@@ -60,7 +69,7 @@ function toggle(value: 'day' | 'week' | 'month') {
     if (set.size === 0) {
         return
     }
-    selected.value = Array.from(set) as Array<'day' | 'week' | 'month'>
+    selected.value = Array.from(set) as Horizon[]
 }
 
 async function saveSettings() {
@@ -71,8 +80,12 @@ async function saveSettings() {
         const data = await updateSystemSettings({
             horizon: selected.value,
             card_charge_percent: cardPercent.value,
+            restock_include_zero: includeZero.value,
+            restock_min_days: minDays.value,
         })
-        selected.value = data.restock.horizon
+        selected.value = (data.restock.horizon && data.restock.horizon.length
+            ? (data.restock.horizon as Horizon[])
+            : ['2w'])
         cardPercent.value = data.card_charge_percent ?? 4.5
         message.value = 'Configuración guardada. Recargando…'
         setTimeout(() => window.location.reload(), 800)
@@ -129,6 +142,22 @@ async function runForecast() {
                                     Último saldo cierre: {{ new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(lastClosingBalance ?? 0) }}
                                 </span>
                             </p>
+                            <label class="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs text-gray-600">
+                                <input type="checkbox" class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                    v-model="includeZero" />
+                                <span>Mostrar y notificar productos con sugerencias iguales a 0 (>= 0).</span>
+                            </label>
+                            <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                                <div>
+                                    <span class="block font-semibold text-gray-700">Inventario mínimo (días)</span>
+                                    <input type="number" min="0" max="120"
+                                        class="mt-1 w-24 rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                        v-model.number="minDays" />
+                                </div>
+                                <p class="max-w-sm text-[11px] text-gray-500">
+                                    El modelo garantizará al menos este número de días de inventario adicional sobre el horizonte seleccionado.
+                                </p>
+                            </div>
                             <button type="button"
                                 class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
                                 :disabled="running || loading"

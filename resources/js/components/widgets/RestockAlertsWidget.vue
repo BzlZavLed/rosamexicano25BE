@@ -2,20 +2,21 @@
 import { computed, onMounted, ref } from 'vue'
 import { getRestockAlerts } from '../../api/widgets'
 import { updateRestockPreference } from '../../api/reports'
+import type { RestockHorizon } from '../../api/reports'
 import RestockForecastModal from '../modals/RestockForecastModal.vue'
 
-type Horizon = 'day' | 'week' | 'month'
+type Horizon = RestockHorizon
 
 const horizonOptions: Array<{ value: Horizon; label: string }> = [
-    { value: 'day', label: 'Próximo día' },
-    { value: 'week', label: 'Próxima semana' },
-    { value: 'month', label: 'Próximo mes' },
+    { value: '2w', label: 'Próximas 2 semanas' },
+    { value: '4w', label: 'Próximas 4 semanas' },
+    { value: '6w', label: 'Próximas 6 semanas' },
 ]
 
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const horizon = ref<Horizon>('week')
+const horizon = ref<Horizon>('2w')
 const items = ref<Awaited<ReturnType<typeof getRestockAlerts>>['items']>([])
 const forecastDate = ref<string>('')
 const showDetails = ref(false)
@@ -56,7 +57,7 @@ onMounted(() => {
 </script>
 
 <template>
-    <div class="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div class="sm:col-span-2 xl:col-span-2 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <div class="flex items-start justify-between gap-3">
             <div>
                 <p class="text-sm font-semibold text-gray-900">Alertas de restock</p>
@@ -101,12 +102,12 @@ onMounted(() => {
                             <p v-else class="text-rose-600">Sin ventas recientes</p>
                         </div>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[11px] text-gray-500">
-                        <span>Inventario: {{ item.inventory_on_hand }}</span>
-                        <span>Promedio diario: {{ item.avg_daily_sales.toFixed(2) }}</span>
-                    </div>
-                </li>
-            </ul>
+                <div class="mt-1 flex items-center justify-between text-[11px] text-gray-500">
+                    <span>Inventario: {{ item.inventory_on_hand }}</span>
+                    <span>Promedio diario: {{ item.avg_daily_sales.toFixed(2) }}</span>
+                </div>
+            </li>
+        </ul>
             <button type="button" class="mt-3 text-xs font-semibold text-emerald-700 hover:text-emerald-800" @click="showDetails = true">
                 Ver todo el pronóstico →
             </button>

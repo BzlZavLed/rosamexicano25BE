@@ -32,6 +32,7 @@ import {
     type FlujoCajaRow,
     type RestockForecastResponse,
     type RestockForecastItem,
+    type RestockHorizon,
 } from '../api/reports';
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -147,10 +148,11 @@ const options: Array<{ value: ReportType; label: string }> = [
     { value: 'mensualidad', label: 'Mensualidad' },
 ];
 
-const restockHorizonOptions: Array<{ value: 'day' | 'week' | 'month'; label: string }> = [
-    { value: 'day', label: 'Próximo día' },
-    { value: 'week', label: 'Próxima semana' },
-    { value: 'month', label: 'Próximo mes' },
+type RestockHorizonOption = RestockHorizon;
+const restockHorizonOptions: Array<{ value: RestockHorizonOption; label: string }> = [
+    { value: '2w', label: 'Próximas 2 semanas' },
+    { value: '4w', label: 'Próximas 4 semanas' },
+    { value: '6w', label: 'Próximas 6 semanas' },
 ];
 
 type InventarioSort = 'producto' | 'existencia' | 'proveedor';
@@ -234,7 +236,7 @@ const restockData = ref<RestockForecastResponse | null>(null);
 const restockSearch = ref('');
 const restockSort = ref<'provider' | 'producto' | 'avg' | 'stock' | 'suggested' | 'cover'>('suggested');
 const restockSortDirection = ref<SortDirection>('desc');
-const restockHorizon = ref<'day' | 'week' | 'month'>('week');
+const restockHorizon = ref<RestockHorizonOption>('2w');
 const restockSavingPref = ref(false);
 
 const mensualidadMonth = ref('');
@@ -591,7 +593,7 @@ async function fetchRestockForecast() {
     }
 }
 
-async function saveRestockPreference(horizon: 'day' | 'week' | 'month') {
+async function saveRestockPreference(horizon: RestockHorizonOption) {
     restockSavingPref.value = true;
     try {
         await updateRestockPreference(horizon);
@@ -602,7 +604,7 @@ async function saveRestockPreference(horizon: 'day' | 'week' | 'month') {
     }
 }
 
-async function changeRestockHorizon(value: 'day' | 'week' | 'month') {
+async function changeRestockHorizon(value: RestockHorizonOption) {
     restockHorizon.value = value;
     await saveRestockPreference(value);
     await fetchRestockForecast();
@@ -2434,7 +2436,7 @@ onBeforeUnmount(() => {
                                     <select :value="restockHorizon"
                                         class="rounded border border-gray-300 px-2 py-1 text-xs focus:border-gray-900 focus:ring-gray-900"
                                         :disabled="restockSavingPref"
-                                        @change="changeRestockHorizon(($event.target as HTMLSelectElement).value as 'day' | 'week' | 'month')">
+                                        @change="changeRestockHorizon(($event.target as HTMLSelectElement).value as RestockHorizonOption)">
                                         <option v-for="opt in restockHorizonOptions" :key="opt.value" :value="opt.value">
                                             {{ opt.label }}
                                         </option>
@@ -2456,7 +2458,7 @@ onBeforeUnmount(() => {
                                             <span class="font-semibold text-gray-900">{{ restockData.forecast_date }}</span>
                                         </div>
                                         <div v-if="restockSummary"
-                                            class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 md:grid-cols-4 lg:grid-cols-5">
+                                            class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 md:grid-cols-5">
                                             <div>
                                                 <span class="block font-semibold text-gray-900">{{ restockSummary.total_items }}</span>
                                                 <span>Productos analizados</span>
@@ -2467,7 +2469,11 @@ onBeforeUnmount(() => {
                                             </div>
                                             <div>
                                                 <span class="block font-semibold text-gray-900">{{ restockData.lead_time_days }} días</span>
-                                                <span>Lead time</span>
+                                                <span>Horizonte</span>
+                                            </div>
+                                            <div>
+                                                <span class="block font-semibold text-gray-900">{{ restockData.minimum_inventory_days ?? '—' }} días</span>
+                                                <span>Inventario mínimo</span>
                                             </div>
                                             <div>
                                                 <span class="block font-semibold text-gray-900">{{ restockSummary.total_suggested }}</span>
@@ -3343,7 +3349,10 @@ onBeforeUnmount(() => {
                                                     {{ item.existencia }}
                                                 </td>
                                                 <td class="px-3 py-2 text-right">
-                                                    {{ formatCurrency(item.costo_inventario) }}
+                                                    <span v-if="item.costo_inventario !== null">
+                                                        {{ formatCurrency(item.costo_inventario) }}
+                                                    </span>
+                                                    <span v-else>—</span>
                                                 </td>
                                                 <td class="px-3 py-2">
                                                     <template v-if="item.proveedor">

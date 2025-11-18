@@ -14,6 +14,7 @@ use App\Models\DailyCashSummary;
 use App\Models\ProviderRestockForecast;
 use App\Models\Usuario;
 use App\Mail\RestockForecastMail;
+use App\Support\SystemSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -24,6 +25,7 @@ use Carbon\CarbonPeriod;
 
 class ReportController extends Controller
 {
+    private const RESTOCK_HORIZONS = ['2w', '4w', '6w'];
     protected function currentProvider(Request $request): ?Proveedor
     {
         $user = $request->user();
@@ -532,6 +534,19 @@ class ReportController extends Controller
             ->orderBy('provider_ident')
             ->get();
 
+        $productIdents = $rows->pluck('producto_ident')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $inventoryMap = $productIdents->isEmpty()
+            ? collect()
+            : DB::table('inventario as inv')
+                ->select(['inv.ident', 'inv.existencia'])
+                ->whereIn('inv.ident', $productIdents)
+                ->get()
+                ->keyBy(fn ($row) => (string) $row->ident);
+
         $providerIdents = $rows->pluck('provider_ident')
             ->filter(fn ($ident) => $ident !== null && $ident !== '')
             ->unique()
@@ -541,8 +556,20 @@ class ReportController extends Controller
             ? collect()
             : Proveedor::whereIn('ident', $providerIdents)->get()->keyBy('ident');
 
-        $items = $rows->map(function (ProviderRestockForecast $row) use ($providerMap) {
+        $freshAverages = $this->computeFreshAverageSales($rows);
+        $minimumDays = (int) SystemSettings::get('restock_min_days', 14);
+        $leadTimeDays = $rows->first()?->lead_time_days ?? 0;
+
+        $items = $rows->map(function (ProviderRestockForecast $row) use ($providerMap, $inventoryMap, $freshAverages, $minimumDays) {
             $provider = $row->provider_ident ? $providerMap->get($row->provider_ident) : null;
+            $currentInventory = $inventoryMap->get($row->producto_ident);
+            $inventoryOnHand = $currentInventory ? (int) $currentInventory->existencia : (int) $row->inventory_on_hand;
+            $avgKey = $this->avgKey($row->provider_ident, $row->producto_ident, (int) $row->lookback_days);
+            $avgDaily = $freshAverages[$avgKey] ?? (float) $row->avg_daily_sales;
+            $daysOfCover = $avgDaily > 0 ? round($inventoryOnHand / max($avgDaily, 0.0001), 2) : null;
+            $requiredDays = max(1, (int) $row->lead_time_days) + $minimumDays;
+            $requiredUnits = $avgDaily * $requiredDays;
+            $suggested = (int) max(0, ceil($requiredUnits - $inventoryOnHand));
 
             return [
                 'provider_ident' => $row->provider_ident,
@@ -550,11 +577,11 @@ class ReportController extends Controller
                 'provider_email' => $provider?->email,
                 'producto_ident' => $row->producto_ident,
                 'producto_nombre' => $row->producto_nombre,
-                'avg_daily_sales' => (float) $row->avg_daily_sales,
-                'inventory_on_hand' => (int) $row->inventory_on_hand,
+                'avg_daily_sales' => $avgDaily,
+                'inventory_on_hand' => $inventoryOnHand,
                 'projected_demand' => (float) $row->projected_demand,
-                'suggested_order_qty' => (int) $row->suggested_order_qty,
-                'days_of_cover' => $row->days_of_cover !== null ? (float) $row->days_of_cover : null,
+                'suggested_order_qty' => $suggested,
+                'days_of_cover' => $daysOfCover,
                 'lead_time_days' => (int) $row->lead_time_days,
                 'lookback_days' => (int) $row->lookback_days,
             ];
@@ -569,12 +596,14 @@ class ReportController extends Controller
         $first = $items->first();
         $lookback = $first['lookback_days'] ?? 30;
         $leadTime = $first['lead_time_days'] ?? 7;
+        $minimumDays = (int) SystemSettings::get('restock_min_days', 14);
 
         return response()->json([
             'forecast_date' => $forecastDate,
             'horizon' => $horizon,
             'lookback_days' => $lookback,
             'lead_time_days' => $leadTime,
+            'minimum_inventory_days' => $minimumDays,
             'summary' => $summary,
             'items' => $items,
         ]);
@@ -587,9 +616,9 @@ class ReportController extends Controller
             return response()->json(['message' => 'Solo usuarios administradores pueden actualizar esta preferencia.'], 403);
         }
 
-        $horizon = strtolower((string) $request->input('horizon', ''));
-        if (!in_array($horizon, ['day', 'week', 'month'], true)) {
-            return response()->json(['message' => 'Horizonte inválido. Usa day, week o month.'], 422);
+        $horizon = $this->normalizeRestockHorizon($request->input('horizon'));
+        if (!$horizon) {
+            return response()->json(['message' => 'Horizonte inválido. Usa 2w, 4w o 6w.'], 422);
         }
 
         $user->restock_horizon = $horizon;
@@ -608,12 +637,15 @@ class ReportController extends Controller
         }
 
         $data = $request->validate([
-            'horizon' => ['required', 'in:day,week,month'],
+            'horizon' => ['required', 'string'],
             'providers' => ['sometimes', 'array', 'min:1'],
             'providers.*' => ['string'],
         ]);
 
-        $horizon = $data['horizon'];
+        $horizon = $this->normalizeRestockHorizon($data['horizon']);
+        if (!$horizon) {
+            return response()->json(['message' => 'Horizonte inválido. Usa 2w, 4w o 6w.'], 422);
+        }
         $forecastDate = ProviderRestockForecast::where('horizon', $horizon)->max('forecast_date');
 
         if (!$forecastDate) {
@@ -622,10 +654,13 @@ class ReportController extends Controller
             ], 404);
         }
 
+        $includeZero = filter_var(SystemSettings::get('restock_include_zero', '0'), FILTER_VALIDATE_BOOL);
+        $operator = $includeZero ? '>=' : '>';
+
         $query = ProviderRestockForecast::query()
             ->where('horizon', $horizon)
             ->whereDate('forecast_date', $forecastDate)
-            ->where('suggested_order_qty', '>=', 0);
+            ->where('suggested_order_qty', $operator, 0);
 
         if (!empty($data['providers'])) {
             $query->whereIn('provider_ident', $data['providers']);
@@ -635,7 +670,7 @@ class ReportController extends Controller
 
         if ($rows->isEmpty()) {
             return response()->json([
-                'message' => 'No hay productos con sugerencia de compra mayor a cero.',
+                'message' => 'No hay productos con sugerencias para notificar.',
             ], 422);
         }
 
@@ -700,17 +735,17 @@ class ReportController extends Controller
         ]);
     }
 
-    private function resolveRestockHorizon(Request $request, string $default = 'week'): string
+    private function resolveRestockHorizon(Request $request, string $default = '2w'): string
     {
-        $input = strtolower((string) $request->input('horizon', ''));
-        if (in_array($input, ['day', 'week', 'month'], true)) {
+        $input = $this->normalizeRestockHorizon($request->input('horizon'));
+        if ($input) {
             return $input;
         }
 
         $user = $request->user();
         if ($user instanceof Usuario) {
-            $pref = strtolower((string) ($user->restock_horizon ?? ''));
-            if (in_array($pref, ['day', 'week', 'month'], true)) {
+            $pref = $this->normalizeRestockHorizon($user->restock_horizon ?? null);
+            if ($pref) {
                 return $pref;
             }
         }
@@ -721,10 +756,33 @@ class ReportController extends Controller
     private function humanRestockHorizon(string $horizon): string
     {
         return match ($horizon) {
-            'day' => 'próximo día',
-            'month' => 'próximo mes',
-            default => 'próxima semana',
+            '2w' => 'próximas 2 semanas',
+            '4w' => 'próximas 4 semanas',
+            '6w' => 'próximas 6 semanas',
+            default => 'próximas 2 semanas',
         };
+    }
+
+    private function normalizeRestockHorizon($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $value = strtolower(trim((string) $value));
+        $map = [
+            'day' => '2w',
+            'week' => '4w',
+            'month' => '6w',
+            '2w' => '2w',
+            '4w' => '4w',
+            '6w' => '6w',
+            '2weeks' => '2w',
+            '4weeks' => '4w',
+            '6weeks' => '6w',
+        ];
+
+        return $map[$value] ?? (in_array($value, self::RESTOCK_HORIZONS, true) ? $value : null);
     }
 
     public function mensualidad(Request $request)
@@ -1619,6 +1677,52 @@ class ReportController extends Controller
             'entradas' => $mapped,
         ]);
     }
+
+    private function computeFreshAverageSales($rows): array
+    {
+        if ($rows->isEmpty()) {
+            return [];
+        }
+
+        $today = Carbon::today();
+        $todayString = $today->toDateString();
+        $result = [];
+
+        $grouped = $rows->groupBy(fn (ProviderRestockForecast $row) => (int) $row->lookback_days);
+        foreach ($grouped as $lookback => $group) {
+            $days = max(1, (int) $lookback);
+            $startDate = $today->copy()->subDays($days - 1)->toDateString();
+
+            $productIds = $group->pluck('producto_ident')->filter()->unique()->values();
+            if ($productIds->isEmpty()) {
+                continue;
+            }
+
+            $sales = DB::table('ventadesg as vd')
+                ->select([
+                    'vd.proveedor_id',
+                    'vd.producto_id',
+                    DB::raw('SUM(vd.quantity) as unidades'),
+                ])
+                ->whereBetween('vd.fecha', [$startDate, $todayString])
+                ->whereIn('vd.producto_id', $productIds)
+                ->groupBy('vd.proveedor_id', 'vd.producto_id')
+                ->get();
+
+            foreach ($sales as $sale) {
+                $key = $this->avgKey((string) $sale->proveedor_id, (string) $sale->producto_id, $days);
+                $result[$key] = round((float) $sale->unidades / $days, 4);
+            }
+        }
+
+        return $result;
+    }
+
+    private function avgKey(?string $providerIdent, ?string $productIdent, int $days): string
+    {
+        return (string) $providerIdent . ':' . (string) $productIdent . ':' . max(1, $days);
+    }
+
     private function parseDateInput(string $value): Carbon
     {
         $value = trim($value);
