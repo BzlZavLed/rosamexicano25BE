@@ -9,6 +9,8 @@ import {
     getCajaProveedoresReport,
     getEgresosCajaReport,
     getFlujoCajaReport,
+    getRestockForecastReport,
+    updateRestockPreference,
     getMensualidadReport,
     type CajaReportResponse,
     type CajaReportVenta,
@@ -28,6 +30,8 @@ import {
     type CajaProveedorItem,
     type FlujoCajaResponse,
     type FlujoCajaRow,
+    type RestockForecastResponse,
+    type RestockForecastItem,
 } from '../api/reports';
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -83,6 +87,7 @@ type ReportType =
     | 'caja-condensado'
     | 'caja-egresos'
     | 'flujo-caja'
+    | 'restock'
     | 'mensualidad';
 
 type MensualidadSortableColumn =
@@ -138,7 +143,14 @@ const options: Array<{ value: ReportType; label: string }> = [
     { value: 'caja-condensado', label: 'Caja condensado' },
     { value: 'caja-egresos', label: 'Egresos de caja' },
     { value: 'flujo-caja', label: 'Flujo de caja' },
+    { value: 'restock', label: 'Alertas de restock' },
     { value: 'mensualidad', label: 'Mensualidad' },
+];
+
+const restockHorizonOptions: Array<{ value: 'day' | 'week' | 'month'; label: string }> = [
+    { value: 'day', label: 'Próximo día' },
+    { value: 'week', label: 'Próxima semana' },
+    { value: 'month', label: 'Próximo mes' },
 ];
 
 type InventarioSort = 'producto' | 'existencia' | 'proveedor';
@@ -215,6 +227,15 @@ const flujoData = ref<FlujoCajaResponse | null>(null);
 const flujoSearch = ref('');
 const flujoSortColumn = ref<FlujoSortColumn>('fecha');
 const flujoSortDirection = ref<SortDirection>('asc');
+
+const restockLoading = ref(false);
+const restockError = ref('');
+const restockData = ref<RestockForecastResponse | null>(null);
+const restockSearch = ref('');
+const restockSort = ref<'provider' | 'producto' | 'avg' | 'stock' | 'suggested' | 'cover'>('suggested');
+const restockSortDirection = ref<SortDirection>('desc');
+const restockHorizon = ref<'day' | 'week' | 'month'>('week');
+const restockSavingPref = ref(false);
 
 const mensualidadMonth = ref('');
 const mensualidadStatus = ref<MensualidadStatusFilter>('todos');
@@ -551,6 +572,42 @@ async function downloadFlujoCajaReport() {
     }
 }
 
+async function fetchRestockForecast() {
+    if (selected.value !== 'restock') return;
+    restockError.value = '';
+
+    const forecastDate = rangeStart.value || undefined;
+
+    restockLoading.value = true;
+    try {
+        const response = await getRestockForecastReport({ forecast_date: forecastDate, horizon: restockHorizon.value });
+        restockData.value = response as RestockForecastResponse;
+        restockHorizon.value = response.horizon;
+    } catch (err: any) {
+        restockError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el pronóstico.';
+        restockData.value = null;
+    } finally {
+        restockLoading.value = false;
+    }
+}
+
+async function saveRestockPreference(horizon: 'day' | 'week' | 'month') {
+    restockSavingPref.value = true;
+    try {
+        await updateRestockPreference(horizon);
+    } catch (err) {
+        // ignore errors silently for now
+    } finally {
+        restockSavingPref.value = false;
+    }
+}
+
+async function changeRestockHorizon(value: 'day' | 'week' | 'month') {
+    restockHorizon.value = value;
+    await saveRestockPreference(value);
+    await fetchRestockForecast();
+}
+
 function normalizeMesCobro(value: string): string | null {
     if (!value) return null;
     const trimmed = value.trim();
@@ -835,6 +892,20 @@ function flujoSortIcon(column: FlujoSortColumn) {
     return flujoSortDirection.value === 'asc' ? '▲' : '▼';
 }
 
+function toggleRestockSort(column: 'provider' | 'producto' | 'avg' | 'stock' | 'suggested' | 'cover') {
+    if (restockSort.value === column) {
+        restockSortDirection.value = restockSortDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        restockSort.value = column;
+        restockSortDirection.value = column === 'provider' || column === 'producto' ? 'asc' : 'desc';
+    }
+}
+
+function restockSortIcon(column: 'provider' | 'producto' | 'avg' | 'stock' | 'suggested' | 'cover') {
+    if (restockSort.value !== column) return '';
+    return restockSortDirection.value === 'asc' ? '▲' : '▼';
+}
+
 function toggleCajaCondensadoSort(column: CajaCondensadoSortColumn) {
     if (cajaCondensadoSortColumn.value === column) {
         cajaCondensadoSortDirection.value =
@@ -1056,6 +1127,54 @@ const filteredFlujoItems = computed(() => {
         return va > vb ? dir : va < vb ? -dir : 0;
     });
     return rows;
+});
+
+const restockSummary = computed(() => restockData.value?.summary ?? null);
+const restockItems = computed(() => restockData.value?.items ?? []);
+const filteredRestockItems = computed(() => {
+    const search = restockSearch.value.trim().toLowerCase();
+    const items = [...restockItems.value];
+    const dir = restockSortDirection.value === 'asc' ? 1 : -1;
+
+    const filtered = search
+        ? items.filter((item) => {
+              return (
+                  item.provider_name?.toLowerCase().includes(search) ||
+                  item.provider_ident.toLowerCase().includes(search) ||
+                  item.producto_nombre?.toLowerCase().includes(search) ||
+                  item.producto_ident.toLowerCase().includes(search)
+              );
+          })
+        : items;
+
+    const valueOf = (item: RestockForecastItem) => {
+        switch (restockSort.value) {
+            case 'provider':
+                return item.provider_name?.toLowerCase() ?? item.provider_ident.toLowerCase();
+            case 'producto':
+                return item.producto_nombre?.toLowerCase() ?? item.producto_ident.toLowerCase();
+            case 'avg':
+                return Number(item.avg_daily_sales ?? 0);
+            case 'stock':
+                return Number(item.inventory_on_hand ?? 0);
+            case 'cover':
+                return item.days_of_cover ?? 0;
+            case 'suggested':
+            default:
+                return Number(item.suggested_order_qty ?? 0);
+        }
+    };
+
+    filtered.sort((a, b) => {
+        const va = valueOf(a);
+        const vb = valueOf(b);
+        if (typeof va === 'number' && typeof vb === 'number') {
+            return (va - vb) * dir;
+        }
+        return va > vb ? dir : va < vb ? -dir : 0;
+    });
+
+    return filtered;
 });
 
 const mensualidadSummary = computed(() => {
@@ -1510,6 +1629,12 @@ watch(
                 fetchFlujoCajaReport();
             }
         }
+        if (val === 'restock') {
+            restockError.value = '';
+            if (!restockData.value) {
+                fetchRestockForecast();
+            }
+        }
         if (val === 'mensualidad') {
             mensualidadError.value = '';
             if (!mensualidadData.value && mensualidadMonth.value) {
@@ -1566,6 +1691,10 @@ watch(
             flujoData.value = null;
             flujoError.value = '';
         }
+        if (selected.value === 'restock') {
+            restockData.value = null;
+            restockError.value = '';
+        }
     }
 );
 
@@ -1603,6 +1732,15 @@ watch(
         flujoSearch.value = '';
         flujoSortColumn.value = 'fecha';
         flujoSortDirection.value = 'asc';
+    }
+);
+
+watch(
+    () => restockData.value,
+    () => {
+        restockSearch.value = '';
+        restockSort.value = 'suggested';
+        restockSortDirection.value = 'desc';
     }
 );
 
@@ -2278,6 +2416,163 @@ onBeforeUnmount(() => {
                                     </div>
                                 </div>
                                 <p v-else class="text-xs text-gray-500">Consulta el reporte para ver los resúmenes diarios.</p>
+                            </div>
+                        </div>
+                    </template>
+                    <template v-else-if="selected === 'restock'">
+                        <div class="space-y-4">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button type="button"
+                                    class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                                    :disabled="restockLoading" @click="fetchRestockForecast">
+                                    <span v-if="restockLoading">Consultando…</span>
+                                    <span v-else>Consultar pronóstico</span>
+                                </button>
+                                <span class="text-xs text-gray-500">Pronóstico basado en ventas recientes para sugerir restock por proveedor.</span>
+                                <label class="flex items-center gap-2 text-xs text-gray-500">
+                                    <span class="font-medium text-gray-700">Horizonte</span>
+                                    <select :value="restockHorizon"
+                                        class="rounded border border-gray-300 px-2 py-1 text-xs focus:border-gray-900 focus:ring-gray-900"
+                                        :disabled="restockSavingPref"
+                                        @change="changeRestockHorizon(($event.target as HTMLSelectElement).value as 'day' | 'week' | 'month')">
+                                        <option v-for="opt in restockHorizonOptions" :key="opt.value" :value="opt.value">
+                                            {{ opt.label }}
+                                        </option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <p v-if="restockError"
+                                class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                                {{ restockError }}
+                            </p>
+
+                            <div v-else class="space-y-4">
+                                <div v-if="restockLoading" class="text-xs text-gray-500">Cargando datos…</div>
+                                <div v-else-if="restockData" class="space-y-4">
+                                    <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+                                        <div>
+                                            Pronóstico generado el
+                                            <span class="font-semibold text-gray-900">{{ restockData.forecast_date }}</span>
+                                        </div>
+                                        <div v-if="restockSummary"
+                                            class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 md:grid-cols-4 lg:grid-cols-5">
+                                            <div>
+                                                <span class="block font-semibold text-gray-900">{{ restockSummary.total_items }}</span>
+                                                <span>Productos analizados</span>
+                                            </div>
+                                            <div>
+                                                <span class="block font-semibold text-gray-900">{{ restockData.lookback_days }} días</span>
+                                                <span>Histórico</span>
+                                            </div>
+                                            <div>
+                                                <span class="block font-semibold text-gray-900">{{ restockData.lead_time_days }} días</span>
+                                                <span>Lead time</span>
+                                            </div>
+                                            <div>
+                                                <span class="block font-semibold text-gray-900">{{ restockSummary.total_suggested }}</span>
+                                                <span>Unidades sugeridas*</span>
+                                            </div>
+                                            <div>
+                                                <span class="block font-semibold text-gray-900">{{ restockSummary.avg_daily_sales }}</span>
+                                                <span>Promedio diario (u.)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-[11px] text-gray-500">*Sumatoria de sugerencias × precio público no incluida.</p>
+
+                                    <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+                                        <label class="flex items-center gap-2">
+                                            <span class="font-medium text-gray-700">Buscar</span>
+                                            <input v-model="restockSearch" type="search"
+                                                class="w-48 rounded border border-gray-300 px-3 py-1 text-xs focus:border-gray-900 focus:ring-gray-900"
+                                                placeholder="Proveedor o producto…" />
+                                        </label>
+                                    </div>
+
+                                    <div :class="tableClasses.wrapper">
+                                        <table :class="tableClasses.table">
+                                            <thead :class="tableClasses.head">
+                                                <tr>
+                                                    <th class="px-3 py-2">
+                                                        <button type="button" class="flex items-center gap-1 font-semibold"
+                                                            @click="toggleRestockSort('provider')">
+                                                            Proveedor
+                                                            <span class="text-[10px]">{{ restockSortIcon('provider') }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2">
+                                                        <button type="button" class="flex items-center gap-1 font-semibold"
+                                                            @click="toggleRestockSort('producto')">
+                                                            Producto
+                                                            <span class="text-[10px]">{{ restockSortIcon('producto') }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button type="button"
+                                                            class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                            @click="toggleRestockSort('avg')">
+                                                            Promedio diario
+                                                            <span class="text-[10px]">{{ restockSortIcon('avg') }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button type="button"
+                                                            class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                            @click="toggleRestockSort('stock')">
+                                                            Inventario
+                                                            <span class="text-[10px]">{{ restockSortIcon('stock') }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button type="button"
+                                                            class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                            @click="toggleRestockSort('cover')">
+                                                            Días de cobertura
+                                                            <span class="text-[10px]">{{ restockSortIcon('cover') }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button type="button"
+                                                            class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                            @click="toggleRestockSort('suggested')">
+                                                            Pedido sugerido
+                                                            <span class="text-[10px]">{{ restockSortIcon('suggested') }}</span>
+                                                        </button>
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody :class="tableClasses.body">
+                                                <tr v-if="filteredRestockItems.length === 0">
+                                                    <td class="px-3 py-6 text-center text-gray-500" colspan="6">
+                                                        No hay recomendaciones para el criterio seleccionado.
+                                                    </td>
+                                                </tr>
+                                                <tr v-for="item in filteredRestockItems" :key="item.provider_ident + '-' + item.producto_ident"
+                                                    :class="tableClasses.row">
+                                                    <td class="px-3 py-2">
+                                                        <div class="font-semibold text-gray-900">{{ item.provider_name ?? 'Proveedor ' + item.provider_ident }}</div>
+                                                        <p class="text-[11px] text-gray-500">Ident {{ item.provider_ident }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2">
+                                                        <div class="font-medium text-gray-900">{{ item.producto_nombre ?? 'Producto ' + item.producto_ident }}</div>
+                                                        <p class="text-[11px] text-gray-500">Ident {{ item.producto_ident }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right">{{ Number(item.avg_daily_sales).toFixed(2) }}</td>
+                                                    <td class="px-3 py-2 text-right">{{ item.inventory_on_hand }}</td>
+                                                    <td class="px-3 py-2 text-right">
+                                                        <span v-if="item.days_of_cover !== null">{{ item.days_of_cover }}</span>
+                                                        <span v-else>—</span>
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right font-semibold text-rose-600">
+                                                        {{ item.suggested_order_qty }}
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <p v-else class="text-xs text-gray-500">Aún no hay datos de pronóstico. Ejecuta el comando restock:forecast.</p>
                             </div>
                         </div>
                     </template>

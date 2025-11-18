@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useAuthStore } from '../../stores/auth';
 import SidebarAdmin from './SidebarAdmin.vue';
 import SidebarProvider from './SidebarProvider.vue';
+import SettingsModal from '../modals/SettingsModal.vue';
 
 const auth = useAuthStore();
 const isAdmin = computed(() => auth.isAdmin);
@@ -11,6 +12,7 @@ const drawerOpen = ref(false);
 const isCompact = ref(false);
 const sidebarCollapsed = ref(false);
 const appName = import.meta.env.VITE_APP_NAME || 'Rosa Mexicano POS';
+const settingsOpen = ref(false);
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }
 function closeDrawer() { drawerOpen.value = false; }
@@ -61,6 +63,12 @@ onUnmounted(() => {
                     </div>
                 </div>
                 <div class="flex items-center gap-3 text-sm text-gray-600">
+                    <button
+                        v-if="isAdmin"
+                        class="hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 text-xs hover:bg-gray-50 transition"
+                        @click="settingsOpen = true">
+                        Configuración
+                    </button>
                     <div class="leading-tight text-right max-w-[50vw] sm:max-w-xs truncate">
                         <span class="font-medium truncate">{{ auth.displayName }}</span>
                         <div class="text-xs text-gray-400" v-if="isAdmin">Administrador</div>
@@ -113,6 +121,7 @@ onUnmounted(() => {
                 </main>
             </div>
         </div>
+        <SettingsModal :open="settingsOpen" @close="settingsOpen = false" />
     </div>
 </template>
 

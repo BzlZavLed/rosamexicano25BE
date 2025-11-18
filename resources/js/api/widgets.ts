@@ -43,3 +43,29 @@ export async function getTopProducts() {
     const { data } = await http.get<TopProductsResponse>('/widgets/top-products');
     return data;
 }
+
+export interface RestockAlertsResponse {
+    forecast_date: string;
+    horizon: 'day' | 'week' | 'month';
+    items: Array<{
+        provider_ident: string;
+        provider_name: string | null;
+        producto_ident: string;
+        producto_nombre: string | null;
+        inventory_on_hand: number;
+        avg_daily_sales: number;
+        suggested_order_qty: number;
+        days_of_cover: number | null;
+    }>;
+}
+
+export async function getRestockAlerts(params: { horizon?: 'day' | 'week' | 'month'; limit?: number } = {}) {
+    const query: Record<string, string | number> = {};
+    if (params.horizon) query.horizon = params.horizon;
+    if (params.limit) query.limit = params.limit;
+
+    const { data } = await http.get<RestockAlertsResponse>('/widgets/restock-alerts', {
+        params: Object.keys(query).length ? query : undefined,
+    });
+    return data;
+}

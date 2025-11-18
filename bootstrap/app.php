@@ -1,9 +1,11 @@
 <?php
 
+use App\Support\SystemSettings;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Support\Facades\Artisan;
 use Sentry\Laravel\Integration;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -14,6 +16,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
         apiPrefix: 'api',
     )
+    ->withCommands([
+        \App\Console\Commands\GenerateRestockForecast::class,
+    ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
         $middleware->alias([
@@ -24,6 +29,13 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('db:snapshot')->dailyAt('02:00')->onFailure(function () {
             logger()->error('Daily database snapshot failed');
         });
+
+        $schedule->call(function () {
+            $horizon = SystemSettings::get('restock_cron_horizon', 'day,week,month');
+            Artisan::call('restock:forecast', [
+                '--horizon' => $horizon,
+            ]);
+        })->dailyAt('03:00');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
                 Integration::handles($exceptions);

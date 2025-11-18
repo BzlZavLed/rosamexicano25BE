@@ -9,6 +9,8 @@ use App\Models\Proveedor;
 use App\Models\Usuario;
 use App\Models\Venta;
 use App\Models\VentaDesg;
+use App\Support\CardCharge;
+use App\Support\SystemSettings;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
@@ -20,6 +22,9 @@ class ProviderSalesFlowTest extends TestCase
 
     public function test_checkout_records_provider_payouts_for_each_type(): void
     {
+        SystemSettings::set('card_charge_percent', '4.5');
+        CardCharge::refresh();
+
         $admin = Usuario::create([
             'email' => 'admin@example.com',
             'nombre' => 'Admin Test',
@@ -231,7 +236,7 @@ class ProviderSalesFlowTest extends TestCase
             $this->assertEqualsWithDelta($expected['admin_earnings'], (float) $line->admin_earnings, 0.01, "{$nombre}: ganancia admin incorrecta");
         }
 
-        $expectedSurcharge = round((100 + 200 + 300) * 0.045, 2);
+        $expectedSurcharge = round((100 + 200 + 300) * CardCharge::rate(), 2);
         $actualSurcharge = round($lineas->sum(fn ($line) => (float) $line->credit_card_discount), 2);
         $this->assertEqualsWithDelta($expectedSurcharge, $actualSurcharge, 0.01, 'El recargo por tarjeta debe prorratearse.');
     }

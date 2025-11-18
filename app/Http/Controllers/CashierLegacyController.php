@@ -24,6 +24,7 @@ use Illuminate\Support\Str;
 use App\Mail\TicketMail;
 use App\Models\Mailer;
 use App\Support\ProviderPayout;
+use App\Support\CardCharge;
 use Throwable;
 use Carbon\Carbon;
 
@@ -274,10 +275,11 @@ class CashierLegacyController extends Controller
 
                 // 2) recargo a proveedores por tarjeta (4.5%), distribuido proporcionalmente
                 $providerChargeTotal = 0.0;
-                if ($method === 'tarjeta') {
+                $cardRate = CardCharge::rate();
+                if ($method === 'tarjeta' && $cardRate > 0) {
                     $totalNetAfterOrder = array_sum($providerNetTotals);
                     if ($totalNetAfterOrder > 0) {
-                        $providerChargeTotal = round($totalNetAfterOrder * 0.045, 2);
+                        $providerChargeTotal = round($totalNetAfterOrder * $cardRate, 2);
 
                         $providerIds = array_keys($providerNetTotals);
                         $providerCharges = [];

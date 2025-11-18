@@ -8,6 +8,7 @@ const MailerQuotaWidget = defineAsyncComponent(() => import('../components/widge
 const MonthlyCobrosWidget = defineAsyncComponent(() => import('../components/widgets/MonthlyCobrosWidget.vue'))
 const CashierSummaryWidget = defineAsyncComponent(() => import('../components/widgets/CashierSummaryWidget.vue'))
 const TopProductsWidget = defineAsyncComponent(() => import('../components/widgets/TopProductsWidget.vue'))
+const RestockAlertsWidget = defineAsyncComponent(() => import('../components/widgets/RestockAlertsWidget.vue'))
 </script>
 
 <template>
@@ -44,13 +45,18 @@ const TopProductsWidget = defineAsyncComponent(() => import('../components/widge
                         <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
                     </template>
                 </Suspense>
-
+                <Suspense>
+                    <RestockAlertsWidget />
+                    <template #fallback>
+                        <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
+                    </template>
+                </Suspense>
                 <Suspense>
                     <TopProductsWidget />
                     <template #fallback>
                         <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
                     </template>
-                </Suspense>
+                </Suspense>          
 
                 <!-- Future widgets go here -->
             </div>

@@ -6,6 +6,7 @@
 import { fetchActivePromosFor, type Promo } from '../api/promocionescaja';
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
+import { getSystemSettings } from '../api/settings';
 import {
     cajaStatus,
     cajaOpen,
@@ -146,6 +147,13 @@ const cashReceived = ref<number | null>(null);
 
 // Cash drawer amounts -------------------------------------------------------
 const openAmount = ref<number | null>(null);
+const lastClosingBalance = ref<number | null>(null);
+const openAmountPlaceholder = computed(() => {
+    if (lastClosingBalance.value !== null) {
+        return `Saldo inicial (último ${currency(Number(lastClosingBalance.value))})`;
+    }
+    return 'Saldo inicial';
+});
 const closeAmount = ref<number | null>(null);
 const closeAmountSuggestion = ref<number | null>(null);
 const closeAmountTouched = ref(false);
@@ -196,7 +204,9 @@ const totalDiscountAmount = computed(() =>
 /** Net total after discounts but before card surcharge is applied. */
 const afterDiscount = computed(() => Math.max(0, subTotal.value - totalDiscountAmount.value));
 /** Surcharge only applies to tarjeta operations; currently a fixed 4.5%. */
-const surchargePercent = computed(() => paymentMethod.value === 'tarjeta' ? 4.5 : 0);
+const cardChargePercent = ref(4.5);
+const cardChargeRate = computed(() => cardChargePercent.value / 100);
+const surchargePercent = computed(() => (paymentMethod.value === 'tarjeta' ? cardChargePercent.value : 0));
 const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 function calculateProviderBruto(
@@ -337,7 +347,7 @@ const providerFinancialSummary = computed(() => {
 
     grossSubtotal = round2(grossSubtotal);
     const surchargeTotal =
-        paymentMethod.value === 'tarjeta' ? round2(grossSubtotal * 0.045) : 0;
+        paymentMethod.value === 'tarjeta' ? round2(grossSubtotal * cardChargeRate.value) : 0;
 
     const publicTotals = new Map<number, number>();
     providers.forEach((entry, pid) => {
@@ -1307,8 +1317,22 @@ async function makeReceiptPDFFromSale(snapshot: SaleSnapshot) {
 }
 
 // Lifecycle hooks ------------------------------------------------
+async function loadSystemSettings() {
+    try {
+        const data = await getSystemSettings();
+        cardChargePercent.value = data.card_charge_percent ?? 4.5;
+        lastClosingBalance.value = data.last_closing_balance ?? null;
+        if (openAmount.value === null && lastClosingBalance.value !== null) {
+            openAmount.value = Number(lastClosingBalance.value);
+        }
+    } catch (err) {
+        // ignore
+    }
+}
+
 /** Prime caja state and start listening for scanner input when view mounts. */
 onMounted(async () => {
+    await loadSystemSettings();
     await refreshCaja();
     window.addEventListener('keydown', handleKeydown);
 });
@@ -1356,7 +1380,7 @@ onUnmounted(() => {
                     <b>Caja cerrada</b> · Abre para poder vender
                 </div>
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <input v-model.number="openAmount" type="number" step="0.01" placeholder="Saldo inicial"
+                    <input v-model.number="openAmount" type="number" step="0.01" :placeholder="openAmountPlaceholder" :value="lastClosingBalance ?? ''"
                         class="w-full rounded border px-3 py-2 text-sm sm:w-48">
                     <button :disabled="saving || openAmount == null" @click="openCaja"
                         class="w-full rounded bg-emerald-600 text-white text-sm px-3 py-2 transition hover:bg-emerald-700 disabled:opacity-60 sm:w-auto">Abrir

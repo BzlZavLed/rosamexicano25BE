@@ -107,6 +107,52 @@ export interface FlujoCajaResponse {
     items: FlujoCajaRow[];
 }
 
+export interface RestockForecastItem {
+    provider_ident: string;
+    provider_name: string | null;
+    provider_email?: string | null;
+    producto_ident: string;
+    producto_nombre: string | null;
+    avg_daily_sales: number;
+    inventory_on_hand: number;
+    projected_demand: number;
+    suggested_order_qty: number;
+    days_of_cover: number | null;
+    lead_time_days: number;
+    lookback_days: number;
+}
+
+export interface RestockForecastResponse {
+    forecast_date: string;
+    horizon: 'day' | 'week' | 'month';
+    lookback_days: number;
+    lead_time_days: number;
+    summary: {
+        total_items: number;
+        total_suggested: number;
+        avg_daily_sales: number;
+    };
+    items: RestockForecastItem[];
+}
+
+export interface RestockNotifyResponse {
+    forecast_date: string;
+    horizon: 'day' | 'week' | 'month';
+    sent: number;
+    skipped: number;
+    providers_notified: Array<{
+        provider_ident: string;
+        provider_name: string | null;
+        email: string;
+    }>;
+    providers_skipped: Array<{
+        provider_ident: string | null;
+        provider_name: string | null;
+        reason: string;
+    }>;
+    message: string;
+}
+
 type CajaReportParams = {
     from_date: string;
     to_date: string;
@@ -163,6 +209,26 @@ export async function getFlujoCajaReport(params: { from_date: string; to_date?: 
     }
 
     const { data } = await http.get<FlujoCajaResponse>('/reports/flujo-caja', { params: query });
+    return data;
+}
+
+export async function getRestockForecastReport(params: { forecast_date?: string; provider?: string; horizon?: 'day' | 'week' | 'month' }) {
+    const query: Record<string, string> = {};
+    if (params.forecast_date) query.forecast_date = params.forecast_date;
+    if (params.provider) query.provider = params.provider;
+    if (params.horizon) query.horizon = params.horizon;
+
+    const { data } = await http.get<RestockForecastResponse>('/reports/restock-forecast', { params: query });
+    return data;
+}
+
+export async function updateRestockPreference(horizon: 'day' | 'week' | 'month') {
+    const { data } = await http.post('/reports/restock-forecast/preference', { horizon });
+    return data as { horizon: 'day' | 'week' | 'month' };
+}
+
+export async function notifyRestockForecast(params: { horizon: 'day' | 'week' | 'month'; providers?: string[] }) {
+    const { data } = await http.post<RestockNotifyResponse>('/reports/restock-forecast/notify', params);
     return data;
 }
 

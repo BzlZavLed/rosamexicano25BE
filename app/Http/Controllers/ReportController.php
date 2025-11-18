@@ -11,10 +11,14 @@ use App\Models\Egreso;
 use App\Models\Proveedor;
 use App\Models\Mensualidad;
 use App\Models\DailyCashSummary;
+use App\Models\ProviderRestockForecast;
+use App\Models\Usuario;
+use App\Mail\RestockForecastMail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Carbon\CarbonPeriod;
 
@@ -490,6 +494,237 @@ class ReportController extends Controller
             'resumen' => $resumen,
             'items' => $items,
         ]);
+    }
+
+    public function restockForecast(Request $request)
+    {
+        $provider = $request->input('provider');
+        $forecastDateInput = $request->input('forecast_date');
+        $horizon = $this->resolveRestockHorizon($request);
+
+        $query = ProviderRestockForecast::query();
+
+        if ($forecastDateInput) {
+            try {
+                $forecastDate = $this->parseDateInput($forecastDateInput)->toDateString();
+            } catch (\Throwable $e) {
+                return response()->json(['message' => 'Formato de fecha inválido.'], 422);
+            }
+        } else {
+            $forecastDate = ProviderRestockForecast::where('horizon', $horizon)->max('forecast_date');
+        }
+
+        if (!$forecastDate) {
+            return response()->json([
+                'message' => 'No hay pronósticos registrados. Ejecuta el comando restock:forecast primero.',
+            ], 404);
+        }
+
+        $query->whereDate('forecast_date', '=', $forecastDate)
+            ->where('horizon', '=', $horizon);
+
+        if ($provider) {
+            $query->where('provider_ident', '=', $provider);
+        }
+
+        $rows = $query
+            ->orderByDesc('suggested_order_qty')
+            ->orderBy('provider_ident')
+            ->get();
+
+        $providerIdents = $rows->pluck('provider_ident')
+            ->filter(fn ($ident) => $ident !== null && $ident !== '')
+            ->unique()
+            ->values();
+
+        $providerMap = $providerIdents->isEmpty()
+            ? collect()
+            : Proveedor::whereIn('ident', $providerIdents)->get()->keyBy('ident');
+
+        $items = $rows->map(function (ProviderRestockForecast $row) use ($providerMap) {
+            $provider = $row->provider_ident ? $providerMap->get($row->provider_ident) : null;
+
+            return [
+                'provider_ident' => $row->provider_ident,
+                'provider_name' => $row->provider_name,
+                'provider_email' => $provider?->email,
+                'producto_ident' => $row->producto_ident,
+                'producto_nombre' => $row->producto_nombre,
+                'avg_daily_sales' => (float) $row->avg_daily_sales,
+                'inventory_on_hand' => (int) $row->inventory_on_hand,
+                'projected_demand' => (float) $row->projected_demand,
+                'suggested_order_qty' => (int) $row->suggested_order_qty,
+                'days_of_cover' => $row->days_of_cover !== null ? (float) $row->days_of_cover : null,
+                'lead_time_days' => (int) $row->lead_time_days,
+                'lookback_days' => (int) $row->lookback_days,
+            ];
+        })->values();
+
+        $summary = [
+            'total_items' => $items->count(),
+            'total_suggested' => $items->sum('suggested_order_qty'),
+            'avg_daily_sales' => round($items->avg('avg_daily_sales'), 2),
+        ];
+
+        $first = $items->first();
+        $lookback = $first['lookback_days'] ?? 30;
+        $leadTime = $first['lead_time_days'] ?? 7;
+
+        return response()->json([
+            'forecast_date' => $forecastDate,
+            'horizon' => $horizon,
+            'lookback_days' => $lookback,
+            'lead_time_days' => $leadTime,
+            'summary' => $summary,
+            'items' => $items,
+        ]);
+    }
+
+    public function updateRestockPreference(Request $request)
+    {
+        $user = $request->user();
+        if (!$user instanceof Usuario) {
+            return response()->json(['message' => 'Solo usuarios administradores pueden actualizar esta preferencia.'], 403);
+        }
+
+        $horizon = strtolower((string) $request->input('horizon', ''));
+        if (!in_array($horizon, ['day', 'week', 'month'], true)) {
+            return response()->json(['message' => 'Horizonte inválido. Usa day, week o month.'], 422);
+        }
+
+        $user->restock_horizon = $horizon;
+        $user->save();
+
+        return response()->json([
+            'horizon' => $horizon,
+        ]);
+    }
+
+    public function restockForecastNotify(Request $request)
+    {
+        $user = $request->user();
+        if (!$user instanceof Usuario) {
+            return response()->json(['message' => 'Solo administradores pueden notificar a los proveedores.'], 403);
+        }
+
+        $data = $request->validate([
+            'horizon' => ['required', 'in:day,week,month'],
+            'providers' => ['sometimes', 'array', 'min:1'],
+            'providers.*' => ['string'],
+        ]);
+
+        $horizon = $data['horizon'];
+        $forecastDate = ProviderRestockForecast::where('horizon', $horizon)->max('forecast_date');
+
+        if (!$forecastDate) {
+            return response()->json([
+                'message' => 'No hay pronósticos registrados para este horizonte. Ejecuta primero restock:forecast.',
+            ], 404);
+        }
+
+        $query = ProviderRestockForecast::query()
+            ->where('horizon', $horizon)
+            ->whereDate('forecast_date', $forecastDate)
+            ->where('suggested_order_qty', '>=', 0);
+
+        if (!empty($data['providers'])) {
+            $query->whereIn('provider_ident', $data['providers']);
+        }
+
+        $rows = $query->orderBy('provider_ident')->orderByDesc('suggested_order_qty')->get();
+
+        if ($rows->isEmpty()) {
+            return response()->json([
+                'message' => 'No hay productos con sugerencia de compra mayor a cero.',
+            ], 422);
+        }
+
+        $providerIdents = $rows->pluck('provider_ident')
+            ->filter(fn ($ident) => $ident !== null && $ident !== '')
+            ->unique()
+            ->values();
+
+        $providers = $providerIdents->isEmpty()
+            ? collect()
+            : Proveedor::whereIn('ident', $providerIdents)->get()->keyBy('ident');
+
+        $sent = [];
+        $skipped = [];
+        $horizonLabel = $this->humanRestockHorizon($horizon);
+
+        foreach ($rows->groupBy('provider_ident') as $ident => $group) {
+            $providerModel = $ident ? $providers->get($ident) : null;
+            $providerName = $providerModel->nombre ?? ($group->first()->provider_name ?? 'Proveedor sin nombre');
+
+            if (!$providerModel || empty($providerModel->email)) {
+                $skipped[] = [
+                    'provider_ident' => $ident,
+                    'provider_name' => $providerName,
+                    'reason' => 'missing_email',
+                ];
+                continue;
+            }
+
+            $items = $group->map(function (ProviderRestockForecast $row) {
+                return [
+                    'producto_ident' => $row->producto_ident,
+                    'producto_nombre' => $row->producto_nombre,
+                    'suggested_order_qty' => (int) $row->suggested_order_qty,
+                    'avg_daily_sales' => (float) $row->avg_daily_sales,
+                    'inventory_on_hand' => (int) $row->inventory_on_hand,
+                    'projected_demand' => (float) $row->projected_demand,
+                    'days_of_cover' => $row->days_of_cover !== null ? (float) $row->days_of_cover : null,
+                    'lead_time_days' => (int) $row->lead_time_days,
+                ];
+            })->values()->all();
+
+            Mail::to($providerModel->email)->send(
+                new RestockForecastMail($providerModel, $horizonLabel, $forecastDate, $items)
+            );
+
+            $sent[] = [
+                'provider_ident' => (string) $providerModel->ident,
+                'provider_name' => $providerModel->nombre,
+                'email' => $providerModel->email,
+            ];
+        }
+
+        return response()->json([
+            'forecast_date' => $forecastDate,
+            'horizon' => $horizon,
+            'sent' => count($sent),
+            'skipped' => count($skipped),
+            'providers_notified' => $sent,
+            'providers_skipped' => $skipped,
+            'message' => 'Notificaciones enviadas.',
+        ]);
+    }
+
+    private function resolveRestockHorizon(Request $request, string $default = 'week'): string
+    {
+        $input = strtolower((string) $request->input('horizon', ''));
+        if (in_array($input, ['day', 'week', 'month'], true)) {
+            return $input;
+        }
+
+        $user = $request->user();
+        if ($user instanceof Usuario) {
+            $pref = strtolower((string) ($user->restock_horizon ?? ''));
+            if (in_array($pref, ['day', 'week', 'month'], true)) {
+                return $pref;
+            }
+        }
+
+        return $default;
+    }
+
+    private function humanRestockHorizon(string $horizon): string
+    {
+        return match ($horizon) {
+            'day' => 'próximo día',
+            'month' => 'próximo mes',
+            default => 'próxima semana',
+        };
     }
 
     public function mensualidad(Request $request)

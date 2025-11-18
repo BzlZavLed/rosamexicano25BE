@@ -12,6 +12,7 @@ use App\Http\Controllers\ProductosController;
 use App\Http\Controllers\PromocionesController;
 use App\Http\Controllers\ProveedoresController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UnifiedAuthController;
 use App\Http\Controllers\WidgetsController;
 use App\Models\Usuario;
@@ -104,11 +105,18 @@ Route::middleware('auth:sanctum')->group(function () {
     // Widgets
     Route::get('/widgets/cashier-summary', [WidgetsController::class, 'cashierSummary']);
     Route::get('/widgets/top-products', [WidgetsController::class, 'topProducts']);
+    Route::get('/widgets/restock-alerts', [WidgetsController::class, 'restockAlerts']);
 
     // Reports
     Route::get('/reports/caja', [ReportController::class, 'caja']);
     Route::get('/reports/egresos-caja', [ReportController::class, 'egresosCaja']);
     Route::get('/reports/flujo-caja', [ReportController::class, 'flujoCaja']);
+    Route::get('/reports/restock-forecast', [ReportController::class, 'restockForecast']);
+    Route::post('/reports/restock-forecast/preference', [ReportController::class, 'updateRestockPreference']);
+    Route::post('/reports/restock-forecast/notify', [ReportController::class, 'restockForecastNotify']);
+    Route::get('/settings/general', [SettingsController::class, 'general']);
+    Route::post('/settings/general', [SettingsController::class, 'updateGeneral']);
+    Route::post('/settings/general/run-restock', [SettingsController::class, 'runRestock']);
     Route::get('/reports/mensualidad', [ReportController::class, 'mensualidad']);
     Route::get('/reports/productos', [ReportController::class, 'productos']);
     Route::get('/reports/inventario', [ReportController::class, 'inventario']);

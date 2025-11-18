@@ -6,8 +6,11 @@ use App\Models\EstadoCaja;
 use App\Models\Venta;
 use App\Models\VentaDesg;
 use App\Models\Proveedor;
+use App\Models\ProviderRestockForecast;
+use App\Models\Usuario;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class WidgetsController extends Controller
 {
@@ -96,5 +99,62 @@ class WidgetsController extends Controller
             'hasta' => $today->format('d/m/y'),
             'productos' => $top,
         ]);
+    }
+
+    public function restockAlerts(Request $request)
+    {
+        $limit = (int) $request->input('limit', 5);
+        $limit = max(1, min(20, $limit));
+        $horizon = $this->resolveRestockHorizon($request);
+
+        $forecastDate = ProviderRestockForecast::where('horizon', $horizon)->max('forecast_date');
+        if (!$forecastDate) {
+            return response()->json([
+                'message' => 'No hay pronósticos disponibles. Ejecuta restock:forecast.',
+                'items' => [],
+            ], 404);
+        }
+
+        $items = ProviderRestockForecast::where('forecast_date', $forecastDate)
+            ->where('horizon', $horizon)
+            ->orderByDesc(DB::raw('suggested_order_qty * GREATEST(avg_daily_sales, 1)'))
+            ->limit($limit)
+            ->get()
+            ->map(function (ProviderRestockForecast $row) {
+                return [
+                    'provider_ident' => $row->provider_ident,
+                    'provider_name' => $row->provider_name,
+                    'producto_ident' => $row->producto_ident,
+                    'producto_nombre' => $row->producto_nombre,
+                    'inventory_on_hand' => (int) $row->inventory_on_hand,
+                    'avg_daily_sales' => (float) $row->avg_daily_sales,
+                    'suggested_order_qty' => (int) $row->suggested_order_qty,
+                    'days_of_cover' => $row->days_of_cover !== null ? (float) $row->days_of_cover : null,
+                ];
+            });
+
+        return response()->json([
+            'forecast_date' => $forecastDate,
+            'horizon' => $horizon,
+            'items' => $items,
+        ]);
+    }
+
+    private function resolveRestockHorizon(Request $request, string $default = 'week'): string
+    {
+        $input = strtolower((string) $request->input('horizon', ''));
+        if (in_array($input, ['day', 'week', 'month'], true)) {
+            return $input;
+        }
+
+        $user = $request->user();
+        if ($user instanceof Usuario) {
+            $pref = strtolower((string) ($user->restock_horizon ?? ''));
+            if (in_array($pref, ['day', 'week', 'month'], true)) {
+                return $pref;
+            }
+        }
+
+        return $default;
     }
 }

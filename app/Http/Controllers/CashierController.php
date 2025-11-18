@@ -102,6 +102,21 @@ class CashierController extends Controller
         ];
     }
 
+    private function lastSaldoCierre(?string $beforeDate = null): ?float
+    {
+        $query = DailyCashSummary::query()
+            ->whereNotNull('saldo_cierre')
+            ->orderByDesc('fecha')
+            ->orderByDesc('id');
+
+        if ($beforeDate) {
+            $query->where('fecha', '<', $beforeDate);
+        }
+
+        $row = $query->first();
+        return $row ? (float) ($row->saldo_cierre ?? 0) : null;
+    }
+
     private function applyPaymentToSummary(string $fecha, string $method, float $amount): void
     {
         if ($amount <= 0) {
@@ -163,9 +178,12 @@ class CashierController extends Controller
         if ($already) {
             return response()->json(['message' => 'La caja ya está abierta'], 422);
         }
+        $previousClose = $this->lastSaldoCierre($fecha);
         $opening = $request->has('saldoinicial')
             ? (float) $request->input('saldoinicial')
-            : (float) $request->input('saldo');  // fallback
+            : ($request->has('saldo')
+                ? (float) $request->input('saldo')
+                : ($previousClose ?? 0.0));
         $row = EstadoCaja::create([
             'fecha' => $fecha,                            // store as ISO
             'estado' => 1,                                 // 1 = abierta

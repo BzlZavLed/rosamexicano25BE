@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\Producto;
 use App\Models\Proveedor;
+use App\Support\CardCharge;
 
 class ProviderPayout
 {
@@ -80,9 +81,10 @@ class ProviderPayout
 
         $totalPublic = array_sum($providerPublicTotals);
         $providerChargeTotal = 0.0;
+        $cardRate = CardCharge::rate();
 
-        if (strtolower($paymentMethod) === 'tarjeta' && $totalPublic > 0) {
-            $providerChargeTotal = round($totalPublic * 0.045, 2);
+        if (strtolower($paymentMethod) === 'tarjeta' && $totalPublic > 0 && $cardRate > 0) {
+            $providerChargeTotal = round($totalPublic * $cardRate, 2);
             $providerCharges = self::distributeSurcharge($providerPublicTotals, $totalPublic, $providerChargeTotal);
 
             foreach ($providerCharges as $providerId => $charge) {
