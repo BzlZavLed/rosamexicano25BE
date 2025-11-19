@@ -12,6 +12,7 @@ const ProviderProfileView = () => import("../views/ProviderProfileView.vue");
 const AdminProductosForm = () => import("../views/AdminProductosForm.vue");
 const AdminProveedoresForm = () => import("../views/AdminProveedoresForm.vue");
 const AdminInventarioEntrada = () => import("../views/AdminInventarioEntrada.vue");
+const AdminInventarioReportView = () => import("../views/AdminInventarioReportView.vue");
 const AdminPromociones = () => import("../views/AdminPromociones.vue");
 const AdminCajaView = () => import("../views/AdminCajaView.vue");
 const AdminEmailHistory = () => import("../views/AdminEmailHistory.vue");
@@ -86,6 +87,12 @@ const routes: RouteRecordRaw[] = [
         path: '/admin/inventario/entrada',
         name: 'admin-inventario-entrada',
         component: AdminInventarioEntrada,
+        meta: { requiresAuth: true, role: 'admin' }
+    },
+    {
+        path: '/admin/inventario/reporte',
+        name: 'admin-inventario-reporte',
+        component: AdminInventarioReportView,
         meta: { requiresAuth: true, role: 'admin' }
     },
     //Promociones crear

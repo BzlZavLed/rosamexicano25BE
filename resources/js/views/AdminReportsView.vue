@@ -3,7 +3,6 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
 import {
     getProductosReport,
-    getInventarioReport,
     getCajaReport,
     getEntradasReport,
     getCajaProveedoresReport,
@@ -22,8 +21,6 @@ import {
     type ProductosReportResponse,
     type ProductoRow,
     type ProductosPagination,
-    type InventarioReportResponse,
-    type InventarioRow,
     type EntradasReportResponse,
     type CajaProveedoresResponse,
     type CajaProveedorGroup,
@@ -83,7 +80,6 @@ function providerPaymentTooltip(linea: CajaReportLine): string {
 type ReportType =
     | 'caja'
     | 'productos'
-    | 'inventario'
     | 'entradas'
     | 'caja-condensado'
     | 'caja-egresos'
@@ -139,7 +135,6 @@ type CajaCondensadoSortColumn =
 const options: Array<{ value: ReportType; label: string }> = [
     { value: 'caja', label: 'Caja' },
     { value: 'productos', label: 'Productos' },
-    { value: 'inventario', label: 'Inventario' },
     { value: 'entradas', label: 'Entradas' },
     { value: 'caja-condensado', label: 'Caja condensado' },
     { value: 'caja-egresos', label: 'Egresos de caja' },
@@ -155,7 +150,6 @@ const restockHorizonOptions: Array<{ value: RestockHorizonOption; label: string 
     { value: '6w', label: 'Próximas 6 semanas' },
 ];
 
-type InventarioSort = 'producto' | 'existencia' | 'proveedor';
 type SortDirection = 'asc' | 'desc';
 type MensualidadStatusFilter = 'todos' | 'pendiente' | 'pagado';
 type CajaSortColumn = 'fecha' | 'metodo' | 'vendedor' | 'total' | 'id';
@@ -167,11 +161,6 @@ const cajaSortLabels: Record<CajaSortColumn, string> = {
     id: 'ID de venta',
 };
 
-const inventarioSortOptions: Array<{ value: InventarioSort; label: string }> = [
-    { value: 'producto', label: 'Producto' },
-    { value: 'existencia', label: 'Existencia' },
-    { value: 'proveedor', label: 'Proveedor' },
-];
 
 const directionOptions: Array<{ value: SortDirection; label: string }> = [
     { value: 'asc', label: 'Ascendente' },
@@ -260,8 +249,6 @@ const reportHeader = computed(() => {
             return 'Reporte de caja';
         case 'productos':
             return 'Reporte de productos';
-        case 'inventario':
-            return 'Reporte de inventario';
         case 'entradas':
             return 'Reporte de entradas';
         case 'caja-condensado':
@@ -1521,91 +1508,11 @@ function prodGoLast() {
     }
 }
 
-// --- Inventario Report state ---
-const inventarioLoading = ref(false);
-const inventarioQ = ref<string>('');
-const inventarioPage = ref<number>(1);
-const inventarioPerPage = ref<number>(50);
-const inventarioSort = ref<InventarioSort>('producto');
-const inventarioDirection = ref<SortDirection>('asc');
-
-const inventarioItems = ref<InventarioRow[]>([]);
-const inventarioPagination = ref<ProductosPagination | null>(null);
-const inventarioError = ref<string | null>(null);
-
-async function loadInventario() {
-    inventarioLoading.value = true;
-    inventarioError.value = null;
-    try {
-        const res: InventarioReportResponse = await getInventarioReport({
-            q: inventarioQ.value.trim() || undefined,
-            page: inventarioPage.value,
-            per_page: inventarioPerPage.value,
-            sort: inventarioSort.value,
-            direction: inventarioDirection.value,
-        });
-        inventarioItems.value = res.data;
-        inventarioPagination.value = res.pagination;
-    } catch (e: any) {
-        inventarioError.value = e?.message || 'Error al cargar el reporte de inventario.';
-    } finally {
-        inventarioLoading.value = false;
-    }
-}
-
-function inventarioSubmitSearch() {
-    inventarioPage.value = 1;
-    loadInventario();
-}
-
-function toggleInventarioSort(column: InventarioSort) {
-    if (inventarioSort.value === column) {
-        inventarioDirection.value = inventarioDirection.value === 'asc' ? 'desc' : 'asc';
-    } else {
-        inventarioSort.value = column;
-        inventarioDirection.value = 'asc';
-    }
-    inventarioPage.value = 1;
-}
-
-function inventarioGoFirst() {
-    if (!inventarioPagination.value) return;
-    if (inventarioPagination.value.current_page > 1) {
-        inventarioPage.value = 1;
-        loadInventario();
-    }
-}
-function inventarioGoPrev() {
-    if (!inventarioPagination.value) return;
-    if (inventarioPagination.value.prev_page_url) {
-        inventarioPage.value = inventarioPagination.value.current_page - 1;
-        loadInventario();
-    }
-}
-function inventarioGoNext() {
-    if (!inventarioPagination.value) return;
-    if (inventarioPagination.value.next_page_url) {
-        inventarioPage.value = inventarioPagination.value.current_page + 1;
-        loadInventario();
-    }
-}
-function inventarioGoLast() {
-    if (!inventarioPagination.value) return;
-    if (inventarioPagination.value.current_page < inventarioPagination.value.last_page) {
-        inventarioPage.value = inventarioPagination.value.last_page;
-        loadInventario();
-    }
-}
-
-// When switching between tabular reports, auto-load as needed
 watch(
     () => selected.value,
     (val) => {
         if (val === 'productos' && prodItems.value.length === 0 && !prodLoading.value) {
             loadProductos();
-        }
-        if (val === 'inventario' && inventarioItems.value.length === 0 && !inventarioLoading.value) {
-            loadInventario();
         }
         if (val === 'entradas') {
             entradasError.value = '';
@@ -1659,20 +1566,6 @@ watch(
         if (selected.value === 'productos') loadProductos();
     }
 );
-watch(inventarioPerPage, () => {
-    inventarioPage.value = 1;
-    if (selected.value === 'inventario') loadInventario();
-});
-
-// Refresh when sorting preferences change
-watch(
-    () => [inventarioSort.value, inventarioDirection.value],
-    () => {
-        inventarioPage.value = 1;
-        if (selected.value === 'inventario') loadInventario();
-    }
-);
-
 watch(
     () => [rangeStart.value, rangeEnd.value],
     () => {
@@ -3236,182 +3129,6 @@ onBeforeUnmount(() => {
                     </template>
 
 
-                    <template v-else-if="selected === 'inventario'">
-                        <div class="space-y-4">
-                            <p class="font-medium text-gray-900">{{ reportHeader }}</p>
-
-                            <!-- Controls -->
-                            <div class="flex flex-wrap items-end gap-3">
-                                <div class="flex-1 min-w-[220px]">
-                                    <label class="mb-1 block text-sm font-medium">Buscar</label>
-                                    <input v-model="inventarioQ" type="text"
-                                        placeholder="Buscar por producto o proveedor…"
-                                        class="w-full rounded border px-3 py-2"
-                                        @keyup.enter="inventarioSubmitSearch" />
-                                </div>
-
-                                <div>
-                                    <label class="mb-1 block text-sm font-medium">Filas por página</label>
-                                    <select v-model.number="inventarioPerPage" class="rounded border px-3 py-2">
-                                        <option :value="10">10</option>
-                                        <option :value="25">25</option>
-                                        <option :value="50">50</option>
-                                        <option :value="100">100</option>
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label class="mb-1 block text-sm font-medium">Ordenar por</label>
-                                    <select v-model="inventarioSort" class="rounded border px-3 py-2">
-                                        <option v-for="opt in inventarioSortOptions" :key="opt.value"
-                                            :value="opt.value">
-                                            {{ opt.label }}
-                                        </option>
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label class="mb-1 block text-sm font-medium">Dirección</label>
-                                    <select v-model="inventarioDirection" class="rounded border px-3 py-2">
-                                        <option v-for="opt in directionOptions" :key="opt.value" :value="opt.value">
-                                            {{ opt.label }}
-                                        </option>
-                                    </select>
-                                </div>
-
-                                <button class="rounded border px-4 py-2" @click="inventarioSubmitSearch"
-                                    :disabled="inventarioLoading">
-                                    Buscar
-                                </button>
-                            </div>
-
-                            <!-- Alerts/States -->
-                            <div v-if="inventarioError" class="text-red-600">
-                                {{ inventarioError }}
-                            </div>
-
-                            <div v-if="inventarioLoading" class="text-sm text-gray-500">
-                                Cargando inventario…
-                            </div>
-
-                            <!-- Table -->
-                            <div v-else>
-                                <div :class="tableClasses.wrapper">
-                                    <table :class="tableClasses.table">
-                                        <thead :class="tableClasses.head">
-                                            <tr>
-                                                <th class="px-3 py-2">Inventario ID</th>
-                                                <th class="px-3 py-2">Ident</th>
-                                                <th
-                                                    class="px-3 py-2 cursor-pointer select-none"
-                                                    @click="toggleInventarioSort('producto')"
-                                                >
-                                                    Producto
-                                                    <span v-if="inventarioSort === 'producto'" class="ml-1">
-                                                        {{ inventarioDirection === 'asc' ? '▲' : '▼' }}
-                                                    </span>
-                                                </th>
-                                                <th class="px-3 py-2 text-right">Precio</th>
-                                                <th
-                                                    class="px-3 py-2 text-right cursor-pointer select-none"
-                                                    @click="toggleInventarioSort('existencia')"
-                                                >
-                                                    Existencia
-                                                    <span v-if="inventarioSort === 'existencia'" class="ml-1">
-                                                        {{ inventarioDirection === 'asc' ? '▲' : '▼' }}
-                                                    </span>
-                                                </th>
-                                                <th class="px-3 py-2 text-right">Costo total</th>
-                                                <th
-                                                    class="px-3 py-2 cursor-pointer select-none"
-                                                    @click="toggleInventarioSort('proveedor')"
-                                                >
-                                                    Proveedor
-                                                    <span v-if="inventarioSort === 'proveedor'" class="ml-1">
-                                                        {{ inventarioDirection === 'asc' ? '▲' : '▼' }}
-                                                    </span>
-                                                </th>
-                                            </tr>
-                                        </thead>
-                                        <tbody :class="tableClasses.body">
-                                            <tr v-for="item in inventarioItems" :key="item.inventario_id"
-                                                :class="tableClasses.row">
-                                                <td class="px-3 py-2 text-gray-900">{{ item.inventario_id }}</td>
-                                                <td class="px-3 py-2">{{ item.producto_ident }}</td>
-                                                <td class="px-3 py-2">{{ item.producto_nombre }}</td>
-                                                <td class="px-3 py-2 text-right">
-                                                    <span v-if="item.precio !== null">
-                                                        {{ formatCurrency(item.precio) }}
-                                                    </span>
-                                                    <span v-else>—</span>
-                                                </td>
-                                                <td class="px-3 py-2 text-right">
-                                                    {{ item.existencia }}
-                                                </td>
-                                                <td class="px-3 py-2 text-right">
-                                                    <span v-if="item.costo_inventario !== null">
-                                                        {{ formatCurrency(item.costo_inventario) }}
-                                                    </span>
-                                                    <span v-else>—</span>
-                                                </td>
-                                                <td class="px-3 py-2">
-                                                    <template v-if="item.proveedor">
-                                                        <div class="font-medium text-gray-900">{{ item.proveedor.nombre }}
-                                                        </div>
-                                                        <div class="text-[11px] text-gray-500">{{ item.proveedor.ident }}
-                                                        </div>
-                                                    </template>
-                                                    <template v-else>—</template>
-                                                </td>
-                                            </tr>
-
-                                            <tr v-if="inventarioItems.length === 0">
-                                                <td colspan="7" :class="tableClasses.emptyRow">
-                                                    No se encontraron registros.
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-
-                                <div v-if="inventarioPagination"
-                                    class="mt-3 flex flex-wrap items-center justify-between gap-3">
-                                    <div class="text-[11px] uppercase tracking-wide text-gray-600">
-                                        Página {{ inventarioPagination.current_page }} de {{ inventarioPagination.last_page
-                                        }} • Mostrando {{ inventarioPagination.count }} de {{
-                                        inventarioPagination.total }}
-                                    </div>
-
-                                    <div class="flex items-center gap-2">
-                                        <button
-                                            class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
-                                            @click="inventarioGoFirst"
-                                            :disabled="inventarioPagination.current_page === 1">
-                                            Primero
-                                        </button>
-                                        <button
-                                            class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
-                                            @click="inventarioGoPrev"
-                                            :disabled="!inventarioPagination.prev_page_url">
-                                            Anterior
-                                        </button>
-                                        <button
-                                            class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
-                                            @click="inventarioGoNext"
-                                            :disabled="!inventarioPagination.next_page_url">
-                                            Siguiente
-                                        </button>
-                                        <button
-                                            class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
-                                            @click="inventarioGoLast"
-                                            :disabled="inventarioPagination.current_page === inventarioPagination.last_page">
-                                            Último
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </template>
                 </div>
             </section>
         </div>
