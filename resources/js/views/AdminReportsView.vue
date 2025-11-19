@@ -162,11 +162,6 @@ const cajaSortLabels: Record<CajaSortColumn, string> = {
 };
 
 
-const directionOptions: Array<{ value: SortDirection; label: string }> = [
-    { value: 'asc', label: 'Ascendente' },
-    { value: 'desc', label: 'Descendente' },
-];
-
 const selected = ref<ReportType>('caja');
 const rangeStart = ref('');
 const rangeEnd = ref('');
