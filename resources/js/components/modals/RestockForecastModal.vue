@@ -38,7 +38,67 @@ const settingsLoaded = ref(false)
 const filteredItems = computed(() =>
     items.value.filter((item) => (includeZeroSuggestions.value ? item.suggested_order_qty >= 0 : item.suggested_order_qty > 0))
 )
-const providerCount = computed(() => new Set(filteredItems.value.map((item) => item.provider_ident)).size)
+type ProviderGroup = {
+    key: string;
+    provider_ident: string | null;
+    provider_name: string | null;
+    provider_email: string | null;
+    items: RestockForecastItem[];
+    total_suggested: number;
+};
+
+const providerEmailFilter = ref<'all' | 'with' | 'without'>('all');
+
+const providerGroups = computed<ProviderGroup[]>(() => {
+    const map = new Map<string, ProviderGroup>();
+    const groups: ProviderGroup[] = [];
+
+    filteredItems.value.forEach((item, index) => {
+        const ident = item.provider_ident ? String(item.provider_ident) : null;
+        const key = ident && ident !== '' ? `id:${ident}` : `missing:${item.provider_name ?? 'sin'}:${index}`;
+        let group = map.get(key);
+        if (!group) {
+            group = {
+                key,
+                provider_ident: ident,
+                provider_name: item.provider_name ?? null,
+                provider_email: item.provider_email ?? null,
+                items: [],
+                total_suggested: 0,
+            };
+            map.set(key, group);
+            groups.push(group);
+        }
+        if (!group.provider_email && item.provider_email) {
+            group.provider_email = item.provider_email;
+        }
+        if (!group.provider_name && item.provider_name) {
+            group.provider_name = item.provider_name;
+        }
+        group.items.push(item);
+        group.total_suggested += item.suggested_order_qty;
+    });
+
+    return groups;
+});
+
+const filteredProviders = computed(() => {
+    return providerGroups.value.filter((group) => {
+        if (providerEmailFilter.value === 'with') {
+            return Boolean(group.provider_email);
+        }
+        if (providerEmailFilter.value === 'without') {
+            return !group.provider_email;
+        }
+        return true;
+    });
+});
+
+const providersWithEmail = computed(() =>
+    filteredProviders.value.filter((group) => Boolean(group.provider_ident && group.provider_email))
+);
+
+const providerCount = computed(() => providersWithEmail.value.length);
 
 watch(
     () => props.open,
@@ -50,6 +110,7 @@ watch(
             fatalError.value = ''
             actionError.value = ''
             success.value = ''
+            providerEmailFilter.value = 'all'
         }
     }
 )
@@ -99,11 +160,18 @@ async function loadReport() {
 }
 
 async function notifyAllProviders() {
+    const recipients = providersWithEmail.value
+        .map((group) => group.provider_ident)
+        .filter((ident): ident is string => Boolean(ident))
+    if (recipients.length === 0) {
+        actionError.value = 'No hay proveedores con correo electrónico en esta vista.'
+        return
+    }
     sendingAll.value = true
     actionError.value = ''
     success.value = ''
     try {
-        const response = await notifyRestockForecast({ horizon: horizonRef.value })
+        const response = await notifyRestockForecast({ horizon: horizonRef.value, providers: recipients })
         success.value = `${response.sent} proveedores notificados.`
     } catch (err: any) {
         actionError.value = err?.response?.data?.message || err?.message || 'No se pudieron enviar las notificaciones.'
@@ -145,13 +213,24 @@ async function notifyProvider(ident: string) {
                                     minimumDays ?? '—' }} días
                             </p>
                         </div>
-                        <div class="flex items-center gap-2 text-xs">
+                        <div class="flex flex-wrap items-center gap-2 text-xs">
+                            <label class="flex items-center gap-1 text-gray-600">
+                                <span>Filtro email</span>
+                                <select
+                                    v-model="providerEmailFilter"
+                                    class="rounded border border-gray-300 px-2 py-1 text-xs focus:border-emerald-600 focus:ring-emerald-600"
+                                >
+                                    <option value="all">Todos</option>
+                                    <option value="with">Con correo</option>
+                                    <option value="without">Sin correo</option>
+                                </select>
+                            </label>
                             <button type="button"
                                 class="rounded border border-gray-300 px-3 py-1.5 hover:bg-gray-50"
                                 @click="emit('close')">Cerrar</button>
                             <button type="button"
                                 class="inline-flex items-center gap-2 rounded bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
-                                :disabled="sendingAll || filteredItems.length === 0"
+                                :disabled="sendingAll || providerCount === 0"
                                 @click="notifyAllProviders">
                                 <span v-if="sendingAll">Enviando…</span>
                                 <span v-else>Notificar a todos ({{ providerCount }})</span>
@@ -162,49 +241,60 @@ async function notifyProvider(ident: string) {
                         <div v-if="loading" class="text-gray-500">Cargando pronóstico…</div>
                         <div v-else-if="fatalError" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">{{ fatalError }}</div>
                         <div v-else>
-                            <p v-if="filteredItems.length === 0" class="text-gray-500">
-                                {{ includeZeroSuggestions ? 'No hay productos registrados para este pronóstico.' : 'No hay productos con sugerencia de resurtido mayor a cero.' }}
+                            <p class="mb-3 text-[11px] text-gray-500">
+                                <strong>Inventario actual</strong> refleja las existencias actuales; <strong>Stock recomendado</strong> es la meta proyectada con las ventas promedio para este horizonte.
                             </p>
-                            <div v-else class="overflow-x-auto">
+                            <p v-if="filteredProviders.length === 0" class="text-gray-500">
+                                No hay proveedores que coincidan con el filtro actual.
+                            </p>
+                            <div v-else class="max-h-[60vh] overflow-auto">
                                 <table class="min-w-full divide-y divide-gray-200 text-left text-xs">
-                                    <thead class="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+                                    <thead class="sticky top-0 z-10 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
                                         <tr>
-                                            <th class="px-3 py-2">Proveedor / Producto</th>
-                                            <th class="px-3 py-2 text-right">Sugerido</th>
-                                            <th class="px-3 py-2 text-right">Inventario</th>
-                                            <th class="px-3 py-2 text-right">Promedio diario</th>
-                                            <th class="px-3 py-2 text-right">Cobertura</th>
-                                            <th class="px-3 py-2 text-right">Restock antes de</th>
+                                            <th class="px-3 py-2">Proveedor</th>
+                                            <th class="px-3 py-2">Productos</th>
                                             <th class="px-3 py-2 text-right">Acciones</th>
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-gray-100">
-                                        <tr v-for="item in filteredItems" :key="item.provider_ident + '-' + item.producto_ident">
+                                        <tr v-for="group in filteredProviders" :key="group.key">
                                             <td class="px-3 py-2 align-top">
-                                                <p class="font-semibold text-gray-900">{{ item.producto_nombre ?? ('Producto ' + item.producto_ident) }}</p>
-                                                <p class="text-[11px] text-gray-500">
-                                                    {{ item.provider_name ?? ('Proveedor ' + item.provider_ident) }}
-                                                    <span v-if="item.provider_email" class="text-emerald-600">· {{ item.provider_email }}</span>
-                                                    <span v-else class="text-rose-600">· Sin email</span>
+                                                <p class="font-semibold text-gray-900">{{ group.provider_name ?? (group.provider_ident ? 'Proveedor ' + group.provider_ident : 'Proveedor sin nombre') }}</p>
+                                                <p class="text-[11px] text-gray-500">ID: {{ group.provider_ident ?? '—' }}</p>
+                                                <p class="text-[11px]" :class="group.provider_email ? 'text-emerald-600' : 'text-rose-600'">
+                                                    {{ group.provider_email ?? 'Sin correo registrado' }}
                                                 </p>
-                                                <p class="text-[11px] text-gray-400">ID: {{ item.producto_ident }}</p>
+                                                <p class="text-[11px] text-gray-500">Productos: {{ group.items.length }} · Sugerido total: {{ group.total_suggested }}</p>
                                             </td>
-                                            <td class="px-3 py-2 text-right font-semibold text-gray-900">{{ item.suggested_order_qty }}</td>
-                                            <td class="px-3 py-2 text-right text-gray-700">{{ item.inventory_on_hand }}</td>
-                                            <td class="px-3 py-2 text-right text-gray-700">{{ item.avg_daily_sales.toFixed(2) }}</td>
-                                            <td class="px-3 py-2 text-right text-gray-700">
-                                                {{ item.days_of_cover !== null ? item.days_of_cover + ' días' : 'Sin datos' }}
+                                            <td class="px-3 py-2">
+                                                <ul class="space-y-2">
+                                                    <li v-for="item in group.items" :key="item.provider_ident + '-' + item.producto_ident" class="rounded border border-gray-100 bg-gray-50 px-3 py-2">
+                                                        <div class="flex flex-col gap-1">
+                                                            <div class="flex flex-col text-sm text-gray-900">
+                                                                <span class="font-semibold">{{ item.producto_nombre ?? ('Producto ' + item.producto_ident) }}</span>
+                                                                <span class="text-[11px] text-gray-500">ID: {{ item.producto_ident }}</span>
+                                                            </div>
+                                                            <div class="flex flex-wrap justify-between text-[11px] text-gray-600 gap-2">
+                                                                <span>Sugerido: <strong class="text-gray-900">{{ item.suggested_order_qty }}</strong></span>
+                                                                <span>Stock recomendado: {{ item.recommended_inventory }}</span>
+                                                                <span>Inventario: {{ item.inventory_on_hand }}</span>
+                                                                <span>Promedio diario: {{ item.avg_daily_sales.toFixed(2) }}</span>
+                                                                <span>Cobertura: {{ item.days_of_cover !== null ? item.days_of_cover + ' días' : 'Sin datos' }}</span>
+                                                                <span>
+                                                                    <span v-if="item.restock_asap" class="mr-1 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">ASAP</span>
+                                                                    Reabastecer antes de {{ item.restock_by_date }}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </li>
+                                                </ul>
                                             </td>
-                                            <td class="px-3 py-2 text-right text-gray-700">
-                                                <span v-if="item.restock_asap" class="mr-2 rounded bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">ASAP</span>
-                                                {{ item.restock_by_date }}
-                                            </td>
-                                            <td class="px-3 py-2 text-right">
+                                            <td class="px-3 py-2 text-right align-top">
                                                 <button type="button"
                                                     class="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                                                    :disabled="sendingProvider === item.provider_ident || !item.provider_email || !item.provider_ident"
-                                                    @click="notifyProvider(item.provider_ident)">
-                                                    <span v-if="sendingProvider === item.provider_ident">Enviando…</span>
+                                                    :disabled="sendingProvider === group.provider_ident || !group.provider_email || !group.provider_ident"
+                                                    @click="notifyProvider(group.provider_ident || '')">
+                                                    <span v-if="sendingProvider === group.provider_ident">Enviando…</span>
                                                     <span v-else>Notificar</span>
                                                 </button>
                                             </td>

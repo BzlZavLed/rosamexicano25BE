@@ -8,6 +8,7 @@ export type SettingsResponse = {
         last_run?: string | null;
         include_zero?: boolean;
         min_days?: number;
+        lookback_days?: number;
     };
     card_charge_percent: number;
     last_closing_balance: number | null;
@@ -27,6 +28,7 @@ export async function updateSystemSettings(payload: {
     card_charge_percent?: number;
     restock_include_zero?: boolean;
     restock_min_days?: number;
+    restock_lookback_days?: number;
     recommended_percentage?: number;
     recommended_months?: number;
 }) {

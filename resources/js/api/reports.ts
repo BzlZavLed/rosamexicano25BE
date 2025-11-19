@@ -118,6 +118,7 @@ export interface RestockForecastItem {
     avg_daily_sales: number;
     inventory_on_hand: number;
     projected_demand: number;
+    recommended_inventory: number;
     suggested_order_qty: number;
     days_of_cover: number | null;
     lead_time_days: number;
@@ -141,6 +142,53 @@ export interface RestockForecastResponse {
 }
 
 export interface RestockNotifyResponse {
+    forecast_date: string;
+    horizon: RestockHorizon;
+    sent: number;
+    skipped: number;
+    providers_notified: Array<{
+        provider_ident: string;
+        provider_name: string | null;
+        email: string;
+    }>;
+    providers_skipped: Array<{
+        provider_ident: string | null;
+        provider_name: string | null;
+        reason: string;
+    }>;
+    message: string;
+}
+
+export interface InventoryProposalItem {
+    producto_ident: string;
+    producto_nombre: string | null;
+    provider_ident: string | null;
+    provider_name: string | null;
+    avg_daily_sales: number;
+    recommended_inventory: number;
+    inventory_on_hand: number | null;
+    total_units: number;
+}
+
+export interface InventoryProposalSummary {
+    horizon: RestockHorizon;
+    generated_at: string | null;
+    lookback_days: number;
+    lead_time_days: number;
+    minimum_inventory_days: number;
+    total_items: number;
+}
+
+export interface InventoryProposalResponse {
+    horizon: RestockHorizon;
+    generated_at: string | null;
+    lookback_days: number;
+    lead_time_days: number;
+    minimum_inventory_days: number;
+    items: InventoryProposalItem[];
+}
+
+export interface InventoryProposalNotifyResponse {
     forecast_date: string;
     horizon: RestockHorizon;
     sent: number;
@@ -234,6 +282,26 @@ export async function updateRestockPreference(horizon: RestockHorizon) {
 
 export async function notifyRestockForecast(params: { horizon: RestockHorizon; providers?: string[] }) {
     const { data } = await http.post<RestockNotifyResponse>('/reports/restock-forecast/notify', params);
+    return data;
+}
+
+export async function listInventoryProposals() {
+    const { data } = await http.get<{ proposals: InventoryProposalSummary[] }>('/reports/inventory-proposals');
+    return data.proposals;
+}
+
+export async function getInventoryProposal(horizon: RestockHorizon) {
+    const { data } = await http.get<InventoryProposalResponse>(`/reports/inventory-proposals/${horizon}`);
+    return data;
+}
+
+export async function generateInventoryProposal(params: { horizon: RestockHorizon; lookback_days?: number }) {
+    const { data } = await http.post<InventoryProposalResponse>('/reports/inventory-proposals', params);
+    return data;
+}
+
+export async function notifyInventoryProposal(params: { horizon: RestockHorizon; providers?: string[] }) {
+    const { data } = await http.post<InventoryProposalNotifyResponse>('/reports/inventory-proposals/notify', params);
     return data;
 }
 

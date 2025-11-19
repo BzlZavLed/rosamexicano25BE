@@ -30,6 +30,7 @@ class SettingsController extends Controller
             'card_charge_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'restock_include_zero' => ['sometimes', 'boolean'],
             'restock_min_days' => ['sometimes', 'integer', 'min:0', 'max:365'],
+            'restock_lookback_days' => ['sometimes', 'integer', 'min:30', 'max:365'],
             'recommended_percentage' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'recommended_months' => ['sometimes', 'integer', 'min:1', 'max:60'],
         ]);
@@ -54,6 +55,10 @@ class SettingsController extends Controller
 
         if (array_key_exists('restock_min_days', $data)) {
             SystemSettings::set('restock_min_days', (string) max(0, (int) $data['restock_min_days']));
+        }
+
+        if (array_key_exists('restock_lookback_days', $data)) {
+            SystemSettings::set('restock_lookback_days', (string) max(30, min(365, (int) $data['restock_lookback_days'])));
         }
 
         if (array_key_exists('recommended_percentage', $data)) {
@@ -112,6 +117,7 @@ class SettingsController extends Controller
                 'last_run' => SystemSettings::get('restock_last_run'),
                 'include_zero' => $this->includeZeroFlag(),
                 'min_days' => $this->getMinInventoryDays(),
+                'lookback_days' => $this->getLookbackDays(),
             ],
             'card_charge_percent' => (float) SystemSettings::get('card_charge_percent', '4.5'),
             'last_closing_balance' => $this->getLastClosingBalance(),
@@ -149,6 +155,12 @@ class SettingsController extends Controller
     private function getMinInventoryDays(): int
     {
         return (int) SystemSettings::get('restock_min_days', 14);
+    }
+
+    private function getLookbackDays(): int
+    {
+        $value = (int) SystemSettings::get('restock_lookback_days', 90);
+        return max(30, min(365, $value > 0 ? $value : 90));
     }
 
     /**

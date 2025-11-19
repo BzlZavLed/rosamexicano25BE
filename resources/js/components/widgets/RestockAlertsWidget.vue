@@ -88,6 +88,9 @@ onMounted(() => {
             No hay sugerencias de restock para este horizonte.
         </div>
         <div v-else>
+            <p class="mt-3 text-[11px] text-gray-500">
+                <strong>Inventario actual</strong> muestra lo que hoy existe en inventario; <strong>Stock recomendado</strong> es la meta calculada con ventas recientes + colchón del horizonte.
+            </p>
             <ul class="mt-3 space-y-2">
                 <li v-for="item in visibleItems" :key="item.provider_ident + '-' + item.producto_ident"
                     class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
@@ -111,6 +114,9 @@ onMounted(() => {
                     <span>Inventario: {{ item.inventory_on_hand }}</span>
                     <span>Promedio diario: {{ item.avg_daily_sales.toFixed(2) }}</span>
                 </div>
+                <p class="mt-1 text-[11px] text-gray-500">
+                    Stock recomendado: <span class="font-semibold text-gray-900">{{ item.recommended_inventory }}</span>
+                </p>
                 <p class="mt-1 text-[11px] text-gray-500">
                     Reabastecer antes de <span class="font-semibold text-gray-900">{{ item.restock_by_date }}</span>
                 </p>

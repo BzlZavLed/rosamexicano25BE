@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\ProviderRestockForecast;
+use App\Support\ProductSalesAggregator;
 use App\Support\SystemSettings;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -88,7 +89,12 @@ class GenerateRestockForecast extends Command
     private function resolveWindow(string $horizon): array
     {
         $lookbackOption = $this->option('lookback');
-        $lookback = $lookbackOption !== null ? max(30, (int) $lookbackOption) : self::DEFAULT_LOOKBACK_DAYS;
+        if ($lookbackOption !== null) {
+            $lookback = max(30, (int) $lookbackOption);
+        } else {
+            $lookback = (int) SystemSettings::get('restock_lookback_days', self::DEFAULT_LOOKBACK_DAYS);
+            $lookback = max(30, min(365, $lookback));
+        }
         $horizonDays = self::HORIZONS[$horizon]['days'];
 
         return [$lookback, $horizonDays];
@@ -107,24 +113,17 @@ class GenerateRestockForecast extends Command
 
         $this->info("Processing horizon {$horizon}: lookback {$lookbackDays} days, horizon {$horizonDays} days, min coverage {$minimumDays} days");
 
-        $sales = DB::table('ventadesg as vd')
-            ->select([
-                'vd.proveedor_id',
-                'vd.producto_id as producto_ident',
-                DB::raw('SUM(vd.quantity) as unidades'),
-                DB::raw('COUNT(DISTINCT vd.fecha) as dias_con_venta'),
-            ])
-            ->whereBetween('vd.fecha', [$startDate->toDateString(), $today->toDateString()])
-            ->groupBy('vd.proveedor_id', 'vd.producto_id')
-            ->havingRaw('SUM(vd.quantity) > 0')
-            ->get();
+        $sales = ProductSalesAggregator::aggregate(
+            $startDate->toDateString(),
+            $today->toDateString()
+        )->filter(fn ($row) => (float) $row->unidades > 0);
 
         if ($sales->isEmpty()) {
             return [];
         }
 
         $productoIdents = $sales->pluck('producto_ident')->unique()->filter()->values();
-        $proveedorIdents = $sales->pluck('proveedor_id')->unique()->filter()->values();
+        $proveedorIdents = $sales->pluck('provider_ident')->unique()->filter()->values();
 
         $productoMap = DB::table('producto as p')
             ->select(['p.ident', 'p.nombre'])
@@ -146,7 +145,7 @@ class GenerateRestockForecast extends Command
 
         $rows = [];
         foreach ($sales as $sale) {
-            $providerIdentValue = $sale->proveedor_id ?? null;
+            $providerIdentValue = $sale->provider_ident ?? null;
             $providerIdent = $providerIdentValue !== null ? (string) $providerIdentValue : '';
             if ($providerIdent === '') {
                 continue;

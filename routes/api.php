@@ -5,6 +5,7 @@ use App\Http\Controllers\CashierController;
 use App\Http\Controllers\CashierLegacyController;
 use App\Http\Controllers\ClientesController;
 use App\Http\Controllers\InventarioController;
+use App\Http\Controllers\InventoryProposalController;
 use App\Http\Controllers\MailerController;
 use App\Http\Controllers\MailerTrackController;
 use App\Http\Controllers\MensualidadController;
@@ -115,6 +116,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reports/restock-forecast', [ReportController::class, 'restockForecast']);
     Route::post('/reports/restock-forecast/preference', [ReportController::class, 'updateRestockPreference']);
     Route::post('/reports/restock-forecast/notify', [ReportController::class, 'restockForecastNotify']);
+    Route::get('/reports/inventory-proposals', [InventoryProposalController::class, 'index']);
+    Route::get('/reports/inventory-proposals/{horizon}', [InventoryProposalController::class, 'show']);
+    Route::post('/reports/inventory-proposals', [InventoryProposalController::class, 'store']);
+    Route::post('/reports/inventory-proposals/notify', [InventoryProposalController::class, 'notify']);
     Route::get('/settings/general', [SettingsController::class, 'general']);
     Route::post('/settings/general', [SettingsController::class, 'updateGeneral']);
     Route::post('/settings/general/run-restock', [SettingsController::class, 'runRestock']);

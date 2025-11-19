@@ -55,6 +55,7 @@ export interface RestockAlertsResponse {
         producto_nombre: string | null;
         inventory_on_hand: number;
         avg_daily_sales: number;
+        recommended_inventory: number;
         suggested_order_qty: number;
         days_of_cover: number | null;
         restock_by_date: string;

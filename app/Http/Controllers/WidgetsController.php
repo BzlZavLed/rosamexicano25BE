@@ -8,6 +8,7 @@ use App\Models\VentaDesg;
 use App\Models\Proveedor;
 use App\Models\ProviderRestockForecast;
 use App\Models\Usuario;
+use App\Support\ProductSalesAggregator;
 use App\Support\SystemSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -149,7 +150,8 @@ class WidgetsController extends Controller
             $daysOfCover = $avgDaily > 0 ? round($inventoryOnHand / max($avgDaily, 0.0001), 2) : null;
             $requiredDays = max(1, (int) $row->lead_time_days) + $minimumDays;
             $requiredUnits = $avgDaily * $requiredDays;
-            $suggested = (int) max(0, ceil($requiredUnits - $inventoryOnHand));
+            $recommendedInventory = (int) max(0, ceil($requiredUnits));
+            $suggested = (int) max(0, $recommendedInventory - $inventoryOnHand);
             $dueDate = $forecastCarbon->copy()->addDays(max(1, (int) $row->lead_time_days))->toDateString();
             $restockAsap = $inventoryOnHand < 5;
 
@@ -160,6 +162,7 @@ class WidgetsController extends Controller
                 'producto_nombre' => $row->producto_nombre,
                 'inventory_on_hand' => $inventoryOnHand,
                 'avg_daily_sales' => $avgDaily,
+                'recommended_inventory' => $recommendedInventory,
                 'suggested_order_qty' => $suggested,
                 'days_of_cover' => $daysOfCover,
                 'restock_by_date' => $dueDate,
@@ -234,19 +237,16 @@ class WidgetsController extends Controller
                 continue;
             }
 
-            $sales = DB::table('ventadesg as vd')
-                ->select([
-                    'vd.proveedor_id',
-                    'vd.producto_id',
-                    DB::raw('SUM(vd.quantity) as unidades'),
-                ])
-                ->whereBetween('vd.fecha', [$startDate, $todayString])
-                ->whereIn('vd.producto_id', $productIds)
-                ->groupBy('vd.proveedor_id', 'vd.producto_id')
-                ->get();
+            $providerIds = $group->pluck('provider_ident')->filter()->unique()->values();
+            $sales = ProductSalesAggregator::aggregate(
+                $startDate,
+                $todayString,
+                $productIds->all(),
+                $providerIds->all()
+            );
 
             foreach ($sales as $sale) {
-                $key = $this->avgKey((string) $sale->proveedor_id, (string) $sale->producto_id, $days);
+                $key = $this->avgKey((string) $sale->provider_ident, (string) $sale->producto_ident, $days);
                 $result[$key] = round((float) $sale->unidades / $days, 4);
             }
         }

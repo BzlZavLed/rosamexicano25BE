@@ -14,6 +14,7 @@
                 <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Producto</th>
                 <th style="text-align:right; border-bottom:1px solid #e5e7eb; padding:8px;">Sugerido</th>
                 <th style="text-align:right; border-bottom:1px solid #e5e7eb; padding:8px;">Inventario</th>
+                <th style="text-align:right; border-bottom:1px solid #e5e7eb; padding:8px;">Stock recomendado</th>
                 <th style="text-align:right; border-bottom:1px solid #e5e7eb; padding:8px;">Promedio diario</th>
                 <th style="text-align:right; border-bottom:1px solid #e5e7eb; padding:8px;">Cobertura</th>
             </tr>
@@ -27,6 +28,7 @@
                     </td>
                     <td style="text-align:right; border-bottom:1px solid #f3f4f6; padding:8px;">{{ $item['suggested_order_qty'] }}</td>
                     <td style="text-align:right; border-bottom:1px solid #f3f4f6; padding:8px;">{{ $item['inventory_on_hand'] }}</td>
+                    <td style="text-align:right; border-bottom:1px solid #f3f4f6; padding:8px;">{{ $item['recommended_inventory'] ?? '—' }}</td>
                     <td style="text-align:right; border-bottom:1px solid #f3f4f6; padding:8px;">{{ number_format($item['avg_daily_sales'], 2) }}</td>
                     <td style="text-align:right; border-bottom:1px solid #f3f4f6; padding:8px;">
                         {{ $item['days_of_cover'] !== null ? $item['days_of_cover'] . ' días' : 'Sin datos' }}

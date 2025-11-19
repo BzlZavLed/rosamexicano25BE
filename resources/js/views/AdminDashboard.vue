@@ -9,6 +9,7 @@ const MonthlyCobrosWidget = defineAsyncComponent(() => import('../components/wid
 const CashierSummaryWidget = defineAsyncComponent(() => import('../components/widgets/CashierSummaryWidget.vue'))
 const TopProductsWidget = defineAsyncComponent(() => import('../components/widgets/TopProductsWidget.vue'))
 const RestockAlertsWidget = defineAsyncComponent(() => import('../components/widgets/RestockAlertsWidget.vue'))
+const InventoryProposalWidget = defineAsyncComponent(() => import('../components/widgets/InventoryProposalWidget.vue'))
 </script>
 
 <template>
@@ -50,6 +51,12 @@ const RestockAlertsWidget = defineAsyncComponent(() => import('../components/wid
                 </Suspense>
                 <Suspense>
                     <RestockAlertsWidget />
+                    <template #fallback>
+                        <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
+                    </template>
+                </Suspense>
+                <Suspense>
+                    <InventoryProposalWidget />
                     <template #fallback>
                         <div class="h-28 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
                     </template>

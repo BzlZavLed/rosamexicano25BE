@@ -8,12 +8,14 @@ use App\Models\Producto;
 use App\Models\Inventario;
 use App\Models\Entrada;
 use App\Models\Egreso;
+use App\Models\Mailer;
 use App\Models\Proveedor;
 use App\Models\Mensualidad;
 use App\Models\DailyCashSummary;
 use App\Models\ProviderRestockForecast;
 use App\Models\Usuario;
 use App\Mail\RestockForecastMail;
+use App\Support\ProductSalesAggregator;
 use App\Support\SystemSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -571,7 +573,8 @@ class ReportController extends Controller
             $daysOfCover = $avgDaily > 0 ? round($inventoryOnHand / max($avgDaily, 0.0001), 2) : null;
             $requiredDays = max(1, (int) $row->lead_time_days) + $minimumDays;
             $requiredUnits = $avgDaily * $requiredDays;
-            $suggested = (int) max(0, ceil($requiredUnits - $inventoryOnHand));
+            $recommendedInventory = (int) max(0, ceil($requiredUnits));
+            $suggested = (int) max(0, $recommendedInventory - $inventoryOnHand);
             $dueDate = $forecastCarbon->copy()->addDays(max(1, (int) $row->lead_time_days))->toDateString();
             $restockAsap = $inventoryOnHand < 5;
 
@@ -584,6 +587,7 @@ class ReportController extends Controller
                 'avg_daily_sales' => $avgDaily,
                 'inventory_on_hand' => $inventoryOnHand,
                 'projected_demand' => (float) $row->projected_demand,
+                'recommended_inventory' => $recommendedInventory,
                 'suggested_order_qty' => $suggested,
                 'days_of_cover' => $daysOfCover,
                 'lead_time_days' => (int) $row->lead_time_days,
@@ -689,6 +693,8 @@ class ReportController extends Controller
             ? collect()
             : Proveedor::whereIn('ident', $providerIdents)->get()->keyBy('ident');
 
+        $freshAverages = $this->computeFreshAverageSales($rows);
+        $minimumDays = (int) SystemSettings::get('restock_min_days', 14);
         $sent = [];
         $skipped = [];
         $horizonLabel = $this->humanRestockHorizon($horizon);
@@ -706,22 +712,53 @@ class ReportController extends Controller
                 continue;
             }
 
-            $items = $group->map(function (ProviderRestockForecast $row) {
+            $items = $group->map(function (ProviderRestockForecast $row) use ($freshAverages, $minimumDays) {
+                $avgKey = $this->avgKey($row->provider_ident, $row->producto_ident, (int) $row->lookback_days);
+                $avgDaily = $freshAverages[$avgKey] ?? (float) $row->avg_daily_sales;
+                $requiredDays = max(1, (int) $row->lead_time_days) + $minimumDays;
+                $recommendedInventory = (int) max(0, ceil($avgDaily * $requiredDays));
+                $suggested = (int) max(0, $recommendedInventory - (int) $row->inventory_on_hand);
+
                 return [
                     'producto_ident' => $row->producto_ident,
                     'producto_nombre' => $row->producto_nombre,
-                    'suggested_order_qty' => (int) $row->suggested_order_qty,
-                    'avg_daily_sales' => (float) $row->avg_daily_sales,
+                    'suggested_order_qty' => $suggested,
+                    'avg_daily_sales' => $avgDaily,
                     'inventory_on_hand' => (int) $row->inventory_on_hand,
                     'projected_demand' => (float) $row->projected_demand,
+                    'recommended_inventory' => $recommendedInventory,
                     'days_of_cover' => $row->days_of_cover !== null ? (float) $row->days_of_cover : null,
                     'lead_time_days' => (int) $row->lead_time_days,
                 ];
             })->values()->all();
 
+            $mailSubject = sprintf(
+                'Pronóstico de resurtido (%s) - %s',
+                $horizonLabel,
+                $providerModel->nombre ?? 'Proveedor'
+            );
+
+            $mailViewData = [
+                'provider' => $providerModel,
+                'horizonLabel' => $horizonLabel,
+                'forecastDate' => $forecastDate,
+                'items' => $items,
+            ];
+
             Mail::to($providerModel->email)->send(
                 new RestockForecastMail($providerModel, $horizonLabel, $forecastDate, $items)
             );
+
+            $body = $this->sanitizeEmailBody(view('emails.restock_forecast', $mailViewData)->render());
+
+            Mailer::create([
+                'mail' => 'restock_forecast_' . $horizon,
+                'email' => $providerModel->email,
+                'asunto' => $mailSubject,
+                'mensaje' => $body,
+                'status' => 1,
+                'fecha' => now()->toDateString(),
+            ]);
 
             $sent[] = [
                 'provider_ident' => (string) $providerModel->ident,
@@ -1704,19 +1741,16 @@ class ReportController extends Controller
                 continue;
             }
 
-            $sales = DB::table('ventadesg as vd')
-                ->select([
-                    'vd.proveedor_id',
-                    'vd.producto_id',
-                    DB::raw('SUM(vd.quantity) as unidades'),
-                ])
-                ->whereBetween('vd.fecha', [$startDate, $todayString])
-                ->whereIn('vd.producto_id', $productIds)
-                ->groupBy('vd.proveedor_id', 'vd.producto_id')
-                ->get();
+            $providerIds = $group->pluck('provider_ident')->filter()->unique()->values();
+            $sales = ProductSalesAggregator::aggregate(
+                $startDate,
+                $todayString,
+                $productIds->all(),
+                $providerIds->all()
+            );
 
             foreach ($sales as $sale) {
-                $key = $this->avgKey((string) $sale->proveedor_id, (string) $sale->producto_id, $days);
+                $key = $this->avgKey((string) $sale->provider_ident, (string) $sale->producto_ident, $days);
                 $result[$key] = round((float) $sale->unidades / $days, 4);
             }
         }
@@ -1727,6 +1761,18 @@ class ReportController extends Controller
     private function avgKey(?string $providerIdent, ?string $productIdent, int $days): string
     {
         return (string) $providerIdent . ':' . (string) $productIdent . ':' . max(1, $days);
+    }
+
+    private function sanitizeEmailBody(string $body): string
+    {
+        $appName = config('app.name', 'Laravel');
+        $appUrl = config('app.url');
+        $brandLine = trim($appName . ': ' . ($appUrl ?? ''));
+        if ($appUrl && str_contains($body, $brandLine)) {
+            $body = str_replace($brandLine, '', $body);
+        }
+
+        return trim($body);
     }
 
     private function parseDateInput(string $value): Carbon
