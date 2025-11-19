@@ -18,6 +18,8 @@ const horizonLabels: Record<Horizon, string> = {
 const selected = ref<Horizon[]>(['2w'])
 const cardPercent = ref(4.5)
 const minDays = ref(14)
+const recommendedPercent = ref(5)
+const recommendedMonths = ref(12)
 const loading = ref(false)
 const saving = ref(false)
 const running = ref(false)
@@ -52,6 +54,8 @@ async function loadSettings() {
         lastClosingBalance.value = data.last_closing_balance ?? null
         includeZero.value = Boolean(data.restock.include_zero)
         minDays.value = data.restock.min_days ?? 14
+        recommendedPercent.value = data.analysis?.recommended_percentage ?? 5
+        recommendedMonths.value = data.analysis?.recommended_months ?? 12
     } catch (err: any) {
         error.value = err?.response?.data?.message || err?.message || 'No se pudo cargar la configuración.'
     } finally {
@@ -82,11 +86,15 @@ async function saveSettings() {
             card_charge_percent: cardPercent.value,
             restock_include_zero: includeZero.value,
             restock_min_days: minDays.value,
+            recommended_percentage: recommendedPercent.value,
+            recommended_months: recommendedMonths.value,
         })
         selected.value = (data.restock.horizon && data.restock.horizon.length
             ? (data.restock.horizon as Horizon[])
             : ['2w'])
         cardPercent.value = data.card_charge_percent ?? 4.5
+        recommendedPercent.value = data.analysis?.recommended_percentage ?? recommendedPercent.value
+        recommendedMonths.value = data.analysis?.recommended_months ?? recommendedMonths.value
         message.value = 'Configuración guardada. Recargando…'
         setTimeout(() => window.location.reload(), 800)
     } catch (err: any) {
@@ -124,10 +132,13 @@ async function runForecast() {
                         </div>
                         <button class="rounded border border-gray-300 px-3 py-1.5 text-sm" @click="emit('close')">Cerrar</button>
                     </header>
-                    <div class="px-5 py-4 space-y-4 text-sm text-gray-700">
-                        <div>
-                            <p class="text-xs uppercase tracking-wide text-gray-500">Horizontes incluidos en el cron</p>
-                            <div class="mt-2 flex flex-wrap gap-2">
+                    <div class="px-5 py-4 space-y-6 text-sm text-gray-700 divide-y divide-gray-200">
+                        <section class="space-y-2 pt-0">
+                            <div>
+                                <p class="text-xs uppercase tracking-wide text-gray-500">Pronósticos de restock</p>
+                                <p class="text-[11px] text-gray-500">Define cómo se alimentan el widget de restock y los reportes condensados.</p>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
                                 <label v-for="opt in availableHorizons" :key="opt"
                                     class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium"
                                     :class="selected.includes(opt) ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 text-gray-600'">
@@ -135,19 +146,15 @@ async function runForecast() {
                                     {{ horizonLabels[opt] }}
                                 </label>
                             </div>
-                            <p class="mt-2 text-[11px] text-gray-500">
-                                El cron diario ejecutará el pronóstico para los horizontes seleccionados.
-                                <span v-if="lastRun" class="block text-gray-400">Última ejecución: {{ lastRun }}</span>
-                                <span v-if="lastClosingBalance !== null" class="block text-gray-400">
-                                    Último saldo cierre: {{ new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(lastClosingBalance ?? 0) }}
-                                </span>
+                            <p class="text-[11px] text-gray-500">
+                                Los horizontes seleccionados se ejecutan diariamente.<span v-if="lastRun" class="block text-gray-400">Última ejecución: {{ lastRun }}</span>
                             </p>
-                            <label class="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs text-gray-600">
+                            <label class="inline-flex cursor-pointer items-center gap-2 text-xs text-gray-600">
                                 <input type="checkbox" class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
                                     v-model="includeZero" />
-                                <span>Mostrar y notificar productos con sugerencias iguales a 0 (>= 0).</span>
+                                <span>Mostrar también sugerencias en cero en widgets y reportes.</span>
                             </label>
-                            <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                            <div class="flex flex-wrap items-center gap-2 text-xs text-gray-600">
                                 <div>
                                     <span class="block font-semibold text-gray-700">Inventario mínimo (días)</span>
                                     <input type="number" min="0" max="120"
@@ -155,7 +162,7 @@ async function runForecast() {
                                         v-model.number="minDays" />
                                 </div>
                                 <p class="max-w-sm text-[11px] text-gray-500">
-                                    El modelo garantizará al menos este número de días de inventario adicional sobre el horizonte seleccionado.
+                                    Días adicionales que el sistema reserva al generar las alertas de restock.
                                 </p>
                             </div>
                             <button type="button"
@@ -165,20 +172,46 @@ async function runForecast() {
                                 <span v-if="running">Ejecutando…</span>
                                 <span v-else>Ejecutar pronóstico ahora</span>
                             </button>
-                        </div>
+                        </section>
 
-                        <div>
-                            <p class="text-xs uppercase tracking-wide text-gray-500">Cargo por tarjeta (%)</p>
-                            <div class="mt-2 flex items-center gap-2">
+                        <section class="space-y-2 pt-4">
+                            <div>
+                                <p class="text-xs uppercase tracking-wide text-gray-500">Pagos / Caja</p>
+                                <p class="text-[11px] text-gray-500">Aplicado en reportes de caja y cálculo de pagos a proveedores.</p>
+                            </div>
+                            <div class="flex items-center gap-2">
                                 <input type="number" step="0.1" min="0" max="100"
                                     class="w-24 rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
                                     v-model.number="cardPercent" />
-                                <span class="text-[11px] text-gray-500">Aplicado sobre las ganancias del proveedor cuando la venta es con
-                                    tarjeta.</span>
+                                <span class="text-[11px] text-gray-500">Porcentaje descontado cuando una venta se paga con tarjeta.</span>
                             </div>
-                        </div>
+                        </section>
 
-                        <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                        <section class="space-y-2 pt-4">
+                            <div>
+                                <p class="text-xs uppercase tracking-wide text-gray-500">Análisis históricos</p>
+                                <p class="text-[11px] text-gray-500">Usado en la pestaña “Importes recomendados”.</p>
+                            </div>
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <label class="text-xs text-gray-600">
+                                    <span class="block font-semibold text-gray-700">Porcentaje sobre ventas (%)</span>
+                                    <input type="number" step="0.1" min="0" max="100"
+                                        class="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                        v-model.number="recommendedPercent" />
+                                </label>
+                                <label class="text-xs text-gray-600">
+                                    <span class="block font-semibold text-gray-700">Meses históricos</span>
+                                    <input type="number" min="1" max="60"
+                                        class="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                        v-model.number="recommendedMonths" />
+                                </label>
+                            </div>
+                            <p class="text-[11px] text-gray-500">
+                                Controla el porcentaje y ventana de tiempo usados para sugerir nuevos importes en el módulo de Análisis.
+                            </p>
+                        </section>
+
+                        <section class="flex flex-wrap items-center gap-2 text-xs text-gray-500 pt-4">
                             <button type="button"
                                 class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
                                 :disabled="saving || loading"
@@ -186,8 +219,8 @@ async function runForecast() {
                                 <span v-if="saving">Guardando…</span>
                                 <span v-else>Guardar configuración</span>
                             </button>
-                            
-                        </div>
+                            <span class="text-[11px] text-gray-500">Los cambios impactan inmediatamente los módulos mencionados.</span>
+                        </section>
 
                         <div v-if="loading" class="text-xs text-gray-500">Cargando ajustes…</div>
                         <div v-if="error" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">

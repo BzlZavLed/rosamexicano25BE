@@ -57,6 +57,8 @@ export interface RestockAlertsResponse {
         avg_daily_sales: number;
         suggested_order_qty: number;
         days_of_cover: number | null;
+        restock_by_date: string;
+        restock_asap: boolean;
     }>;
 }
 

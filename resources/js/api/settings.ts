@@ -11,6 +11,10 @@ export type SettingsResponse = {
     };
     card_charge_percent: number;
     last_closing_balance: number | null;
+    analysis?: {
+        recommended_percentage: number;
+        recommended_months: number;
+    };
 };
 
 export async function getSystemSettings() {
@@ -23,6 +27,8 @@ export async function updateSystemSettings(payload: {
     card_charge_percent?: number;
     restock_include_zero?: boolean;
     restock_min_days?: number;
+    recommended_percentage?: number;
+    recommended_months?: number;
 }) {
     const { data } = await http.post<SettingsResponse>('/settings/general', payload);
     return data;

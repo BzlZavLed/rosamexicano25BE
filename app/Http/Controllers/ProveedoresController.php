@@ -62,6 +62,18 @@ class ProveedoresController extends Controller
     public function update(UpdateProveedorRequest $request, Proveedor $proveedor)
     {
         $changes = $request->validated();
+        if (!array_key_exists('email', $changes) || $changes['email'] === null || $changes['email'] === '') {
+            $changes['email'] = $proveedor->email ?? '-';
+        }
+        if (!array_key_exists('bancaria', $changes) || $changes['bancaria'] === null || $changes['bancaria'] === '') {
+            $changes['bancaria'] = $proveedor->bancaria ?? '-';
+        }
+        if (!array_key_exists('ciudad', $changes) || $changes['ciudad'] === null || $changes['ciudad'] === '') {
+            $changes['ciudad'] = $proveedor->ciudad ?? '-';
+        }
+        if (!array_key_exists('sucursal', $changes) || $changes['sucursal'] === null || $changes['sucursal'] === '') {
+            $changes['sucursal'] = $proveedor->sucursal ?? '-';
+        }
         if (array_key_exists('tipo', $changes)) {
             if ($changes['tipo'] !== 'normal') {
                 $changes['importe'] = null;

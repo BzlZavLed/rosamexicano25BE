@@ -139,7 +139,9 @@ class WidgetsController extends Controller
         $freshAverages = $this->computeFreshAverageSales($rows);
         $minimumDays = (int) SystemSettings::get('restock_min_days', 14);
 
-        $items = $rows->map(function (ProviderRestockForecast $row) use ($inventoryMap, $freshAverages, $minimumDays) {
+        $forecastCarbon = Carbon::parse($forecastDate);
+
+        $items = $rows->map(function (ProviderRestockForecast $row) use ($inventoryMap, $freshAverages, $minimumDays, $forecastCarbon) {
             $currentInventory = $inventoryMap->get($row->producto_ident);
             $inventoryOnHand = $currentInventory ? (int) $currentInventory->existencia : (int) $row->inventory_on_hand;
             $avgKey = $this->avgKey($row->provider_ident, $row->producto_ident, (int) $row->lookback_days);
@@ -148,6 +150,8 @@ class WidgetsController extends Controller
             $requiredDays = max(1, (int) $row->lead_time_days) + $minimumDays;
             $requiredUnits = $avgDaily * $requiredDays;
             $suggested = (int) max(0, ceil($requiredUnits - $inventoryOnHand));
+            $dueDate = $forecastCarbon->copy()->addDays(max(1, (int) $row->lead_time_days))->toDateString();
+            $restockAsap = $inventoryOnHand < 5;
 
             return [
                 'provider_ident' => $row->provider_ident,
@@ -158,6 +162,8 @@ class WidgetsController extends Controller
                 'avg_daily_sales' => $avgDaily,
                 'suggested_order_qty' => $suggested,
                 'days_of_cover' => $daysOfCover,
+                'restock_by_date' => $dueDate,
+                'restock_asap' => $restockAsap,
             ];
         });
 

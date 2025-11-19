@@ -1,5 +1,7 @@
 <?php
-
+ini_set('upload_max_filesize', '25M');
+ini_set('post_max_size', '30M');
+ini_set('max_file_uploads', '50');
 use App\Support\SystemSettings;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;

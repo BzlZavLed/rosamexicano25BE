@@ -174,6 +174,7 @@ async function notifyProvider(ident: string) {
                                             <th class="px-3 py-2 text-right">Inventario</th>
                                             <th class="px-3 py-2 text-right">Promedio diario</th>
                                             <th class="px-3 py-2 text-right">Cobertura</th>
+                                            <th class="px-3 py-2 text-right">Restock antes de</th>
                                             <th class="px-3 py-2 text-right">Acciones</th>
                                         </tr>
                                     </thead>
@@ -193,6 +194,10 @@ async function notifyProvider(ident: string) {
                                             <td class="px-3 py-2 text-right text-gray-700">{{ item.avg_daily_sales.toFixed(2) }}</td>
                                             <td class="px-3 py-2 text-right text-gray-700">
                                                 {{ item.days_of_cover !== null ? item.days_of_cover + ' días' : 'Sin datos' }}
+                                            </td>
+                                            <td class="px-3 py-2 text-right text-gray-700">
+                                                <span v-if="item.restock_asap" class="mr-2 rounded bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">ASAP</span>
+                                                {{ item.restock_by_date }}
                                             </td>
                                             <td class="px-3 py-2 text-right">
                                                 <button type="button"

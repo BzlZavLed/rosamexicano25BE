@@ -122,6 +122,8 @@ export interface RestockForecastItem {
     days_of_cover: number | null;
     lead_time_days: number;
     lookback_days: number;
+    restock_by_date: string;
+    restock_asap: boolean;
 }
 
 export interface RestockForecastResponse {

@@ -30,6 +30,8 @@ class SettingsController extends Controller
             'card_charge_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'restock_include_zero' => ['sometimes', 'boolean'],
             'restock_min_days' => ['sometimes', 'integer', 'min:0', 'max:365'],
+            'recommended_percentage' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+            'recommended_months' => ['sometimes', 'integer', 'min:1', 'max:60'],
         ]);
 
         if (isset($data['horizon'])) {
@@ -52,6 +54,14 @@ class SettingsController extends Controller
 
         if (array_key_exists('restock_min_days', $data)) {
             SystemSettings::set('restock_min_days', (string) max(0, (int) $data['restock_min_days']));
+        }
+
+        if (array_key_exists('recommended_percentage', $data)) {
+            SystemSettings::set('analysis_recommended_pct', (string) $data['recommended_percentage']);
+        }
+
+        if (array_key_exists('recommended_months', $data)) {
+            SystemSettings::set('analysis_recommended_months', (string) max(1, (int) $data['recommended_months']));
         }
 
         return response()->json($this->currentSettings());
@@ -105,6 +115,10 @@ class SettingsController extends Controller
             ],
             'card_charge_percent' => (float) SystemSettings::get('card_charge_percent', '4.5'),
             'last_closing_balance' => $this->getLastClosingBalance(),
+            'analysis' => [
+                'recommended_percentage' => (float) SystemSettings::get('analysis_recommended_pct', '5'),
+                'recommended_months' => (int) SystemSettings::get('analysis_recommended_months', '12'),
+            ],
         ];
     }
 

@@ -560,7 +560,9 @@ class ReportController extends Controller
         $minimumDays = (int) SystemSettings::get('restock_min_days', 14);
         $leadTimeDays = $rows->first()?->lead_time_days ?? 0;
 
-        $items = $rows->map(function (ProviderRestockForecast $row) use ($providerMap, $inventoryMap, $freshAverages, $minimumDays) {
+        $forecastCarbon = Carbon::parse($forecastDate);
+
+        $items = $rows->map(function (ProviderRestockForecast $row) use ($providerMap, $inventoryMap, $freshAverages, $minimumDays, $forecastCarbon) {
             $provider = $row->provider_ident ? $providerMap->get($row->provider_ident) : null;
             $currentInventory = $inventoryMap->get($row->producto_ident);
             $inventoryOnHand = $currentInventory ? (int) $currentInventory->existencia : (int) $row->inventory_on_hand;
@@ -570,6 +572,8 @@ class ReportController extends Controller
             $requiredDays = max(1, (int) $row->lead_time_days) + $minimumDays;
             $requiredUnits = $avgDaily * $requiredDays;
             $suggested = (int) max(0, ceil($requiredUnits - $inventoryOnHand));
+            $dueDate = $forecastCarbon->copy()->addDays(max(1, (int) $row->lead_time_days))->toDateString();
+            $restockAsap = $inventoryOnHand < 5;
 
             return [
                 'provider_ident' => $row->provider_ident,
@@ -584,6 +588,8 @@ class ReportController extends Controller
                 'days_of_cover' => $daysOfCover,
                 'lead_time_days' => (int) $row->lead_time_days,
                 'lookback_days' => (int) $row->lookback_days,
+                'restock_by_date' => $dueDate,
+                'restock_asap' => $restockAsap,
             ];
         })->values();
 

@@ -94,7 +94,12 @@ onMounted(() => {
                     <div class="flex items-center justify-between">
                         <div>
                             <p class="text-sm font-semibold text-gray-900">{{ item.producto_nombre ?? `Producto ${item.producto_ident}` }}</p>
-                            <p class="text-[11px] text-gray-500">Proveedor: {{ item.provider_name ?? item.provider_ident }}</p>
+                            <p class="text-[11px] text-gray-500">
+                                Proveedor: {{ item.provider_name ?? item.provider_ident }}
+                                <span v-if="item.restock_asap" class="ml-1 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                                    Restock ASAP
+                                </span>
+                            </p>
                         </div>
                         <div class="text-right text-xs text-gray-600">
                             <p><span class="font-semibold text-gray-900">{{ item.suggested_order_qty }}</span> sugeridas</p>
@@ -106,6 +111,9 @@ onMounted(() => {
                     <span>Inventario: {{ item.inventory_on_hand }}</span>
                     <span>Promedio diario: {{ item.avg_daily_sales.toFixed(2) }}</span>
                 </div>
+                <p class="mt-1 text-[11px] text-gray-500">
+                    Reabastecer antes de <span class="font-semibold text-gray-900">{{ item.restock_by_date }}</span>
+                </p>
             </li>
         </ul>
             <button type="button" class="mt-3 text-xs font-semibold text-emerald-700 hover:text-emerald-800" @click="showDetails = true">
