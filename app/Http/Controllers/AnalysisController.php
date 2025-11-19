@@ -40,11 +40,14 @@ class AnalysisController extends Controller
     {
         $this->ensureAdmin($request);
 
+        $monthSelect = $this->monthExpression('fecha', true);
+        $monthGroup = $this->monthExpression('fecha');
+
         $months = DB::table('historic_ventadesg')
-            ->selectRaw("DATE_TRUNC('month', fecha::timestamp)::date as month")
+            ->selectRaw("{$monthSelect} as month")
             ->whereNotNull('fecha')
-            ->groupByRaw("DATE_TRUNC('month', fecha::timestamp)")
-            ->orderByRaw("DATE_TRUNC('month', fecha::timestamp)")
+            ->groupByRaw($monthGroup)
+            ->orderByRaw($monthGroup)
             ->get()
             ->map(function ($row) {
                 $carbon = Carbon::parse($row->month);
@@ -62,13 +65,16 @@ class AnalysisController extends Controller
             ]);
         }
 
+        $hvMonthSelect = $this->monthExpression('hv.fecha', true);
+        $hvMonthGroup = $this->monthExpression('hv.fecha');
+
         $sales = DB::table('historic_ventadesg as hv')
-            ->selectRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre') as proveedor_nombre, DATE_TRUNC('month', hv.fecha::timestamp)::date as month, SUM(hv.total) as total")
+            ->selectRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre') as proveedor_nombre, {$hvMonthSelect} as month, SUM(hv.total) as total")
             ->leftJoin('proveedores as pr', function ($join) {
                 $join->on(DB::raw('CAST(pr.ident AS TEXT)'), '=', 'hv.proveedor_ident');
             })
             ->whereNotNull('hv.fecha')
-            ->groupByRaw("hv.proveedor_ident, pr.nombre, DATE_TRUNC('month', hv.fecha::timestamp)")
+            ->groupByRaw("hv.proveedor_ident, pr.nombre, {$hvMonthGroup}")
             ->orderBy('proveedor_nombre')
             ->get();
 
@@ -120,8 +126,9 @@ class AnalysisController extends Controller
             return response()->json(['items' => []]);
         }
 
+        $statsMonthExpr = $this->monthExpression('fecha');
         $stats = DB::table('historic_ventadesg')
-            ->selectRaw("proveedor_ident, SUM(total) as total, COUNT(DISTINCT DATE_TRUNC('month', fecha::timestamp)) as months")
+            ->selectRaw("proveedor_ident, SUM(total) as total, COUNT(DISTINCT {$statsMonthExpr}) as months")
             ->whereNotNull('proveedor_ident')
             ->whereBetween('fecha', [$periodStart->toDateString(), $periodEnd->toDateString()])
             ->groupBy('proveedor_ident')
@@ -503,6 +510,23 @@ class AnalysisController extends Controller
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    private function monthExpression(string $column, bool $castToDate = false): string
+    {
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            $expr = "DATE_TRUNC('month', {$column}::timestamp)";
+            return $castToDate ? "({$expr})::date" : $expr;
+        }
+
+        $parsed = "STR_TO_DATE({$column}, '%Y-%m-%d')";
+        $expr = "DATE_FORMAT({$parsed}, '%Y-%m-01')";
+        if ($castToDate) {
+            return "STR_TO_DATE({$expr}, '%Y-%m-%d')";
+        }
+
+        return $expr;
     }
 
     private function ensureAdmin(Request $request): void
