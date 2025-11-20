@@ -46,7 +46,7 @@ class AnalysisController extends Controller
         $months = DB::table('historic_ventadesg')
             ->selectRaw("{$monthSelect} as month")
             ->whereNotNull('fecha')
-            ->groupByRaw($monthGroup)
+            ->distinct()
             ->orderByRaw($monthGroup)
             ->get()
             ->map(function ($row) {
@@ -74,7 +74,7 @@ class AnalysisController extends Controller
                 $join->on(DB::raw('CAST(pr.ident AS TEXT)'), '=', 'hv.proveedor_ident');
             })
             ->whereNotNull('hv.fecha')
-            ->groupByRaw("hv.proveedor_ident, pr.nombre, {$hvMonthGroup}")
+            ->groupByRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre'), {$hvMonthGroup}")
             ->orderBy('proveedor_nombre')
             ->get();
 
