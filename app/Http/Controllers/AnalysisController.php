@@ -46,7 +46,7 @@ class AnalysisController extends Controller
             ->selectRaw("{$monthSelect} as month")
             ->whereNotNull('fecha')
             ->groupByRaw($monthSelect)
-            ->orderBy('month')
+            ->orderBy($monthSelect)
             ->get()
             ->map(function ($row) {
                 $carbon = Carbon::parse($row->month);
@@ -64,17 +64,7 @@ class AnalysisController extends Controller
             ]);
         }
 
-        $hvMonthSelect = $this->monthExpression('hv.fecha', true);
-
-        $sales = DB::table('historic_ventadesg as hv')
-            ->selectRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre') as proveedor_nombre, {$hvMonthSelect} as month, SUM(hv.total) as total")
-            ->leftJoin('proveedores as pr', function ($join) {
-                $join->on(DB::raw('CAST(pr.ident AS TEXT)'), '=', 'hv.proveedor_ident');
-            })
-            ->whereNotNull('hv.fecha')
-            ->groupByRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre'), {$hvMonthSelect}")
-            ->orderBy('month')
-            ->get();
+        $sales = $this->buildProviderMonthSalesQuery()->get();
 
         $monthKeys = $months->pluck('key')->all();
 
@@ -124,13 +114,7 @@ class AnalysisController extends Controller
             return response()->json(['items' => []]);
         }
 
-        $statsMonthExpr = $this->monthExpression('fecha');
-        $stats = DB::table('historic_ventadesg')
-            ->selectRaw("proveedor_ident, SUM(total) as total, COUNT(DISTINCT {$statsMonthExpr}) as months")
-            ->whereNotNull('proveedor_ident')
-            ->whereBetween('fecha', [$periodStart->toDateString(), $periodEnd->toDateString()])
-            ->groupBy('proveedor_ident')
-            ->get()
+        $stats = $this->buildProviderAggregateQuery($periodStart, $periodEnd)->get()
             ->keyBy(fn ($row) => (string) $row->proveedor_ident);
 
         $items = $providers->map(function ($provider, $ident) use ($stats, $percentage) {
@@ -508,6 +492,50 @@ class AnalysisController extends Controller
         } catch (\Throwable $e) {
             return null;
         }
+    }
+
+    private function buildProviderMonthSalesQuery()
+    {
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            $monthExpr = "DATE_TRUNC('month', hv.fecha::timestamp)::date";
+            return DB::table('historic_ventadesg as hv')
+                ->selectRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre') as proveedor_nombre, {$monthExpr} as month, SUM(hv.total) as total")
+                ->leftJoin('proveedores as pr', 'pr.ident', '=', DB::raw('hv.proveedor_ident::int'))
+                ->whereNotNull('hv.fecha')
+                ->groupByRaw("hv.proveedor_ident, pr.nombre, {$monthExpr}")
+                ->orderBy('month');
+        }
+
+        $monthExpr = "STR_TO_DATE(DATE_FORMAT(STR_TO_DATE(hv.fecha, '%Y-%m-%d'), '%Y-%m-01'), '%Y-%m-%d')";
+        return DB::table('historic_ventadesg as hv')
+            ->selectRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre') as proveedor_nombre, {$monthExpr} as month, SUM(hv.total) as total")
+            ->leftJoin('proveedores as pr', function ($join) {
+                $join->on('pr.ident', '=', DB::raw('CAST(hv.proveedor_ident AS UNSIGNED)'));
+            })
+            ->whereNotNull('hv.fecha')
+            ->groupByRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre'), {$monthExpr}")
+            ->orderBy('month');
+    }
+
+    private function buildProviderAggregateQuery(Carbon $start, Carbon $end)
+    {
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            $monthExpr = "DATE_TRUNC('month', fecha::timestamp)";
+            return DB::table('historic_ventadesg')
+                ->selectRaw("proveedor_ident, SUM(total) as total, COUNT(DISTINCT {$monthExpr}) as months")
+                ->whereNotNull('proveedor_ident')
+                ->whereBetween('fecha', [$start->toDateString(), $end->toDateString()])
+                ->groupBy('proveedor_ident');
+        }
+
+        $monthExpr = "DATE_FORMAT(STR_TO_DATE(fecha, '%Y-%m-%d'), '%Y-%m-01')";
+        return DB::table('historic_ventadesg')
+            ->selectRaw("proveedor_ident, SUM(total) as total, COUNT(DISTINCT {$monthExpr}) as months")
+            ->whereNotNull('proveedor_ident')
+            ->whereBetween('fecha', [$start->toDateString(), $end->toDateString()])
+            ->groupBy('proveedor_ident');
     }
 
     private function monthExpression(string $column, bool $castToDate = false): string
