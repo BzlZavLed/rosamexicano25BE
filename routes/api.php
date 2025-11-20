@@ -123,9 +123,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/settings/general', [SettingsController::class, 'general']);
     Route::post('/settings/general', [SettingsController::class, 'updateGeneral']);
     Route::post('/settings/general/run-restock', [SettingsController::class, 'runRestock']);
+    Route::post('/settings/general/run-cash-autoclose', [SettingsController::class, 'runCashAutoClose']);
     Route::get('/analysis/summary', [AnalysisController::class, 'summary']);
     Route::post('/analysis/import', [AnalysisController::class, 'import']);
     Route::get('/analysis/top-sellers', [AnalysisController::class, 'topSellers']);
+    Route::get('/analysis/top-products', [AnalysisController::class, 'topProducts']);
     Route::get('/analysis/month-details', [AnalysisController::class, 'monthDetails']);
     Route::get('/analysis/recommended-importes', [AnalysisController::class, 'recommendedImportes']);
     Route::post('/analysis/recommended-importes/apply', [AnalysisController::class, 'applyRecommendedImport']);

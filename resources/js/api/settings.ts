@@ -43,3 +43,10 @@ export async function runRestockForecastManual(horizon: Array<RestockHorizon>) {
     );
     return data;
 }
+
+export async function runCashAutoClose() {
+    const { data } = await http.post<{ message: string; dates: string[]; count: number }>(
+        '/settings/general/run-cash-autoclose'
+    );
+    return data;
+}

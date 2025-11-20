@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withCommands([
         \App\Console\Commands\GenerateRestockForecast::class,
+        \App\Console\Commands\AutoCloseCashbox::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
@@ -38,6 +39,8 @@ return Application::configure(basePath: dirname(__DIR__))
                 '--horizon' => $horizon,
             ]);
         })->dailyAt('03:00');
+
+        $schedule->command('cash:auto-close')->dailyAt('23:59');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
                 Integration::handles($exceptions);

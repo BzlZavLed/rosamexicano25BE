@@ -89,6 +89,26 @@ export async function getRecommendedImportes() {
     return data;
 }
 
+export type TopProductsChartResponse = {
+    range: {
+        months: number;
+        from: string;
+        to: string;
+    };
+    items: Array<{
+        producto_ident: string | null;
+        producto_nombre: string | null;
+        proveedor_nombre: string | null;
+        total_quantity: number;
+        total_amount: number;
+    }>;
+};
+
+export async function getTopProductsChart(params: { months: 3 | 6 | 9 }) {
+    const { data } = await http.get<TopProductsChartResponse>('/analysis/top-products', { params });
+    return data;
+}
+
 export async function applyRecommendedImport(payload: {
     provider_ident: string;
     importe: number;

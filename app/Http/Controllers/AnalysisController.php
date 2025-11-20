@@ -151,6 +151,55 @@ class AnalysisController extends Controller
         ]);
     }
 
+    public function topProducts(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        $months = (int) $request->input('months', 3);
+        $allowed = [3, 6, 9];
+        if (!in_array($months, $allowed, true)) {
+            return response()->json(['message' => 'El parámetro months debe ser 3, 6 o 9.'], 422);
+        }
+
+        $end = Carbon::today()->endOfDay();
+        $start = (clone $end)->subMonths($months)->startOfDay();
+
+        $itemsQuery = DB::table('historic_ventadesg as hv');
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            $itemsQuery->leftJoin('proveedores as pr', 'pr.ident', '=', DB::raw('CAST(hv.proveedor_ident AS INTEGER)'));
+        } else {
+            $itemsQuery->leftJoin('proveedores as pr', 'pr.ident', '=', DB::raw('CAST(hv.proveedor_ident AS UNSIGNED)'));
+        }
+
+        $items = $itemsQuery
+            ->selectRaw('hv.producto_ident, hv.producto_nombre, COALESCE(pr.nombre, \'Proveedor sin nombre\') as proveedor_nombre, SUM(COALESCE(hv.cantidad, 0)) as total_quantity, SUM(COALESCE(hv.total, 0)) as total_amount')
+            ->whereNotNull('hv.fecha')
+            ->whereBetween('hv.fecha', [$start->toDateString(), $end->toDateString()])
+            ->groupBy('hv.producto_ident', 'hv.producto_nombre', 'proveedor_nombre')
+            ->orderByDesc(DB::raw('SUM(COALESCE(hv.cantidad, 0))'))
+            ->limit(20)
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'producto_ident' => $row->producto_ident,
+                    'producto_nombre' => $row->producto_nombre,
+                    'proveedor_nombre' => $row->proveedor_nombre,
+                    'total_quantity' => (float) $row->total_quantity,
+                    'total_amount' => (float) $row->total_amount,
+                ];
+            });
+
+        return response()->json([
+            'range' => [
+                'months' => $months,
+                'from' => $start->toDateString(),
+                'to' => $end->toDateString(),
+            ],
+            'items' => $items,
+        ]);
+    }
+
     public function applyRecommendedImport(Request $request)
     {
         $this->ensureAdmin($request);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { getSystemSettings, updateSystemSettings, runRestockForecastManual } from '../../api/settings'
+import { getSystemSettings, updateSystemSettings, runRestockForecastManual, runCashAutoClose } from '../../api/settings'
 import type { RestockHorizon } from '../../api/reports'
 
 const props = defineProps<{ open: boolean }>()
@@ -24,6 +24,7 @@ const recommendedMonths = ref(12)
 const loading = ref(false)
 const saving = ref(false)
 const running = ref(false)
+const runningAutoClose = ref(false)
 const message = ref('')
 const error = ref('')
 const lastRun = ref<string | null>(null)
@@ -120,6 +121,20 @@ async function runForecast() {
         running.value = false
     }
 }
+
+async function runAutoCloseCashbox() {
+    runningAutoClose.value = true
+    error.value = ''
+    message.value = ''
+    try {
+        const { message: msg, dates } = await runCashAutoClose()
+        message.value = dates?.length ? `${msg} Fechas: ${dates.join(', ')}` : msg
+    } catch (err: any) {
+        error.value = err?.response?.data?.message || err?.message || 'No se pudo ejecutar el cierre automático.'
+    } finally {
+        runningAutoClose.value = false
+    }
+}
 </script>
 
 <template>
@@ -185,6 +200,13 @@ async function runForecast() {
                                 @click="runForecast">
                                 <span v-if="running">Ejecutando…</span>
                                 <span v-else>Ejecutar pronóstico ahora</span>
+                            </button>
+                            <button type="button"
+                                class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
+                                :disabled="runningAutoClose || loading"
+                                @click="runAutoCloseCashbox">
+                                <span v-if="runningAutoClose">Cerrando…</span>
+                                <span v-else>Forzar cierre de caja (hoy)</span>
                             </button>
                         </section>
 

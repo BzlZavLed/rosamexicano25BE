@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from 'vue'
 import AppLayout from '../components/layout/AppLayout.vue'
-import type { AnalysisSummary, TopSellersResponse, MonthDetailsResponse, RecommendedImporteItem } from '../api/analysis'
+import type { AnalysisSummary, TopSellersResponse, MonthDetailsResponse, RecommendedImporteItem, TopProductsChartResponse } from '../api/analysis'
 import {
     getAnalysisSummary,
     importAnalysisFile,
@@ -9,6 +9,7 @@ import {
     getMonthDetails,
     getRecommendedImportes,
     applyRecommendedImport,
+    getTopProductsChart,
 } from '../api/analysis'
 
 const summary = ref<AnalysisSummary | null>(null)
@@ -18,10 +19,14 @@ const successMessage = ref('')
 const errorMessage = ref('')
 const ventasFile = ref<File | null>(null)
 const desgFile = ref<File | null>(null)
-const activeTab = ref<'import' | 'topSellers' | 'recommended'>('import')
+const activeTab = ref<'import' | 'topSellers' | 'topProducts' | 'recommended'>('import')
 const topData = ref<TopSellersResponse | null>(null)
 const topLoading = ref(false)
 const topError = ref('')
+const productsChartData = ref<TopProductsChartResponse | null>(null)
+const productsChartLoading = ref(false)
+const productsChartError = ref('')
+const productsChartMonths = ref<3 | 6 | 9>(3)
 const detailsOpen = ref(false)
 const detailsLoading = ref(false)
 const detailsError = ref('')
@@ -91,8 +96,20 @@ watch(
         if (tab === 'topSellers' && !topData.value && !topLoading.value) {
             await loadTopSellers()
         }
+        if (tab === 'topProducts' && !productsChartData.value && !productsChartLoading.value) {
+            await loadTopProductsChart()
+        }
         if (tab === 'recommended' && recommendedData.value.length === 0 && !recommendedLoading.value) {
             await loadRecommended()
+        }
+    }
+)
+
+watch(
+    () => productsChartMonths.value,
+    async () => {
+        if (activeTab.value === 'topProducts') {
+            await loadTopProductsChart()
         }
     }
 )
@@ -166,6 +183,39 @@ function getRowEmail(row: RecommendedImporteItem) {
     return emailOverrides.value[row.provider_ident] ?? row.provider_email ?? ''
 }
 
+const productsChartOrder = ref<'quantity' | 'amount'>('quantity')
+const topProductsBars = computed(() => {
+    if (!productsChartData.value) return []
+    const items = [...productsChartData.value.items]
+    if (productsChartOrder.value === 'amount') {
+        items.sort((a, b) => b.total_amount - a.total_amount)
+    } else {
+        items.sort((a, b) => b.total_quantity - a.total_quantity)
+    }
+    const max = Math.max(...items.map((item) => items.length ? (productsChartOrder.value === 'amount' ? item.total_amount : item.total_quantity) : 0), 0)
+    return items.map((item) => ({
+        ident: item.producto_ident ?? 'sin-id',
+        nombre: item.producto_nombre ?? (item.producto_ident ? `Producto ${item.producto_ident}` : 'Producto sin nombre'),
+        proveedor: item.proveedor_nombre ?? 'Proveedor sin nombre',
+        cantidad: item.total_quantity,
+        monto: item.total_amount,
+        percent: max > 0 ? Math.round(((productsChartOrder.value === 'amount' ? item.total_amount : item.total_quantity) / max) * 100) : 0,
+    }))
+})
+
+async function loadTopProductsChart() {
+    productsChartLoading.value = true
+    productsChartError.value = ''
+    try {
+        productsChartData.value = await getTopProductsChart({ months: productsChartMonths.value })
+    } catch (err: any) {
+        productsChartError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar los productos más vendidos.'
+        productsChartData.value = null
+    } finally {
+        productsChartLoading.value = false
+    }
+}
+
 async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean) {
     recommendedActionError.value = ''
     recommendedSuccess.value = ''
@@ -218,6 +268,12 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                         :class="activeTab === 'topSellers' ? 'text-emerald-700 border-b-2 border-emerald-600' : 'text-gray-500'"
                         @click="activeTab = 'topSellers'">
                         Top sellers (proveedores)
+                    </button>
+                    <button
+                        class="px-3 py-2 text-sm font-semibold"
+                        :class="activeTab === 'topProducts' ? 'text-emerald-700 border-b-2 border-emerald-600' : 'text-gray-500'"
+                        @click="activeTab = 'topProducts'">
+                        Productos más vendidos
                     </button>
                     <button
                         class="px-3 py-2 text-sm font-semibold"
@@ -331,6 +387,66 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                     </table>
                 </div>
                 <div v-else class="text-sm text-gray-500">Aún no hay datos suficientes para calcular top sellers.</div>
+            </div>
+
+            <div v-else-if="activeTab === 'topProducts'">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-base font-semibold text-gray-800">Top 20 productos más vendidos</h2>
+                        <p class="text-sm text-gray-500">
+                            Basado en las ventas históricas registradas.
+                        </p>
+                        <p v-if="productsChartData" class="text-xs text-gray-400 mt-1">
+                            Rango analizado: {{ productsChartData.range.from }} — {{ productsChartData.range.to }}
+                        </p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+                        <label>
+                            <span class="mr-2 font-medium text-gray-700">Últimos meses</span>
+                            <select v-model.number="productsChartMonths"
+                                class="rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-emerald-700 focus:ring-emerald-700">
+                                <option :value="3">3 meses</option>
+                                <option :value="6">6 meses</option>
+                                <option :value="9">9 meses</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span class="mr-2 font-medium text-gray-700">Ordenar por</span>
+                            <select v-model="productsChartOrder"
+                                class="rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-emerald-700 focus:ring-emerald-700">
+                                <option value="quantity">Cantidad vendida</option>
+                                <option value="amount">Monto de venta</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+
+                <div v-if="productsChartError"
+                    class="mt-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {{ productsChartError }}
+                </div>
+                <div v-else-if="productsChartLoading" class="mt-4 text-sm text-gray-500">
+                    Cargando productos más vendidos…
+                </div>
+                <div v-else-if="productsChartData && productsChartData.items.length === 0" class="mt-4 text-sm text-gray-500">
+                    No hay datos suficientes para este periodo.
+                </div>
+                <div v-else class="mt-4 space-y-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div v-for="item in topProductsBars" :key="item.ident" class="space-y-1">
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="font-medium text-gray-800 truncate">{{ item.nombre }}</span>
+                            <span class="text-xs text-gray-500">Vendidos: {{ item.cantidad }}</span>
+                        </div>
+                        <p class="text-[11px] text-gray-500">Proveedor: {{ item.proveedor }}</p>
+                        <div class="text-[11px] text-gray-500">
+                            Valor aproximado: {{ item.monto.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                        </div>
+                        <div class="h-3 rounded bg-gray-200 overflow-hidden">
+                            <div class="h-full rounded bg-emerald-600" :style="{ width: item.percent + '%' }"></div>
+                        </div>
+                        <p class="text-[11px] text-gray-500">ID: {{ item.ident }}</p>
+                    </div>
+                </div>
             </div>
 
             <div v-else-if="activeTab === 'recommended'">

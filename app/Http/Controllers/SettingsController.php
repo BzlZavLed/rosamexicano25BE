@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Usuario;
 use App\Models\DailyCashSummary;
 use App\Support\CardCharge;
+use App\Support\CashboxAutoCloser;
 use App\Support\SystemSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
@@ -96,6 +97,17 @@ class SettingsController extends Controller
         return response()->json([
             'message' => 'Pronóstico ejecutado',
             'horizon' => $horizon,
+        ]);
+    }
+
+    public function runCashAutoClose(Request $request)
+    {
+        $this->ensureAdmin($request);
+        $result = CashboxAutoCloser::closePending();
+        return response()->json([
+            'message' => 'Cierre automático ejecutado.',
+            'dates' => $result['dates'],
+            'count' => $result['count'],
         ]);
     }
 
