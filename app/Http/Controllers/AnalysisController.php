@@ -47,7 +47,7 @@ class AnalysisController extends Controller
             ->selectRaw("{$monthSelect} as month")
             ->whereNotNull('fecha')
             ->groupByRaw($monthGroup)
-            ->orderByRaw($monthGroup)
+            ->orderByRaw($monthSelect)
             ->get()
             ->map(function ($row) {
                 $carbon = Carbon::parse($row->month);
