@@ -36,6 +36,8 @@ class CashboxAutoCloser
             if ($summary->fecha) {
                 $dates[] = Carbon::parse($summary->fecha)->toDateString();
             }
+
+            //self::recalculateFutureSummaries($summary);
         });
 
         $uniqueDates = array_values(array_unique($dates));
@@ -44,5 +46,28 @@ class CashboxAutoCloser
             'count' => $pending->count(),
             'dates' => $uniqueDates,
         ];
+    }
+    private static function recalculateFutureSummaries(DailyCashSummary $closedSummary): void
+    {
+        $fecha = $closedSummary->fecha;
+        if (!$fecha) {
+            return;
+        }
+
+        $next = DailyCashSummary::query()
+            ->where('fecha', '>', $fecha)
+            ->orderBy('fecha')
+            ->get();
+
+        $previousClosing = (float) $closedSummary->saldo_cierre;
+
+        foreach ($next as $summary) {
+            $summary->saldo_inicial = $previousClosing;
+            $efectivo = (float) ($summary->efectivo ?? 0);
+            $egresos = (float) ($summary->egresos ?? 0);
+            $summary->saldo_cierre = round($summary->saldo_inicial + $efectivo - $egresos, 2);
+            $summary->save();
+            $previousClosing = (float) $summary->saldo_cierre;
+        }
     }
 }
