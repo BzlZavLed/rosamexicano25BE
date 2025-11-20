@@ -43,10 +43,10 @@ class AnalysisController extends Controller
         $monthSelect = $this->monthExpression('fecha', true);
 
         $months = DB::table('historic_ventadesg')
-            ->selectRaw("{$monthSelect} as month")
+            ->selectRaw("{$monthSelect} as month_alias")
             ->whereNotNull('fecha')
-            ->groupByRaw($monthSelect)
-            ->orderBy($monthSelect)
+            ->groupByRaw("month_alias")
+            ->orderBy('month_alias')
             ->get()
             ->map(function ($row) {
                 $carbon = Carbon::parse($row->month);
