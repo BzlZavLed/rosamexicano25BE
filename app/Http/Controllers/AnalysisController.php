@@ -49,7 +49,7 @@ class AnalysisController extends Controller
             ->orderBy('month_alias')
             ->get()
             ->map(function ($row) {
-                $carbon = Carbon::parse($row->month);
+                $carbon = Carbon::parse($row->month_alias);
                 return [
                     'key' => $carbon->format('Y-m'),
                     'label' => $carbon->translatedFormat('M Y'),
