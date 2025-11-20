@@ -15,5 +15,7 @@ Route::prefix('superadmin')->group(function () {
     });
 });
 
-Route::view('/{any?}', 'app')
+Route::view('/', 'landing');
+
+Route::view('/{any}', 'app')
     ->where('any', '^(?!api|sanctum|storage).*$');
