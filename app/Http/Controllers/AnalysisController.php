@@ -46,7 +46,7 @@ class AnalysisController extends Controller
         $months = DB::table('historic_ventadesg')
             ->selectRaw("{$monthSelect} as month")
             ->whereNotNull('fecha')
-            ->distinct()
+            ->groupByRaw($monthGroup)
             ->orderByRaw($monthGroup)
             ->get()
             ->map(function ($row) {
