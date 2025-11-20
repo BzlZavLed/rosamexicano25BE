@@ -41,13 +41,12 @@ class AnalysisController extends Controller
         $this->ensureAdmin($request);
 
         $monthSelect = $this->monthExpression('fecha', true);
-        $monthGroup = $this->monthExpression('fecha');
 
         $months = DB::table('historic_ventadesg')
             ->selectRaw("{$monthSelect} as month")
             ->whereNotNull('fecha')
-            ->groupByRaw($monthGroup)
-            ->orderByRaw($monthSelect)
+            ->groupByRaw($monthSelect)
+            ->orderBy('month')
             ->get()
             ->map(function ($row) {
                 $carbon = Carbon::parse($row->month);
@@ -66,7 +65,6 @@ class AnalysisController extends Controller
         }
 
         $hvMonthSelect = $this->monthExpression('hv.fecha', true);
-        $hvMonthGroup = $this->monthExpression('hv.fecha');
 
         $sales = DB::table('historic_ventadesg as hv')
             ->selectRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre') as proveedor_nombre, {$hvMonthSelect} as month, SUM(hv.total) as total")
@@ -74,8 +72,8 @@ class AnalysisController extends Controller
                 $join->on(DB::raw('CAST(pr.ident AS TEXT)'), '=', 'hv.proveedor_ident');
             })
             ->whereNotNull('hv.fecha')
-            ->groupByRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre'), {$hvMonthGroup}")
-            ->orderBy('proveedor_nombre')
+            ->groupByRaw("hv.proveedor_ident, COALESCE(pr.nombre, 'Proveedor sin nombre'), {$hvMonthSelect}")
+            ->orderBy('month')
             ->get();
 
         $monthKeys = $months->pluck('key')->all();
