@@ -68,6 +68,11 @@ import SidebarItem from './SidebarItem.vue';
         <section>
             <p class="px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Proveedores</p>
             <div class="space-y-1 border-l border-gray-200 pl-4">
+                <SidebarItem :to="{ path: '/admin/proveedores' }" label="Crear proveedor">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" />
+            </svg>
+        </SidebarItem>
                 <SidebarItem :to="{ path: '/admin/cobros' }" label="Crear cobros">
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 <rect x="3" y="5" width="18" height="14" rx="2" />
