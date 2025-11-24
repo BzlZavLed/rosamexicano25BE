@@ -40,6 +40,7 @@ const singleForm = reactive({
 const singleMessage = ref('');
 const singleError = ref('');
 const singleSaving = ref(false);
+const singleModalOpen = ref(false);
 
 const cobrosLoading = ref(false);
 const cobrosError = ref('');
@@ -99,14 +100,98 @@ const proveedoresSinImporte = computed(() =>
     proveedoresOrdenados.value.filter((p) => Number(p.importe ?? 0) <= 0)
 );
 
-const filteredCobros = computed(() =>
-    cobros.value.filter((c) => {
+const filteredCobros = computed(() => {
+    const search = cobrosSearch.value.trim().toLowerCase();
+    const selectedMonth = cobrosMes.value;
+    const selectedStatus = cobrosStatus.value;
+
+    return cobros.value.filter((c) => {
         const mailStatus = Number(c.mail_status ?? 0);
         if (filterMailStatus.value === 'sent' && mailStatus === 0) return false;
         if (filterMailStatus.value === 'pending' && mailStatus !== 0) return false;
+
+        if (search) {
+            const matchHaystack = [
+                c.proveedor?.nombre,
+                c.proveedor_nombre,
+                c.nombre,
+                c.concepto,
+                c.proveedor_ident ? String(c.proveedor_ident) : null,
+            ]
+                .filter(Boolean)
+                .map((value) => value!.toString().toLowerCase());
+
+            const matchesSearch = matchHaystack.some((value) => value.includes(search));
+            if (!matchesSearch) return false;
+        }
+
+        if (selectedMonth) {
+            if (!c.mes_cobro || !c.mes_cobro.startsWith(selectedMonth)) return false;
+        }
+
+        if (selectedStatus) {
+            const normalized = (c.status ?? '').toLowerCase();
+            if (normalized !== selectedStatus) return false;
+        }
+
         return true;
-    })
-);
+    });
+});
+
+const cobrosFilterChips = computed(() => {
+    const chips: Array<{ key: string; label: string; value: string; clear: () => void }> = [];
+
+    if (cobrosSearch.value.trim()) {
+        chips.push({
+            key: 'search',
+            label: 'Búsqueda',
+            value: cobrosSearch.value.trim(),
+            clear: () => {
+                cobrosSearch.value = '';
+            },
+        });
+    }
+
+    if (cobrosMes.value) {
+        chips.push({
+            key: 'mes',
+            label: 'Mes',
+            value: formatMonthLabel(cobrosMes.value),
+            clear: () => {
+                cobrosMes.value = '';
+            },
+        });
+    }
+
+    if (cobrosStatus.value) {
+        chips.push({
+            key: 'status',
+            label: 'Estado',
+            value: formatStatus(cobrosStatus.value),
+            clear: () => {
+                cobrosStatus.value = '';
+            },
+        });
+    }
+
+    if (filterMailStatus.value !== 'all') {
+        chips.push({
+            key: 'mail',
+            label: 'Correo',
+            value:
+                filterMailStatus.value === 'pending'
+                    ? 'Sin enviar'
+                    : filterMailStatus.value === 'sent'
+                        ? 'Enviados'
+                        : 'Todos',
+            clear: () => {
+                filterMailStatus.value = 'all';
+            },
+        });
+    }
+
+    return chips;
+});
 
 const totalMensual = computed(() =>
     Math.round(
@@ -671,7 +756,7 @@ async function loadCobros() {
         const resp = await listMensualidad(params);
         const rows = Array.isArray(resp.data) ? resp.data : [];
         cobros.value = rows;
-;
+        ;
         const meta = resp.meta ?? {};
         cobrosMeta.total = meta.total ?? rows.length;
         cobrosMeta.perPage = meta.per_page ?? cobrosMeta.perPage;
@@ -707,6 +792,7 @@ function resetCobrosFilters() {
     cobrosSearch.value = '';
     cobrosMes.value = '';
     cobrosStatus.value = '';
+    filterMailStatus.value = 'all';
     cobrosMeta.page = 1;
     loadCobros();
 }
@@ -968,19 +1054,28 @@ onUnmounted(() => {
     }
 });
 </script>
-
 <template>
     <AppLayout>
         <div class="space-y-8">
-            <header class="space-y-2">
-                <h1 class="text-xl font-semibold text-gray-900">Crear cobros</h1>
-                <p class="text-sm text-gray-500">
-                    Genera notas de cobro en PDF y envíalas al backend para su notificación por correo.
-                </p>
+            <!-- Header -->
+            <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h1 class="text-xl font-semibold text-gray-900">Crear cobros</h1>
+                    <p class="text-sm text-gray-500">
+                        Genera notas de cobro en PDF y envíalas al backend para su notificación por correo.
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    @click="singleModalOpen = true"
+                >
+                    Cobro individual
+                </button>
             </header>
 
-            <section class="grid gap-6 lg:grid-cols-2 lg:items-start xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-8">
-                <div class="space-y-6">
+            <!-- Cobro mensual automático -->
+            <section class="space-y-6">
                     <div class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                         <div class="flex flex-col gap-1">
                             <h2 class="text-lg font-semibold text-gray-900">Cobro mensual automático</h2>
@@ -992,72 +1087,61 @@ onUnmounted(() => {
                         <div class="mt-4 space-y-4">
                             <label class="flex flex-col text-sm text-gray-600">
                                 <span class="font-medium text-gray-700">Mes a cobrar</span>
-                                <input
-                                    v-model="bulkForm.mes_cobro"
-                                    type="month"
-                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                />
+                                <input v-model="bulkForm.mes_cobro" type="month"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                             </label>
                             <label class="flex flex-col text-sm text-gray-600">
                                 <span class="font-medium text-gray-700">Fecha de cargo</span>
-                                <input
-                                    v-model="bulkForm.fecha_cobro"
-                                    type="date"
-                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                />
+                                <input v-model="bulkForm.fecha_cobro" type="date"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                             </label>
                         </div>
 
                         <div class="mt-4 grid gap-4 sm:grid-cols-2">
                             <label class="flex flex-col text-sm text-gray-600 sm:col-span-2">
                                 <span class="font-medium text-gray-700">Concepto</span>
-                                <input
-                                    v-model="bulkForm.concepto"
-                                    type="text"
-                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                />
+                                <input v-model="bulkForm.concepto" type="text"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                             </label>
                             <label class="flex flex-col text-sm text-gray-600 sm:col-span-2">
                                 <span class="font-medium text-gray-700">Notas (opcional)</span>
-                                <textarea
-                                    v-model="bulkForm.nota"
-                                    rows="3"
+                                <textarea v-model="bulkForm.nota" rows="3"
                                     class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                    placeholder="Observaciones generales para este cobro"
-                                ></textarea>
+                                    placeholder="Observaciones generales para este cobro"></textarea>
                             </label>
                         </div>
 
                         <div class="mt-5 space-y-4">
-                            <div
-                                v-if="bulkMessage"
-                                class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700"
-                            >
+                            <div v-if="bulkMessage"
+                                class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
                                 {{ bulkMessage }}
                             </div>
-                            <div
-                                v-if="bulkCreated !== null || bulkMailStats"
-                                class="space-y-1 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700"
-                            >
+
+                            <div v-if="bulkCreated !== null || bulkMailStats"
+                                class="space-y-1 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
                                 <p v-if="bulkCreated !== null">
-                                    Cobros generados: <span class="font-semibold">{{ bulkCreated }}</span>
-                                    <span v-if="bulkSkipped !== null"> • Omitidos: <span class="font-semibold">{{ bulkSkipped }}</span></span>
+                                    Cobros generados:
+                                    <span class="font-semibold">{{ bulkCreated }}</span>
+                                    <span v-if="bulkSkipped !== null">
+                                        • Omitidos:
+                                        <span class="font-semibold">{{ bulkSkipped }}</span>
+                                    </span>
                                 </p>
                                 <p v-if="bulkMailStats">
-                                    Correos enviados: <span class="font-semibold">{{ bulkMailStats.sent }}</span>
-                                    • Fallidos: <span class="font-semibold">{{ bulkMailStats.failed }}</span>
+                                    Correos enviados:
+                                    <span class="font-semibold">{{ bulkMailStats.sent }}</span>
+                                    • Fallidos:
+                                    <span class="font-semibold">{{ bulkMailStats.failed }}</span>
                                 </p>
                             </div>
-                            <div
-                                v-if="bulkError"
-                                class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600"
-                            >
+
+                            <div v-if="bulkError"
+                                class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
                                 {{ bulkError }}
                             </div>
-                            <div
-                                v-if="bulkFailures.length"
-                                class="rounded-lg border border-yellow-100 bg-yellow-50 px-4 py-3 text-sm text-yellow-800"
-                            >
+
+                            <div v-if="bulkFailures.length"
+                                class="rounded-lg border border-yellow-100 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
                                 <p class="font-medium">Cobros pendientes de reintentar:</p>
                                 <ul class="mt-2 space-y-1 text-yellow-700">
                                     <li v-for="item in bulkFailures" :key="item.proveedor.id">
@@ -1067,148 +1151,39 @@ onUnmounted(() => {
                             </div>
 
                             <div
-                                class="flex flex-col justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-600 shadow-sm sm:flex-row sm:items-center"
-                            >
+                                class="flex flex-col justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-600 shadow-sm sm:flex-row sm:items-center">
                                 <div>
                                     <p class="text-gray-500">
                                         Proveedores programados:
-                                        <span class="font-semibold text-gray-900">{{ proveedoresConImporte.length }}</span>
+                                        <span class="font-semibold text-gray-900">
+                                            {{ proveedoresConImporte.length }}
+                                        </span>
                                     </p>
-                                    <p>Total estimado: <span class="font-semibold text-gray-900">{{ formatCurrency(totalMensual) }}</span></p>
+                                    <p>
+                                        Total estimado:
+                                        <span class="font-semibold text-gray-900">
+                                            {{ formatCurrency(totalMensual) }}
+                                        </span>
+                                    </p>
                                 </div>
-                                <button
-                                    type="button"
+                                <button type="button"
                                     class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
-                                    :disabled="!canRunBulk"
-                                    @click="runMonthlyCobros"
-                                >
+                                    :disabled="!canRunBulk" @click="runMonthlyCobros">
                                     <span v-if="bulkState.running">Generando cobros…</span>
                                     <span v-else>Generar cobros del mes</span>
                                 </button>
                             </div>
 
-                            <div class="rounded-lg border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
-                                {{ proveedoresConImporte.length }} proveedores tienen importe mensual configurado. Se muestran en el listado inferior.
+                            <div
+                                class="rounded-lg border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
+                                {{ proveedoresConImporte.length }} proveedores tienen importe mensual configurado.
+                                Se muestran en el listado inferior.
                             </div>
                         </div>
                     </div>
-                </div>
-
-                <div class="space-y-6">
-                    <div class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                        <h2 class="text-lg font-semibold text-gray-900">Cobro individual</h2>
-                        <p class="mt-1 text-sm text-gray-500">
-                            Genera un cobro puntual personalizando el concepto, monto y notas.
-                        </p>
-
-                        <form class="mt-4 space-y-4" @submit.prevent="submitSingleCobro">
-                            <div class="space-y-2">
-                                <label class="text-sm font-medium text-gray-700">Proveedor</label>
-                                <select
-                                    v-model.number="singleForm.proveedor_id"
-                                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-gray-900 focus:ring-gray-900"
-                                >
-                                    <option value="" disabled>Selecciona un proveedor</option>
-                                    <option
-                                        v-for="proveedor in proveedoresOrdenados"
-                                        :key="proveedor.id"
-                                        :value="proveedor.id"
-                                    >
-                                        {{ proveedor.nombre }}
-                                    </option>
-                                </select>
-                            </div>
-
-                            <div
-                                v-if="proveedorSeleccionado"
-                                class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-600"
-                            >
-                                <p class="font-medium text-gray-900">{{ proveedorSeleccionado.nombre }}</p>
-                                <p class="mt-1">
-                                    Monto mensual sugerido:
-                                    <span class="font-semibold text-gray-900">
-                                        {{ formatCurrency(Number(proveedorSeleccionado.importe ?? 0)) }}
-                                    </span>
-                                </p>
-                                <p v-if="proveedorSeleccionado.email">Correo: {{ proveedorSeleccionado.email }}</p>
-                            </div>
-
-                            <div class="space-y-2">
-                                <label class="text-sm font-medium text-gray-700">Concepto</label>
-                                <input
-                                    v-model="singleForm.concepto"
-                                    type="text"
-                                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                />
-                            </div>
-
-                            <div class="grid gap-4 sm:grid-cols-2">
-                                <label class="flex flex-col text-sm text-gray-600">
-                                    <span class="font-medium text-gray-700">Monto</span>
-                                    <input
-                                        v-model.number="singleForm.importe"
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                    />
-                                </label>
-                                <label class="flex flex-col text-sm text-gray-600">
-                                    <span class="font-medium text-gray-700">Mes aplicado</span>
-                                    <input
-                                        v-model="singleForm.mes_cobro"
-                                        type="month"
-                                        class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                    />
-                                </label>
-                            </div>
-
-                            <div class="grid gap-4 sm:grid-cols-2">
-                                <label class="flex flex-col text-sm text-gray-600">
-                                    <span class="font-medium text-gray-700">Fecha de cargo</span>
-                                    <input
-                                        v-model="singleForm.fecha_cobro"
-                                        type="date"
-                                        class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                    />
-                                </label>
-                                <label class="flex flex-col text-sm text-gray-600">
-                                    <span class="font-medium text-gray-700">Notas (opcional)</span>
-                                    <textarea
-                                        v-model="singleForm.nota"
-                                        rows="3"
-                                        class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                        placeholder="Observaciones adicionales para el proveedor"
-                                    ></textarea>
-                                </label>
-                            </div>
-
-                            <div
-                                v-if="singleMessage"
-                                class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700"
-                            >
-                                {{ singleMessage }}
-                            </div>
-                            <div
-                                v-if="singleError"
-                                class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600"
-                            >
-                                {{ singleError }}
-                            </div>
-
-                            <button
-                                type="submit"
-                                class="w-full rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
-                                :disabled="singleSaving"
-                            >
-                                <span v-if="singleSaving">Generando cobro…</span>
-                                <span v-else>Crear cobro individual</span>
-                            </button>
-                        </form>
-                    </div>
-                </div>
             </section>
 
+            <!-- Proveedores con importe mensual -->
             <section class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <header class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                     <div>
@@ -1218,9 +1193,13 @@ onUnmounted(() => {
                         </p>
                     </div>
                     <div class="text-xs text-gray-500">
-                        Total: <span class="font-semibold text-gray-900">{{ proveedoresConImporte.length }}</span>
+                        Total:
+                        <span class="font-semibold text-gray-900">{{ proveedoresConImporte.length }}</span>
                         <template v-if="proveedoresSinImporte.length">
-                            • Sin importe: <span class="font-semibold text-gray-900">{{ proveedoresSinImporte.length }}</span>
+                            • Sin importe:
+                            <span class="font-semibold text-gray-900">
+                                {{ proveedoresSinImporte.length }}
+                            </span>
                         </template>
                     </div>
                 </header>
@@ -1233,12 +1212,10 @@ onUnmounted(() => {
                         {{ proveedoresError }}
                     </div>
                     <template v-else>
-                        <div v-if="proveedoresConImporte.length" class="max-h-[420px] overflow-y-auto divide-y divide-gray-100 bg-white rounded-xl">
-                            <div
-                                v-for="proveedor in proveedoresConImporte"
-                                :key="proveedor.id"
-                                class="flex flex-col gap-2 px-4 py-3 text-sm md:flex-row md:items-center md:justify-between"
-                            >
+                        <div v-if="proveedoresConImporte.length"
+                            class="max-h-[420px] overflow-y-auto divide-y divide-gray-100 bg-white rounded-xl">
+                            <div v-for="proveedor in proveedoresConImporte" :key="proveedor.id"
+                                class="flex flex-col gap-2 px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
                                 <div>
                                     <p class="font-medium text-gray-900">{{ proveedor.nombre }}</p>
                                     <p class="text-xs text-gray-500">Identificador: {{ proveedor.ident }}</p>
@@ -1247,7 +1224,8 @@ onUnmounted(() => {
                                     <p class="font-semibold text-gray-900">
                                         {{ formatCurrency(Number(proveedor.importe ?? 0)) }}
                                     </p>
-                                    <p v-if="proveedor.email" class="text-xs text-gray-400 md:max-w-[280px] md:truncate">
+                                    <p v-if="proveedor.email"
+                                        class="text-xs text-gray-400 md:max-w-[280px] md:truncate">
                                         {{ proveedor.email }}
                                     </p>
                                 </div>
@@ -1260,36 +1238,31 @@ onUnmounted(() => {
                 </div>
             </section>
 
+            <!-- Cobros registrados -->
             <section class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <header class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                     <div>
                         <h2 class="text-lg font-semibold text-gray-900">Cobros registrados</h2>
-                        <p class="text-sm text-gray-500">Revisa los cobros generados, ya sean individuales o en lote.</p>
+                        <p class="text-sm text-gray-500">
+                            Revisa los cobros generados, ya sean individuales o en lote.
+                        </p>
                     </div>
                     <div class="grid gap-3 text-sm text-gray-600 md:grid-cols-2 xl:flex xl:flex-wrap xl:items-center">
                         <label class="flex flex-col">
                             <span class="font-medium text-gray-700">Buscar</span>
-                            <input
-                                v-model="cobrosSearch"
-                                type="search"
+                            <input v-model="cobrosSearch" type="search"
                                 class="mt-1 w-48 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                placeholder="Proveedor, concepto…"
-                            />
+                                placeholder="Proveedor, concepto…" />
                         </label>
                         <label class="flex flex-col">
                             <span class="font-medium text-gray-700">Mes</span>
-                            <input
-                                v-model="cobrosMes"
-                                type="month"
-                                class="mt-1 w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                            />
+                            <input v-model="cobrosMes" type="month"
+                                class="mt-1 w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                         </label>
                         <label class="flex flex-col">
                             <span class="font-medium text-gray-700">Estado</span>
-                            <select
-                                v-model="cobrosStatus"
-                                class="mt-1 w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                            >
+                            <select v-model="cobrosStatus"
+                                class="mt-1 w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900">
                                 <option value="">Todos</option>
                                 <option value="pending">Pendiente</option>
                                 <option value="paid">Pagado</option>
@@ -1298,60 +1271,55 @@ onUnmounted(() => {
                         </label>
                         <label class="flex flex-col">
                             <span class="font-medium text-gray-700">Correo</span>
-                            <select
-                                v-model="filterMailStatus"
-                                class="mt-1 w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                            >
+                            <select v-model="filterMailStatus"
+                                class="mt-1 w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900">
                                 <option value="all">Todos</option>
                                 <option value="pending">Sin enviar</option>
                                 <option value="sent">Enviados</option>
                             </select>
                         </label>
-                        <div class="flex items-center gap-2 mt-2 md:col-span-2 xl:mt-0">
-                            <button
-                                type="button"
-                                class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50"
-                                @click="loadCobros"
-                            >
-                                Actualizar
-                            </button>
-                            <button
-                                type="button"
-                                class="inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 hover:bg-gray-50"
-                                @click="resetCobrosFilters"
-                            >
-                                Limpiar
-                            </button>
-                        </div>
                     </div>
                 </header>
 
+                <div v-if="cobrosFilterChips.length"
+                    class="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
+                    <span class="font-semibold text-gray-800">Filtros activos:</span>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span v-for="chip in cobrosFilterChips" :key="chip.key"
+                            class="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs font-medium text-gray-700 shadow-sm">
+                            <span class="text-gray-500">{{ chip.label }}:</span>
+                            <span>{{ chip.value }}</span>
+                            <button type="button" class="text-gray-400 transition hover:text-gray-700"
+                                @click="chip.clear()" aria-label="Quitar filtro">
+                                ×
+                            </button>
+                        </span>
+                    </div>
+                    <button type="button"
+                        class="ml-auto inline-flex items-center rounded-lg border border-transparent px-3 py-1 text-xs font-semibold text-gray-600 hover:text-gray-900"
+                        @click="resetCobrosFilters">
+                        Quitar todos
+                    </button>
+                </div>
+
                 <div class="mt-5 space-y-4">
+                    <!-- Mobile list -->
                     <div class="md:hidden">
-                        <div
-                            v-if="cobrosError"
-                            class="rounded-xl border border-red-100 bg-red-50 px-4 py-4 text-sm text-red-600"
-                        >
+                        <div v-if="cobrosError"
+                            class="rounded-xl border border-red-100 bg-red-50 px-4 py-4 text-sm text-red-600">
                             {{ cobrosError }}
                         </div>
-                        <div
-                            v-else-if="cobrosLoading"
-                            class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-500"
-                        >
+                        <div v-else-if="cobrosLoading"
+                            class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-500">
                             Cargando cobros…
                         </div>
-                        <div
-                            v-else-if="!filteredCobros.length"
-                            class="rounded-xl border border-gray-200 bg-white px-4 py-4 text-sm text-gray-500"
-                        >
+                        <div v-else-if="!filteredCobros.length"
+                            class="rounded-xl border border-gray-200 bg-white px-4 py-4 text-sm text-gray-500">
                             No hay cobros para los filtros seleccionados.
                         </div>
                         <div v-else class="space-y-4">
-                            <article
-                                v-for="c in filteredCobros"
-                                :key="c.id ?? `${c.proveedor_id}-${c.mes_cobro}`"
-                                class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
-                            >
+                            <article v-for="c in filteredCobros" :key="c.id ?? `${c.proveedor_id}-${c.mes_cobro}`"
+                                class="space-y-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                                 <div class="flex flex-wrap items-start justify-between gap-2">
                                     <div>
                                         <p class="font-semibold text-gray-900">{{ c.nombre }}</p>
@@ -1365,8 +1333,7 @@ onUnmounted(() => {
                                     <div class="text-right">
                                         <span
                                             class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium"
-                                            :class="statusBadgeClass(c.status)"
-                                        >
+                                            :class="statusBadgeClass(c.status)">
                                             {{ formatStatus(c.status) }}
                                         </span>
                                         <p v-if="c.payment_date" class="mt-1 text-xs text-gray-500">
@@ -1405,11 +1372,9 @@ onUnmounted(() => {
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span class="font-medium text-gray-700">Nota de cobro:</span>
                                         <template v-if="c.cobro_path">
-                                            <button
-                                                type="button"
+                                            <button type="button"
                                                 class="inline-flex items-center gap-1 text-sm text-gray-700 underline underline-offset-4 hover:text-gray-900"
-                                                @click="openPdfInNewTab(c.cobro_path)"
-                                            >
+                                                @click="openPdfInNewTab(c.cobro_path)">
                                                 Ver PDF
                                             </button>
                                         </template>
@@ -1418,11 +1383,9 @@ onUnmounted(() => {
                                     <div class="flex flex-wrap items-center gap-2">
                                         <span class="font-medium text-gray-700">Comprobante:</span>
                                         <template v-if="c.receipt_path">
-                                            <button
-                                                type="button"
+                                            <button type="button"
                                                 class="inline-flex items-center gap-1 text-sm text-gray-700 underline underline-offset-4 hover:text-gray-900"
-                                                @click="openPdfInNewTab(c.receipt_path)"
-                                            >
+                                                @click="openPdfInNewTab(c.receipt_path)">
                                                 Ver PDF
                                             </button>
                                         </template>
@@ -1433,25 +1396,21 @@ onUnmounted(() => {
                                 <div class="flex flex-col gap-2 text-sm text-gray-600">
                                     <span class="font-medium text-gray-700">Acciones</span>
                                     <div class="flex flex-wrap items-center gap-2">
-                                        <button
-                                            type="button"
+                                        <button type="button"
                                             class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                                            @click="openPaymentModal(c)"
-                                        >
+                                            @click="openPaymentModal(c)">
                                             Registrar pago
                                         </button>
                                         <template v-if="Number(c.mail_status ?? 0) === 0">
-                                            <button
-                                                type="button"
+                                            <button type="button"
                                                 class="inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:border-gray-200"
-                                                :disabled="!c.cobro_path"
-                                                @click="openEmailModal(c)"
-                                            >
+                                                :disabled="!c.cobro_path" @click="openEmailModal(c)">
                                                 Enviar correo
                                             </button>
                                         </template>
                                         <template v-else>
-                                            <span class="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                                            <span
+                                                class="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
                                                 Correo enviado
                                             </span>
                                         </template>
@@ -1461,6 +1420,7 @@ onUnmounted(() => {
                         </div>
                     </div>
 
+                    <!-- Desktop table -->
                     <div class="-mx-3 hidden overflow-x-auto md:block">
                         <div class="inline-block min-w-full align-middle px-3">
                             <div class="overflow-hidden rounded-xl border border-gray-200">
@@ -1493,20 +1453,29 @@ onUnmounted(() => {
                                         <tr v-for="c in filteredCobros" :key="c.id" class="hover:bg-gray-50">
                                             <td class="px-4 py-3">
                                                 <div class="font-medium text-gray-900">{{ c.nombre }}</div>
-                                                <div class="text-xs text-gray-500">ID interno: {{ c.proveedor_ident ?? c.proveedor_id }}</div>
+                                                <div class="text-xs text-gray-500">
+                                                    ID interno: {{ c.proveedor_ident ?? c.proveedor_id }}
+                                                </div>
                                             </td>
                                             <td class="px-4 py-3">
                                                 <div class="text-gray-800">{{ c.concepto }}</div>
-                                                <div v-if="c.nota" class="mt-1 text-xs text-gray-500 line-clamp-2">{{ c.nota }}</div>
+                                                <div v-if="c.nota" class="mt-1 text-xs text-gray-500 line-clamp-2">
+                                                    {{ c.nota }}
+                                                </div>
                                             </td>
-                                            <td class="px-4 py-3 font-medium text-gray-900">{{ formatCurrency(Number(c.importe ?? 0)) }}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-600">{{ formatMonthLabel(c.mes_cobro) }}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-600">{{ formatDateLabel(c.fecha_cobro) }}</td>
+                                            <td class="px-4 py-3 font-medium text-gray-900">
+                                                {{ formatCurrency(Number(c.importe ?? 0)) }}
+                                            </td>
+                                            <td class="px-4 py-3 text-sm text-gray-600">
+                                                {{ formatMonthLabel(c.mes_cobro) }}
+                                            </td>
+                                            <td class="px-4 py-3 text-sm text-gray-600">
+                                                {{ formatDateLabel(c.fecha_cobro) }}
+                                            </td>
                                             <td class="px-4 py-3">
                                                 <span
                                                     class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium"
-                                                    :class="statusBadgeClass(c.status)"
-                                                >
+                                                    :class="statusBadgeClass(c.status)">
                                                     {{ formatStatus(c.status) }}
                                                 </span>
                                                 <div v-if="c.payment_date" class="mt-1 text-xs text-gray-500">
@@ -1518,11 +1487,9 @@ onUnmounted(() => {
                                             </td>
                                             <td class="px-4 py-3 text-sm text-gray-600">
                                                 <template v-if="c.cobro_path">
-                                                    <button
-                                                        type="button"
+                                                    <button type="button"
                                                         class="inline-flex items-center gap-1 text-sm text-gray-700 underline underline-offset-4 hover:text-gray-900"
-                                                        @click="openPdfInNewTab(c.cobro_path)"
-                                                    >
+                                                        @click="openPdfInNewTab(c.cobro_path)">
                                                         Ver PDF
                                                     </button>
                                                 </template>
@@ -1530,8 +1497,7 @@ onUnmounted(() => {
                                             </td>
                                             <td class="px-4 py-3 text-sm text-gray-600">
                                                 <template v-if="c.receipt_path">
-                                                    <button
-                                                        type="button"
+                                                    <button type="button"
                                                         class="inline-flex items-center gap-1 text-sm text-gray-700 underline underline-offset-4 hover:text-gray-900"
                                                         @click="openPdfInNewTab(c.receipt_path)">
                                                         Ver PDF
@@ -1541,25 +1507,21 @@ onUnmounted(() => {
                                             </td>
                                             <td class="px-4 py-3 text-sm text-gray-600">
                                                 <div class="flex flex-wrap items-center gap-2">
-                                                    <button
-                                                        type="button"
+                                                    <button type="button"
                                                         class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                                                        @click="openPaymentModal(c)"
-                                                    >
+                                                        @click="openPaymentModal(c)">
                                                         Registrar pago
                                                     </button>
                                                     <template v-if="Number(c.mail_status ?? 0) === 0">
-                                                        <button
-                                                            type="button"
+                                                        <button type="button"
                                                             class="inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:border-gray-200"
-                                                            :disabled="!c.cobro_path"
-                                                            @click="openEmailModal(c)"
-                                                        >
+                                                            :disabled="!c.cobro_path" @click="openEmailModal(c)">
                                                             Enviar correo
                                                         </button>
                                                     </template>
                                                     <template v-else>
-                                                        <span class="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                                                        <span
+                                                            class="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
                                                             Correo enviado
                                                         </span>
                                                     </template>
@@ -1577,27 +1539,25 @@ onUnmounted(() => {
                         </div>
                     </div>
 
-                    <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm text-gray-600">
+                    <div
+                        class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm text-gray-600">
                         <div>
-                            Mostrando página {{ cobrosMeta.page }} de {{ cobrosMeta.lastPage }} ({{ cobrosMeta.total }} registros)
-                            <span class="text-xs text-gray-400">| Filtrados: {{ filteredCobros.length }}</span>
+                            Mostrando página {{ cobrosMeta.page }} de {{ cobrosMeta.lastPage }}
+                            ({{ cobrosMeta.total }} registros)
+                            <span class="text-xs text-gray-400">
+                                | Filtrados: {{ filteredCobros.length }}
+                            </span>
                         </div>
                         <div class="flex items-center gap-2">
-                            <button
-                                type="button"
+                            <button type="button"
                                 class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:border-gray-200"
-                                :disabled="cobrosMeta.page <= 1"
-                                @click="goCobrosPrev"
-                            >
+                                :disabled="cobrosMeta.page <= 1" @click="goCobrosPrev">
                                 Anterior
                             </button>
                             <span class="text-sm text-gray-500">Página {{ cobrosMeta.page }}</span>
-                            <button
-                                type="button"
+                            <button type="button"
                                 class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:border-gray-200"
-                                :disabled="cobrosMeta.page >= cobrosMeta.lastPage"
-                                @click="goCobrosNext"
-                            >
+                                :disabled="cobrosMeta.page >= cobrosMeta.lastPage" @click="goCobrosNext">
                                 Siguiente
                             </button>
                         </div>
@@ -1606,11 +1566,118 @@ onUnmounted(() => {
             </section>
         </div>
 
+        <!-- MODAL: Cobro individual -->
         <transition name="fade">
-            <div
-                v-if="paymentModalOpen"
-                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6"
-            >
+            <div v-if="singleModalOpen" class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+                @click.self="singleModalOpen = false">
+                <div class="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900">Cobro individual</h3>
+                            <p class="text-sm text-gray-500">
+                                Genera un cobro puntual personalizando las condiciones.
+                            </p>
+                        </div>
+                        <button type="button" class="rounded-full bg-gray-100 p-2 text-gray-500 hover:bg-gray-200"
+                            @click="singleModalOpen = false" aria-label="Cerrar">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20"
+                                fill="currentColor">
+                                <path fill-rule="evenodd"
+                                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                                    clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <form class="mt-4 space-y-4" @submit.prevent="submitSingleCobro">
+                        <div class="space-y-2">
+                            <label class="text-sm font-medium text-gray-700">Proveedor</label>
+                            <select v-model.number="singleForm.proveedor_id"
+                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-gray-900 focus:ring-gray-900">
+                                <option value="" disabled>Selecciona un proveedor</option>
+                                <option v-for="proveedor in proveedoresOrdenados" :key="proveedor.id"
+                                    :value="proveedor.id">
+                                    {{ proveedor.nombre }}
+                                </option>
+                            </select>
+                        </div>
+
+                        <div v-if="proveedorSeleccionado"
+                            class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-600">
+                            <p class="font-medium text-gray-900">{{ proveedorSeleccionado.nombre }}</p>
+                            <p class="mt-1">
+                                Monto mensual sugerido:
+                                <span class="font-semibold text-gray-900">
+                                    {{ formatCurrency(Number(proveedorSeleccionado.importe ?? 0)) }}
+                                </span>
+                            </p>
+                            <p v-if="proveedorSeleccionado.email">Correo: {{ proveedorSeleccionado.email }}</p>
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="text-sm font-medium text-gray-700">Concepto</label>
+                            <input v-model="singleForm.concepto" type="text"
+                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                        </div>
+
+                        <div class="grid gap-4 sm:grid-cols-2">
+                            <label class="flex flex-col text-sm text-gray-600">
+                                <span class="font-medium text-gray-700">Monto</span>
+                                <input v-model.number="singleForm.importe" type="number" step="0.01" min="0"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                            </label>
+                            <label class="flex flex-col text-sm text-gray-600">
+                                <span class="font-medium text-gray-700">Mes aplicado</span>
+                                <input v-model="singleForm.mes_cobro" type="month"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                            </label>
+                        </div>
+
+                        <div class="grid gap-4 sm:grid-cols-2">
+                            <label class="flex flex-col text-sm text-gray-600">
+                                <span class="font-medium text-gray-700">Fecha de cargo</span>
+                                <input v-model="singleForm.fecha_cobro" type="date"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
+                            </label>
+                            <label class="flex flex-col text-sm text-gray-600">
+                                <span class="font-medium text-gray-700">Notas (opcional)</span>
+                                <textarea v-model="singleForm.nota" rows="3"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                    placeholder="Observaciones adicionales para el proveedor"></textarea>
+                            </label>
+                        </div>
+
+                        <div v-if="singleMessage"
+                            class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
+                            {{ singleMessage }}
+                        </div>
+                        <div v-if="singleError"
+                            class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                            {{ singleError }}
+                        </div>
+
+                        <div class="flex items-center justify-end gap-3 pt-2">
+                            <button type="button"
+                                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                @click="singleModalOpen = false">
+                                Cancelar
+                            </button>
+                            <button type="submit"
+                                class="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                                :disabled="singleSaving">
+                                <span v-if="singleSaving">Generando cobro…</span>
+                                <span v-else>Crear cobro</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </transition>
+
+        <!-- MODAL: Registrar pago -->
+        <transition name="fade">
+            <div v-if="paymentModalOpen"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
                 <div class="w-full max-w-2xl rounded-2xl bg-white shadow-xl">
                     <header class="flex items-start justify-between border-b border-gray-200 px-6 py-4">
                         <div>
@@ -1619,11 +1686,9 @@ onUnmounted(() => {
                                 {{ paymentForm.concepto }}
                             </p>
                         </div>
-                        <button
-                            type="button"
+                        <button type="button"
                             class="inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50"
-                            @click="closePaymentModal"
-                        >
+                            @click="closePaymentModal">
                             Cerrar
                         </button>
                     </header>
@@ -1632,52 +1697,33 @@ onUnmounted(() => {
                         <div class="grid gap-4 sm:grid-cols-2">
                             <label class="flex flex-col text-sm text-gray-600">
                                 <span class="font-medium text-gray-700">Importe original</span>
-                                <input
-                                    :value="formatCurrency(paymentForm.importe)"
-                                    type="text"
+                                <input :value="formatCurrency(paymentForm.importe)" type="text"
                                     class="mt-1 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600"
-                                    disabled
-                                />
+                                    disabled />
                             </label>
                             <label class="flex flex-col text-sm text-gray-600">
                                 <span class="font-medium text-gray-700">Cantidad pagada</span>
-                                <input
-                                    v-model.number="paymentForm.cantidad_pago"
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                />
+                                <input v-model.number="paymentForm.cantidad_pago" type="number" step="0.01" min="0"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                             </label>
                             <label class="flex flex-col text-sm text-gray-600">
                                 <span class="font-medium text-gray-700">Restante</span>
-                                <input
-                                    :value="paymentForm.restante ?? ''"
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
+                                <input :value="paymentForm.restante ?? ''" type="number" step="0.01" min="0"
                                     class="mt-1 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600"
-                                    disabled
-                                />
+                                    disabled />
                             </label>
                             <label class="flex flex-col text-sm text-gray-600">
                                 <span class="font-medium text-gray-700">Fecha de pago</span>
-                                <input
-                                    v-model="paymentForm.payment_date"
-                                    type="date"
-                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                />
+                                <input v-model="paymentForm.payment_date" type="date"
+                                    class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                             </label>
                         </div>
 
                         <div class="space-y-2">
                             <label class="text-sm font-medium text-gray-700">Correo electrónico</label>
-                            <input
-                                v-model="paymentForm.email"
-                                type="email"
+                            <input v-model="paymentForm.email" type="email"
                                 class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                placeholder="proveedor@example.com"
-                            />
+                                placeholder="proveedor@example.com" />
                             <p class="text-xs text-gray-500">
                                 Se enviará el recibo de pago a este correo.
                             </p>
@@ -1686,48 +1732,42 @@ onUnmounted(() => {
                         <div class="grid gap-4 sm:grid-cols-2">
                             <label class="flex flex-col text-sm text-gray-600 sm:col-span-2">
                                 <span class="font-medium text-gray-700">Asunto (opcional)</span>
-                                <input
-                                    v-model="paymentForm.subject"
-                                    type="text"
+                                <input v-model="paymentForm.subject" type="text"
                                     class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                    placeholder="Pago mensualidad noviembre"
-                                />
+                                    placeholder="Pago mensualidad noviembre" />
                             </label>
                             <label class="flex flex-col text-sm text-gray-600 sm:col-span-2">
                                 <span class="font-medium text-gray-700">Mensaje (opcional)</span>
-                                <textarea
-                                    v-model="paymentForm.message"
-                                    rows="3"
+                                <textarea v-model="paymentForm.message" rows="3"
                                     class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                    placeholder="Gracias por confirmar el pago."
-                                ></textarea>
+                                    placeholder="Gracias por confirmar el pago."></textarea>
                             </label>
                         </div>
 
-                        <div class="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-xs text-gray-600">
-                            El sistema generará automáticamente el comprobante en PDF con la información anterior y lo enviará al proveedor.
+                        <div
+                            class="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-xs text-gray-600">
+                            El sistema generará automáticamente el comprobante en PDF con la información
+                            anterior y lo enviará al proveedor.
                         </div>
 
-                        <div v-if="paymentMessage" class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
+                        <div v-if="paymentMessage"
+                            class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
                             {{ paymentMessage }}
                         </div>
-                        <div v-if="paymentError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                        <div v-if="paymentError"
+                            class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
                             {{ paymentError }}
                         </div>
 
                         <div class="flex flex-col gap-3 sm:flex-row sm:justify-end">
-                            <button
-                                type="button"
+                            <button type="button"
                                 class="inline-flex items-center justify-center rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-500 hover:bg-gray-50"
-                                @click="closePaymentModal"
-                            >
+                                @click="closePaymentModal">
                                 Cancelar
                             </button>
-                            <button
-                                type="submit"
+                            <button type="submit"
                                 class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
-                                :disabled="paymentSaving"
-                            >
+                                :disabled="paymentSaving">
                                 <span v-if="paymentSaving">Guardando…</span>
                                 <span v-else>Registrar pago</span>
                             </button>
@@ -1737,11 +1777,10 @@ onUnmounted(() => {
             </div>
         </transition>
 
+        <!-- MODAL: Enviar comprobante por correo -->
         <transition name="fade">
-            <div
-                v-if="emailModalOpen"
-                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6"
-            >
+            <div v-if="emailModalOpen"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
                 <div class="w-full max-w-xl rounded-2xl bg-white shadow-xl">
                     <header class="flex items-start justify-between border-b border-gray-200 px-6 py-4">
                         <div>
@@ -1750,11 +1789,9 @@ onUnmounted(() => {
                                 {{ emailForm.proveedorNombre }}
                             </p>
                         </div>
-                        <button
-                            type="button"
+                        <button type="button"
                             class="inline-flex items-center justify-center rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50"
-                            @click="closeEmailModal"
-                        >
+                            @click="closeEmailModal">
                             Cerrar
                         </button>
                     </header>
@@ -1762,58 +1799,48 @@ onUnmounted(() => {
                     <form class="px-6 py-5 space-y-4" @submit.prevent="submitEmail">
                         <div class="space-y-2">
                             <label class="text-sm font-medium text-gray-700">Correo electrónico</label>
-                            <input
-                                v-model="emailForm.email"
-                                type="email"
+                            <input v-model="emailForm.email" type="email"
                                 class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                placeholder="proveedor@example.com"
-                            />
+                                placeholder="proveedor@example.com" />
                         </div>
 
                         <div class="space-y-2">
                             <label class="text-sm font-medium text-gray-700">Asunto (opcional)</label>
-                            <input
-                                v-model="emailForm.asunto"
-                                type="text"
+                            <input v-model="emailForm.asunto" type="text"
                                 class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                placeholder="Cobro generado"
-                            />
+                                placeholder="Cobro generado" />
                         </div>
 
                         <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-600">
                             <p class="font-medium text-gray-800">PDF a enviar</p>
                             <p v-if="emailForm.cobroUrl" class="mt-1 break-all">
-                                <button
-                                    type="button"
+                                <button type="button"
                                     class="inline-flex items-center gap-1 text-xs text-gray-700 underline underline-offset-4 hover:text-gray-900"
-                                    @click="openPdfInNewTab(emailForm.cobroUrl)"
-                                >
+                                    @click="openPdfInNewTab(emailForm.cobroUrl)">
                                     Abrir comprobante
                                 </button>
                             </p>
                             <p v-else class="mt-1 text-rose-600">No se encontró un PDF para este cobro.</p>
                         </div>
 
-                        <div v-if="emailMessage" class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
+                        <div v-if="emailMessage"
+                            class="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
                             {{ emailMessage }}
                         </div>
-                        <div v-if="emailError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                        <div v-if="emailError"
+                            class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
                             {{ emailError }}
                         </div>
 
                         <div class="flex flex-col gap-3 sm:flex-row sm:justify-end">
-                            <button
-                                type="button"
+                            <button type="button"
                                 class="inline-flex items-center justify-center rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-500 hover:bg-gray-50"
-                                @click="closeEmailModal"
-                            >
+                                @click="closeEmailModal">
                                 Cancelar
                             </button>
-                            <button
-                                type="submit"
+                            <button type="submit"
                                 class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
-                                :disabled="emailSaving"
-                            >
+                                :disabled="emailSaving">
                                 <span v-if="emailSaving">Enviando…</span>
                                 <span v-else>Enviar correo</span>
                             </button>

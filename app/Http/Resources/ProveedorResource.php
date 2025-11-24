@@ -23,6 +23,23 @@ class ProveedorResource extends JsonResource
             'sucursal' => $this->sucursal,
             'tipo'     => $this->tipo,
             'porcentaje_comision' => $this->porcentaje_comision,
+            'recommendation' => $this->whenLoaded('recommendedImporte', function ($rec) {
+                if (!$rec) {
+                    return null;
+                }
+
+                return [
+                    'recommended_importe' => (float) $rec->recommended_importe,
+                    'avg_monthly_sales' => (float) $rec->avg_monthly_sales,
+                    'total_sales' => (float) $rec->total_sales,
+                    'months' => (int) $rec->months,
+                    'percentage_used' => (float) $rec->percentage_used,
+                    'months_window' => (int) $rec->months_window,
+                    'period_start' => optional($rec->period_start)->toDateString(),
+                    'period_end' => optional($rec->period_end)->toDateString(),
+                    'updated_at' => optional($rec->updated_at)->toDateTimeString(),
+                ];
+            }),
         ];
     }
 }

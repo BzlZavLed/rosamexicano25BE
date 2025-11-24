@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from 'vue'
 import AppLayout from '../components/layout/AppLayout.vue'
-import type { AnalysisSummary, TopSellersResponse, MonthDetailsResponse, RecommendedImporteItem, TopProductsChartResponse } from '../api/analysis'
+import type { AnalysisSummary, TopSellersResponse, MonthDetailsResponse, RecommendedImporteItem, RecommendedImporteResponse, TopProductsChartResponse } from '../api/analysis'
 import {
     getAnalysisSummary,
     importAnalysisFile,
     getTopSellersMatrix,
     getMonthDetails,
-    getRecommendedImportes,
+    recalculateRecommendedImportes,
     applyRecommendedImport,
     getTopProductsChart,
 } from '../api/analysis'
@@ -41,6 +41,20 @@ const recommendedFilter = ref<'all' | 'recommended' | 'no'>('all')
 const acceptance = ref<Record<string, boolean>>({})
 const emailOverrides = ref<Record<string, string>>({})
 const applyLoading = ref<string | null>(null)
+const recommendedReloading = ref(false)
+
+function assignRecommendedResponse(response: RecommendedImporteResponse) {
+    recommendedData.value = response.items
+    recommendedMeta.value = response.settings
+    const accepts: Record<string, boolean> = {}
+    const emails: Record<string, string> = {}
+    response.items.forEach((row) => {
+        accepts[row.provider_ident] = false
+        emails[row.provider_ident] = row.provider_email || ''
+    })
+    acceptance.value = accepts
+    emailOverrides.value = emails
+}
 
 async function loadSummary() {
     loading.value = true
@@ -147,17 +161,8 @@ async function loadRecommended() {
     recommendedActionError.value = ''
     recommendedSuccess.value = ''
     try {
-        const response = await getRecommendedImportes()
-        recommendedData.value = response.items
-        recommendedMeta.value = response.settings
-        const accepts: Record<string, boolean> = {}
-        const emails: Record<string, string> = {}
-        response.items.forEach((row) => {
-            accepts[row.provider_ident] = false
-            emails[row.provider_ident] = row.provider_email || ''
-        })
-        acceptance.value = accepts
-        emailOverrides.value = emails
+        const response = await recalculateRecommendedImportes()
+        assignRecommendedResponse(response)
     } catch (err: any) {
         recommendedFetchError.value = err?.response?.data?.message || err?.message || 'No se pudo calcular los importes.'
         recommendedData.value = []
@@ -166,6 +171,22 @@ async function loadRecommended() {
         emailOverrides.value = {}
     } finally {
         recommendedLoading.value = false
+    }
+}
+
+async function reloadRecommended() {
+    recommendedReloading.value = true
+    recommendedFetchError.value = ''
+    recommendedActionError.value = ''
+    recommendedSuccess.value = ''
+    try {
+        const response = await recalculateRecommendedImportes()
+        assignRecommendedResponse(response)
+        recommendedSuccess.value = 'Importes recomendados recalculados.'
+    } catch (err: any) {
+        recommendedFetchError.value = err?.response?.data?.message || err?.message || 'No se pudo recalcular los importes.'
+    } finally {
+        recommendedReloading.value = false
     }
 }
 
@@ -472,65 +493,79 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                 <div v-else-if="recommendedFetchError" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                     {{ recommendedFetchError }}
                 </div>
-                <div v-else-if="recommendedData.length" class="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-                    <table class="min-w-[640px] divide-y divide-gray-200 text-sm">
-                        <thead class="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
-                            <tr>
-                                <th class="px-3 py-2 text-left">Proveedor</th>
-                                <th class="px-3 py-2 text-right">Importe actual</th>
-                                <th class="px-3 py-2 text-right">Total ventas histórico</th>
-                                <th class="px-3 py-2 text-right">Meses</th>
-                                <th class="px-3 py-2 text-right">Promedio mensual</th>
-                                <th class="px-3 py-2 text-right">Importe recomendado</th>
-                                <th class="px-3 py-2 text-left">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-100">
-                            <tr v-for="row in filteredRecommended" :key="row.provider_ident" class="hover:bg-emerald-50">
-                                <td class="px-3 py-2">
-                                    <p class="font-semibold text-gray-900">{{ row.provider_name }}</p>
-                                    <p class="text-xs text-gray-500">ID: {{ row.provider_ident }}</p>
-                                    <span class="mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                                        :class="row.is_recommended ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'">
-                                        {{ row.is_recommended ? 'Recomendado' : 'No recomendado' }}
-                                    </span>
-                                </td>
-                                <td class="px-3 py-2 text-right">{{ row.current_importe.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
-                                <td class="px-3 py-2 text-right">{{ row.total_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
-                                <td class="px-3 py-2 text-right">{{ row.months }}</td>
-                                <td class="px-3 py-2 text-right">{{ row.avg_monthly_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
-                                <td class="px-3 py-2 text-right font-semibold text-emerald-700">
-                                    {{ row.recommended_importe.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
-                                </td>
-                                <td class="px-3 py-2 text-xs">
-                                    <label class="inline-flex items-center gap-2 text-[11px] text-gray-600">
-                                        <input type="checkbox" class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                                            v-model="acceptance[row.provider_ident]" />
-                                        <span>Proveedor aceptó</span>
-                                    </label>
-                                    <input type="email" class="mt-2 w-full rounded border border-gray-300 px-3 py-1.5 text-xs focus:border-emerald-600 focus:ring-emerald-600"
-                                        placeholder="Correo del proveedor"
-                                        v-model="emailOverrides[row.provider_ident]" />
-                                    <div class="mt-2 flex flex-wrap gap-2">
-                                        <button type="button"
-                                            class="rounded border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                                            :disabled="applyLoading === row.provider_ident"
-                                            @click="handleApplyImport(row, false)">
-                                            <span v-if="applyLoading === row.provider_ident">Aplicando…</span>
-                                            <span v-else>Aplicar importe</span>
-                                        </button>
-                                        <button type="button"
-                                            class="rounded border border-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
-                                            :disabled="applyLoading === row.provider_ident"
-                                            @click="handleApplyImport(row, true)">
-                                            <span v-if="applyLoading === row.provider_ident">Enviando…</span>
-                                            <span v-else>Enviar confirmación</span>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div v-else-if="recommendedData.length" class="space-y-3">
+                    <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+                        <table class="min-w-[640px] divide-y divide-gray-200 text-sm">
+                            <thead class="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+                                <tr>
+                                    <th class="px-3 py-2 text-left">Proveedor</th>
+                                    <th class="px-3 py-2 text-right">Importe actual</th>
+                                    <th class="px-3 py-2 text-right">Total ventas histórico</th>
+                                    <th class="px-3 py-2 text-right">Meses</th>
+                                    <th class="px-3 py-2 text-right">Promedio mensual</th>
+                                    <th class="px-3 py-2 text-right">Importe recomendado</th>
+                                    <th class="px-3 py-2 text-left">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr v-for="row in filteredRecommended" :key="row.provider_ident" class="hover:bg-emerald-50">
+                                    <td class="px-3 py-2">
+                                        <p class="font-semibold text-gray-900">{{ row.provider_name }}</p>
+                                        <p class="text-xs text-gray-500">ID: {{ row.provider_ident }}</p>
+                                        <span class="mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                            :class="row.is_recommended ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'">
+                                            {{ row.is_recommended ? 'Recomendado' : 'No recomendado' }}
+                                        </span>
+                                    </td>
+                                    <td class="px-3 py-2 text-right">{{ row.current_importe.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ row.total_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ row.months }}</td>
+                                    <td class="px-3 py-2 text-right">{{ row.avg_monthly_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
+                                    <td class="px-3 py-2 text-right font-semibold text-emerald-700">
+                                        {{ row.recommended_importe.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                    </td>
+                                    <td class="px-3 py-2 text-xs">
+                                        <label class="inline-flex items-center gap-2 text-[11px] text-gray-600">
+                                            <input type="checkbox" class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                                v-model="acceptance[row.provider_ident]" />
+                                            <span>Proveedor aceptó</span>
+                                        </label>
+                                        <input type="email" class="mt-2 w-full rounded border border-gray-300 px-3 py-1.5 text-xs focus:border-emerald-600 focus:ring-emerald-600"
+                                            placeholder="Correo del proveedor"
+                                            v-model="emailOverrides[row.provider_ident]" />
+                                        <div class="mt-2 flex flex-wrap gap-2">
+                                            <button type="button"
+                                                class="rounded border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                                                :disabled="applyLoading === row.provider_ident"
+                                                @click="handleApplyImport(row, false)">
+                                                <span v-if="applyLoading === row.provider_ident">Aplicando…</span>
+                                                <span v-else>Aplicar importe</span>
+                                            </button>
+                                            <button type="button"
+                                                class="rounded border border-emerald-500 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                                                :disabled="applyLoading === row.provider_ident"
+                                                @click="handleApplyImport(row, true)">
+                                                <span v-if="applyLoading === row.provider_ident">Enviando…</span>
+                                                <span v-else>Enviar confirmación</span>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="flex justify-end">
+                        <button type="button"
+                            class="inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                            :disabled="recommendedReloading"
+                            @click="reloadRecommended">
+                            <svg v-if="recommendedReloading" class="h-3 w-3 animate-spin text-gray-500" viewBox="0 0 24 24" fill="none">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 000 16v-4l-3 3 3 3v-4a8 8 0 01-8-8z"></path>
+                            </svg>
+                            <span>{{ recommendedReloading ? 'Recalculando…' : 'Recalcular importes sugeridos' }}</span>
+                        </button>
+                    </div>
                 </div>
                 <div v-else class="text-sm text-gray-500">No hay datos suficientes para calcular importes.</div>
             </div>

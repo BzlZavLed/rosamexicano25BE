@@ -75,6 +75,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('proveedores', ProveedoresController::class)
         ->parameters(['proveedores' => 'proveedor']);
     Route::post('/proveedores/import', [ProveedoresController::class, 'import']);
+    Route::post('/proveedores/bulk-tipo', [ProveedoresController::class, 'bulkUpdateTipo']);
     Route::get('/proveedores/{proveedor}/productos', [ProductosController::class, 'byProveedor'])
         ->whereNumber('proveedor');
     Route::get('/proveedores/{proveedor}/inventario', [InventarioController::class, 'byProveedor'])
@@ -130,6 +131,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/analysis/top-products', [AnalysisController::class, 'topProducts']);
     Route::get('/analysis/month-details', [AnalysisController::class, 'monthDetails']);
     Route::get('/analysis/recommended-importes', [AnalysisController::class, 'recommendedImportes']);
+    Route::post('/analysis/recommended-importes/recalculate', [AnalysisController::class, 'recalculateRecommendedImportes']);
     Route::post('/analysis/recommended-importes/apply', [AnalysisController::class, 'applyRecommendedImport']);
     Route::get('/reports/mensualidad', [ReportController::class, 'mensualidad']);
     Route::get('/reports/productos', [ReportController::class, 'productos']);

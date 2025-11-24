@@ -41,22 +41,7 @@ const error = ref('');
 const search = ref('');
 const results = ref<PickedProduct[]>([]);
 const selected = ref<PickedProduct | null>(null);
-const pagination = reactive({
-    page: 1,
-    perPage: 10,
-    lastPage: 1,
-    total: 0
-});
-const pageNumbers = computed(() => {
-    const pages = Math.max(1, pagination.lastPage || 1);
-    return Array.from({ length: pages }, (_, idx) => idx + 1);
-});
-const pageInfo = computed(() => {
-    if (!pagination.total) return null;
-    const start = (pagination.page - 1) * pagination.perPage + 1;
-    const end = Math.min(start + pagination.perPage - 1, pagination.total);
-    return { start, end };
-});
+const perPage = 10;
 
 // Entrada (sumar)
 const cantidad = ref<number | null>(null);
@@ -92,24 +77,6 @@ const batchHasInvalid = computed(() =>
     })
 );
 const canGenerateReceipts = computed(() => batchItems.value.some((item) => item.mode === 'add'));
-const existenciaFilter = ref<'all' | 'with' | 'without'>('all');
-const existenciaOptions = [
-    { value: 'all', label: 'Todas las existencias' },
-    { value: 'with', label: 'Con existencia' },
-    { value: 'without', label: 'Sin existencia' },
-] as const;
-const sortField = ref<'nombre' | 'proveedor' | 'existencia' | 'importe'>('nombre');
-const sortOptions = [
-    { value: 'nombre', label: 'Nombre' },
-    { value: 'proveedor', label: 'Proveedor' },
-    { value: 'existencia', label: 'Existencia' },
-    { value: 'importe', label: 'Importe' },
-] as const;
-const sortDirection = ref<'asc' | 'desc'>('asc');
-const directionOptions = [
-    { value: 'asc', label: 'Ascendente' },
-    { value: 'desc', label: 'Descendente' },
-] as const;
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
@@ -160,28 +127,24 @@ const SEARCH_DELAY_MS = 350;
 let t: number | undefined;
 
 async function runSearch() {
+    const term = search.value.trim();
+    if (!term) {
+        results.value = [];
+        error.value = '';
+        loading.value = false;
+        selected.value = null;
+        return;
+    }
     loading.value = true; error.value = '';
     try {
         const params: Record<string, any> = {
-            page: pagination.page,
-            per_page: pagination.perPage
+            page: 1,
+            per_page: perPage
         };
-        if (search.value) params.search = search.value;
-        if (existenciaFilter.value !== 'all') params.has_inventory = existenciaFilter.value;
-        if (sortField.value) params.sort = sortField.value;
-        if (sortDirection.value) params.direction = sortDirection.value;
+        params.search = term;
         const resp = await listProductos(params);
         const arr = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : []);
         results.value = arr as PickedProduct[];
-
-        const meta = resp?.meta ?? null;
-        const total = meta?.total ?? resp?.total ?? arr.length;
-        const lastPage = meta?.last_page ?? meta?.lastPage ?? (total ? Math.ceil(total / pagination.perPage) : 1);
-        pagination.total = total;
-        pagination.lastPage = Math.max(1, lastPage || 1);
-        if (pagination.page > pagination.lastPage) {
-            pagination.page = pagination.lastPage;
-        }
     } catch (e: any) {
         error.value = e?.response?.data?.message || 'Error buscando productos';
     } finally {
@@ -190,29 +153,10 @@ async function runSearch() {
 }
 
 watch(search, () => {
-    pagination.page = 1;
-    if (t) clearTimeout(t);
-    t = window.setTimeout(runSearch, SEARCH_DELAY_MS);
-});
-watch([existenciaFilter, sortField, sortDirection], () => {
-    pagination.page = 1;
     if (t) clearTimeout(t);
     t = window.setTimeout(runSearch, SEARCH_DELAY_MS);
 });
 onUnmounted(() => { if (t) clearTimeout(t); });
-
-watch(() => pagination.perPage, (newVal, oldVal) => {
-    if (oldVal === undefined || newVal === oldVal) return;
-    pagination.page = 1;
-    if (t) { clearTimeout(t); t = undefined; }
-    runSearch();
-});
-
-watch(() => pagination.page, (newVal, oldVal) => {
-    if (oldVal === undefined || newVal === oldVal) return;
-    if (t) { clearTimeout(t); t = undefined; }
-    runSearch();
-});
 
 // ---------- Picking a product ----------
 function pickProduct(p: PickedProduct) {
@@ -737,18 +681,11 @@ const money = (v: number | string | null | undefined, currency = 'MXN', locale =
     }
 };
 
-function goToPage(page: number) {
-    const target = Math.max(1, Math.min(page, pagination.lastPage || 1));
-    if (target === pagination.page) return;
-    pagination.page = target;
-}
-
-function goToPrevPage() {
-    goToPage(pagination.page - 1);
-}
-
-function goToNextPage() {
-    goToPage(pagination.page + 1);
+function resetSearch() {
+    search.value = '';
+    selected.value = null;
+    results.value = [];
+    runSearch();
 }
 
 // Init
@@ -762,144 +699,90 @@ onMounted(() => { runSearch(); });
             <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5 md:p-6 space-y-4">
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <h2 class="text-xl font-semibold">Buscar producto</h2>
-                    <div class="flex items-center gap-2 text-xs text-gray-500">
-                        <span>Encuentra el producto y selecciónalo para actualizar inventario.</span>
+                    <p class="text-xs text-gray-500">Escribe nombre, proveedor o ident para localizar un producto.</p>
+                </div>
+
+                <div class="space-y-3">
+                    <div class="relative">
+                        <input
+                            v-model="search"
+                            type="text"
+                            placeholder="Nombre, proveedor o ident…"
+                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 pr-9"
+                            aria-label="Buscar producto"
+                        />
+                        <button
+                            v-if="search"
+                            class="absolute inset-y-0 right-0 mr-2 my-1 px-2 text-sm text-gray-500 hover:text-gray-700 rounded-md hover:bg-gray-100"
+                            @click="search = ''; runSearch()"
+                            type="button"
+                            aria-label="Limpiar búsqueda"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    <div class="flex justify-end">
+                        <button
+                            type="button"
+                            class="rounded border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                            @click="resetSearch"
+                        >
+                            Limpiar búsqueda
+                        </button>
                     </div>
                 </div>
 
                 <div class="space-y-2">
-                    <div class="relative">
-                        <input v-model="search" type="text" placeholder="Nombre, descripción, ident…"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 pr-9"
-                            aria-label="Buscar producto" />
-                        <button v-if="search"
-                            class="absolute inset-y-0 right-0 mr-2 my-1 px-2 text-sm text-gray-500 hover:text-gray-700 rounded-md hover:bg-gray-100"
-                            @click="search = ''; runSearch()" type="button" aria-label="Limpiar búsqueda">✕</button>
+                    <div v-if="loading" class="text-sm text-gray-500">Buscando productos…</div>
+                    <div v-else-if="error" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                        {{ error }}
                     </div>
-                    <p class="text-xs text-gray-500">Muestra los primeros 10 resultados que coincidan con la búsqueda.
-                    </p>
-                </div>
-
-                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Existencia</label>
-                        <select v-model="existenciaFilter"
-                            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900">
-                            <option v-for="opt in existenciaOptions" :key="opt.value" :value="opt.value">
-                                {{ opt.label }}
-                            </option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Ordenar por</label>
-                        <select v-model="sortField"
-                            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900">
-                            <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">
-                                {{ opt.label }}
-                            </option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
-                        <select v-model="sortDirection"
-                            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900">
-                            <option v-for="opt in directionOptions" :key="opt.value" :value="opt.value">
-                                {{ opt.label }}
-                            </option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="border rounded-lg overflow-hidden">
-                    <!-- Desktop table -->
-                    <table class="hidden min-w-full text-sm md:table">
-                        <thead class="bg-gray-50 text-gray-500">
-                            <tr>
-                                <th class="text-left font-medium px-3 py-2">ID</th>
-                                <th class="text-left font-medium px-3 py-2">Ident</th>
-                                <th class="text-left font-medium px-3 py-2">Producto</th>
-                                <th class="text-left font-medium px-3 py-2">Proveedor</th>
-                                <th class="text-left font-medium px-3 py-2">Existencia</th>
-                                <th class="text-right font-medium px-3 py-2">Precio</th>
-                                <th class="text-right font-medium px-3 py-2">Importe</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="p in results" :key="p.id" @click="pickProduct(p)"
-                                :class="['cursor-pointer hover:bg-gray-50 transition', selected?.id === p.id ? 'bg-gray-100' : '']">
-                                <td class="px-3 py-2">{{ p.id }}</td>
-                                <td class="px-3 py-2">{{ p.ident }}</td>
-                                <td class="px-3 py-2">{{ p.nombre }}</td>
-                                <td class="px-3 py-2">
-                                    <span v-if="p.proveedor?.nombre">{{ p.proveedor.nombre }}</span>
-                                    <span v-else class="text-rose-600 font-medium">No proveedor definido</span>
-                                </td>
-                                <td class="px-3 py-2">{{ (p as any)?.inventario?.existencia ?? 0 }} unidades</td>
-                                <td class="px-3 py-2 text-right">{{ money(p.precio) }}</td>
-                                <td class="px-3 py-2 text-right">{{ money((p as any)?.inventario?.importe) }}</td>
-                            </tr>
-                            <tr v-if="!loading && results.length === 0">
-                                <td colspan="7" class="px-3 py-3 text-center text-gray-500">Sin resultados</td>
-                            </tr>
-                            <tr v-if="loading">
-                                <td colspan="7" class="px-3 py-3 text-center text-gray-500">Buscando…</td>
-                            </tr>
-                        </tbody>
-                    </table>
-
-                    <!-- Mobile cards -->
-                    <div class="md:hidden divide-y divide-gray-100 max-h-80 overflow-auto">
-                        <button v-for="p in results" :key="p.id" @click="pickProduct(p)"
-                            class="w-full text-left p-3 space-y-2 transition hover:bg-gray-50"
-                            :class="selected?.id === p.id ? 'bg-gray-100' : 'bg-white'">
-                            <div class="flex items-center justify-between">
-                                <span class="text-sm font-semibold text-gray-800">{{ p.nombre }}</span>
-                                <span class="text-xs text-gray-500">#{{ p.ident }}</span>
-                            </div>
-                            <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
-                                <div><span class="font-medium text-gray-700">Proveedor:</span> {{
-                                    p.proveedor?.nombre || '—'
-                                    }}</div>
-                                <div class="text-right"><span class="font-medium text-gray-700">Existencia:</span> {{
-                                    (p as any)?.inventario?.existencia ?? 0 }} uds</div>
-                                <div><span class="font-medium text-gray-700">Precio:</span>
-                                    {{ money(p.precio) }}</div>
-                                <div class="text-right"><span class="font-medium text-gray-700">Importe:</span>
-                                    {{ money((p as any)?.inventario?.importe) }}</div>
-                            </div>
-                        </button>
-                        <div v-if="!loading && results.length === 0" class="p-4 text-center text-sm text-gray-500">
-                            Sin resultados
-                        </div>
-                        <div v-if="loading" class="p-4 text-center text-sm text-gray-500">Buscando…</div>
-                    </div>
-                </div>
-                <div
-                    class="flex flex-col gap-3 text-sm text-gray-600 md:flex-row md:items-center md:justify-between">
-                    <div class="flex flex-wrap items-center gap-2">
-                        <span>Filas por página:</span>
-                        <select v-model.number="pagination.perPage"
-                            class="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900">
-                            <option v-for="option in [5, 10, 20, 50]" :key="option" :value="option">{{ option }}</option>
-                        </select>
-                        <span v-if="pageInfo">Mostrando {{ pageInfo.start }} – {{ pageInfo.end }} de {{
-                            pagination.total }}</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button @click="goToPrevPage" :disabled="pagination.page <= 1"
-                            class="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50">
-                            Anterior
-                        </button>
-                        <select v-model.number="pagination.page"
-                            class="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900">
-                            <option v-for="pageNumber in pageNumbers" :key="pageNumber" :value="pageNumber">
-                                Página {{ pageNumber }}
-                            </option>
-                        </select>
-                        <button @click="goToNextPage" :disabled="pagination.page >= pagination.lastPage"
-                            class="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50">
-                            Siguiente
-                        </button>
+                    <div
+                        v-else
+                        class="max-h-80 overflow-auto rounded-lg border border-gray-200 divide-y divide-gray-100 bg-white"
+                    >
+                        <template v-if="results.length">
+                            <button
+                                v-for="p in results"
+                                :key="p.id"
+                                @click="pickProduct(p)"
+                                class="w-full text-left px-3 py-3 transition hover:bg-gray-50"
+                                :class="selected?.id === p.id ? 'bg-gray-100' : ''"
+                            >
+                                <div class="flex flex-wrap items-start justify-between gap-2">
+                                    <div>
+                                        <p class="text-xs uppercase text-gray-400">Producto</p>
+                                        <p class="font-semibold text-gray-900">{{ p.nombre }}</p>
+                                        <p class="text-xs text-gray-500">#{{ p.ident }} · ID interno {{ p.id }}</p>
+                                    </div>
+                                    <div class="text-right text-xs text-gray-500">
+                                        Proveedor:
+                                        <span class="font-medium text-gray-900">
+                                            {{ p.proveedor?.nombre || 'No asignado' }}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="mt-2 grid gap-3 text-xs text-gray-600 sm:grid-cols-3">
+                                    <div>
+                                        <p class="text-[11px] uppercase text-gray-400">Existencia</p>
+                                        <p class="font-semibold text-gray-900">
+                                            {{ (p as any)?.inventario?.existencia ?? 0 }} uds
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] uppercase text-gray-400">Precio venta</p>
+                                        <p class="font-semibold text-gray-900">{{ money(p.precio) }}</p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] uppercase text-gray-400">Importe inventario</p>
+                                        <p class="font-semibold text-gray-900">
+                                            {{ money((p as any)?.inventario?.importe) }}
+                                        </p>
+                                    </div>
+                                </div>
+                            </button>
+                        </template>
+                        <p v-else class="px-3 py-4 text-sm text-gray-500">Sin resultados. Intenta otra búsqueda.</p>
                     </div>
                 </div>
             </section>

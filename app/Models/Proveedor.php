@@ -43,6 +43,11 @@ class Proveedor extends Authenticatable
         return $this->hasMany(Producto::class, 'proveedorid', 'id');
     }
 
+    public function recommendedImporte()
+    {
+        return $this->hasOne(RecommendedImporte::class, 'provider_ident', 'ident');
+    }
+
     protected static function booted(): void
     {
         static::saving(function (self $model) {

@@ -312,6 +312,8 @@ export async function notifyInventoryProposal(params: { horizon: RestockHorizon;
 export interface Proveedor {
     ident: string;
     nombre: string;
+    tipo?: 'normal' | 'consigna' | 'porcentaje' | null;
+    porcentaje_comision?: number | null;
 }
 
 export interface ProductoRow {
@@ -346,6 +348,7 @@ export interface InventarioRow {
     producto_ident: string;
     producto_nombre: string;
     precio: number | null;
+    precio_proveedor: number | null;
     existencia: number;
     costo_inventario: number;
     proveedor: Proveedor | null;
@@ -354,6 +357,12 @@ export interface InventarioRow {
 export interface InventarioReportResponse {
     data: InventarioRow[];
     pagination: ProductosPagination;
+    totals: {
+        total_productos: number;
+        total_existencia: number;
+        valor_publico: number;
+        valor_proveedor: number;
+    };
 }
 
 // ---------------------
@@ -415,11 +424,6 @@ export interface MensualidadReportSummary {
 }
 
 export interface MensualidadReportResponse {
-    mes_cobro: string;
-    filters: {
-        status: string | null;
-        proveedor_id: number | null;
-    };
     summary: MensualidadReportSummary;
     items: MensualidadReportItem[];
 }
@@ -533,6 +537,7 @@ export async function getInventarioReport(opts: {
     per_page?: number;
     sort?: 'producto' | 'existencia' | 'proveedor';
     direction?: 'asc' | 'desc';
+    provider_tipo?: 'normal' | 'consigna' | 'porcentaje';
 } = {}): Promise<InventarioReportResponse> {
     const params: Record<string, string | number> = {};
     if (opts.q) params.q = opts.q;
@@ -540,6 +545,7 @@ export async function getInventarioReport(opts: {
     if (opts.per_page) params.per_page = opts.per_page;
     if (opts.sort) params.sort = opts.sort;
     if (opts.direction) params.direction = opts.direction;
+    if (opts.provider_tipo) params.provider_tipo = opts.provider_tipo;
 
     const { data } = await http.get<InventarioReportResponse>('/reports/inventario', { params });
     return data;
@@ -572,17 +578,8 @@ export async function getProviderTrends(params: { from_date: string; to_date: st
     return data;
 }
 
-export async function getMensualidadReport(params: {
-    mes_cobro: string;
-    status?: string;
-    proveedor_id?: number;
-    download?: boolean;
-}) {
-    const query: Record<string, string | number> = {
-        mes_cobro: params.mes_cobro,
-    };
-    if (params.status && params.status !== 'all') query.status = params.status;
-    if (typeof params.proveedor_id === 'number') query.proveedor_id = params.proveedor_id;
+export async function getMensualidadReport(params: { download?: boolean } = {}) {
+    const query: Record<string, string | number> = {};
     if (params.download) query.download = 1;
 
     if (params.download) {

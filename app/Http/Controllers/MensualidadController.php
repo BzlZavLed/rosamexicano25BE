@@ -33,6 +33,15 @@ class MensualidadController extends Controller
             $query->whereDate('fecha', $request->input('fecha'));
         }
 
+        if ($request->filled('mes_cobro')) {
+            $mes = trim((string) $request->input('mes_cobro'));
+            $query->where('mes_cobro', 'like', $mes . '%');
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->input('status'));
+        }
+
         if ($search = $request->get('search')) {
             $like = '%' . Str::lower($search) . '%';
             $query->where(function ($q) use ($like) {
@@ -43,7 +52,15 @@ class MensualidadController extends Controller
 
         $query->orderByDesc('fecha')->orderByDesc('id');
 
-        return MensualidadResource::collection($query->paginate($perPage));
+        $total = (clone $query)->count();
+
+        if ($total > 20) {
+            $paginator = $query->paginate($perPage)->appends($request->query());
+            return MensualidadResource::collection($paginator);
+        }
+
+        $items = $query->get();
+        return MensualidadResource::collection($items);
     }
 
     public function store(StoreMensualidadRequest $request)

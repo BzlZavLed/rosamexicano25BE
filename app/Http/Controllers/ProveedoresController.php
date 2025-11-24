@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class ProveedoresController extends Controller
 {
@@ -31,7 +32,7 @@ class ProveedoresController extends Controller
             });
         }
 
-        $q->orderBy('nombre');
+        $q->with('recommendedImporte')->orderBy('nombre');
 
         return ProveedorResource::collection($q->paginate($perPage));
     }
@@ -49,13 +50,13 @@ class ProveedoresController extends Controller
         }
 
         $proveedor = Proveedor::create($data);
-        return new ProveedorResource($proveedor);
+        return new ProveedorResource($proveedor->load('recommendedImporte'));
     }
 
     // GET /api/proveedores/{proveedor}
     public function show(Proveedor $proveedore) // route model binding (singular key is 'proveedore' by default)
     {
-        return new ProveedorResource($proveedore);
+        return new ProveedorResource($proveedore->load('recommendedImporte'));
     }
 
     // PUT/PATCH /api/proveedores/{proveedor}
@@ -87,7 +88,7 @@ class ProveedoresController extends Controller
         if ($proveedor->isDirty()) {
             $proveedor->save();
         }
-        return new ProveedorResource($proveedor->fresh());
+        return new ProveedorResource($proveedor->fresh()->load('recommendedImporte'));
     }
 
     // DELETE /api/proveedores/{proveedor}
@@ -333,6 +334,73 @@ class ProveedoresController extends Controller
             'updated' => $updated,
             'skipped' => $skipped,
             'errors' => $errors,
+        ]);
+    }
+
+    public function bulkUpdateTipo(Request $request)
+    {
+        $rules = [
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.id' => ['required', 'integer', 'exists:proveedores,id'],
+            'items.*.tipo' => ['required', Rule::in(['normal', 'consigna', 'porcentaje'])],
+            'items.*.importe' => ['nullable', 'numeric', 'min:0'],
+            'items.*.porcentaje' => ['nullable', 'numeric', 'min:0', 'max:100'],
+        ];
+
+        $validator = Validator::make($request->all(), $rules, [], [
+            'items.*.id' => 'proveedor',
+        ]);
+
+        $validator->after(function ($validator) use ($request) {
+            $items = $request->input('items', []);
+            foreach ($items as $index => $item) {
+                $tipo = $item['tipo'] ?? 'normal';
+                if ($tipo === 'normal') {
+                    $importe = $item['importe'] ?? null;
+                    if ($importe === null || !is_numeric($importe) || (float) $importe <= 0) {
+                        $validator->errors()->add("items.{$index}.importe", 'El importe es obligatorio para proveedores normales.');
+                    }
+                }
+                if ($tipo === 'porcentaje') {
+                    $pct = $item['porcentaje'] ?? null;
+                    if ($pct === null || !is_numeric($pct) || (float) $pct <= 0) {
+                        $validator->errors()->add("items.{$index}.porcentaje", 'Define el porcentaje para proveedores por porcentaje.');
+                    }
+                }
+            }
+        });
+
+        $validated = $validator->validate();
+        $items = collect($validated['items']);
+
+        $ids = $items->pluck('id')->all();
+        $providers = Proveedor::whereIn('id', $ids)->get()->keyBy('id');
+
+        $updated = 0;
+        foreach ($items as $item) {
+            $provider = $providers->get($item['id']);
+            if (!$provider) {
+                continue;
+            }
+            $tipo = $item['tipo'];
+            $importe = $tipo === 'normal' ? (float) $item['importe'] : null;
+            $porcentaje = $tipo === 'porcentaje' ? (float) $item['porcentaje'] : null;
+
+            $provider->tipo = $tipo;
+            $provider->importe = $importe;
+            $provider->porcentaje_comision = $porcentaje;
+
+            if ($provider->isDirty(['tipo', 'importe', 'porcentaje_comision'])) {
+                $provider->save();
+                $updated++;
+            }
+        }
+
+        $refreshed = Proveedor::whereIn('id', $ids)->get();
+
+        return response()->json([
+            'updated' => $updated,
+            'items' => ProveedorResource::collection($refreshed),
         ]);
     }
 }

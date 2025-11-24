@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\RecommendedImporte;
 use App\Models\Usuario;
 use App\Support\SystemSettings;
 use Illuminate\Support\Facades\Mail;
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Arr;
 
 class AnalysisController extends Controller
 {
@@ -98,23 +100,51 @@ class AnalysisController extends Controller
     {
         $this->ensureAdmin($request);
 
+        $records = RecommendedImporte::orderByDesc('recommended_importe')->get();
+        if ($records->isEmpty()) {
+            return response()->json($this->rebuildRecommendedImportes());
+        }
+
+        return response()->json($this->formatStoredRecommendedResponse($records));
+    }
+
+    public function recalculateRecommendedImportes(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        return response()->json($this->rebuildRecommendedImportes());
+    }
+
+    protected function rebuildRecommendedImportes(): array
+    {
         $percentage = (float) SystemSettings::get('analysis_recommended_pct', '5');
         $monthsLimit = max(1, (int) SystemSettings::get('analysis_recommended_months', '12'));
         $periodEnd = Carbon::today()->endOfMonth();
         $periodStart = (clone $periodEnd)->subMonths($monthsLimit - 1)->startOfMonth();
 
         $providers = DB::table('proveedores')
-            ->select(['ident', 'nombre', 'importe', 'email'])
+            ->select(['id', 'ident', 'nombre', 'importe', 'email'])
             ->where('tipo', '=', 'normal')
             ->whereRaw('COALESCE(importe, 0) > 0')
             ->get()
             ->keyBy(fn ($row) => (string) $row->ident);
 
         if ($providers->isEmpty()) {
-            return response()->json(['items' => []]);
+            RecommendedImporte::query()->delete();
+
+            return [
+                'items' => [],
+                'settings' => [
+                    'percentage' => $percentage,
+                    'months' => $monthsLimit,
+                    'from' => $periodStart->toDateString(),
+                    'to' => $periodEnd->toDateString(),
+                ],
+            ];
         }
 
-        $stats = $this->buildProviderAggregateQuery($periodStart, $periodEnd)->get()
+        $stats = $this->buildProviderAggregateQuery($periodStart, $periodEnd)
+            ->get()
             ->keyBy(fn ($row) => (string) $row->proveedor_ident);
 
         $items = $providers->map(function ($provider, $ident) use ($stats, $percentage) {
@@ -128,6 +158,7 @@ class AnalysisController extends Controller
             $isRecommended = $recommended >= $currentImporte || $currentImporte === 0.0;
 
             return [
+                'provider_id' => $provider->id ?? null,
                 'provider_ident' => (string) $ident,
                 'provider_name' => $provider->nombre ?? 'Proveedor sin nombre',
                 'provider_email' => $provider->email,
@@ -140,15 +171,101 @@ class AnalysisController extends Controller
             ];
         })->values()->sortByDesc('recommended_importe')->values();
 
-        return response()->json([
-            'items' => $items,
+        $this->persistRecommendedImportes($items, $percentage, $monthsLimit, $periodStart, $periodEnd);
+
+        return [
+            'items' => $this->mapRecommendedItemsForResponse($items),
             'settings' => [
                 'percentage' => $percentage,
                 'months' => $monthsLimit,
                 'from' => $periodStart->toDateString(),
                 'to' => $periodEnd->toDateString(),
             ],
-        ]);
+        ];
+    }
+
+    protected function mapRecommendedItemsForResponse($items): array
+    {
+        return $items->map(function ($row) {
+            return Arr::except($row, ['provider_id']);
+        })->values()->all();
+    }
+
+    protected function persistRecommendedImportes($items, float $percentage, int $monthsLimit, Carbon $periodStart, Carbon $periodEnd): void
+    {
+        DB::transaction(function () use ($items, $percentage, $monthsLimit, $periodStart, $periodEnd) {
+            RecommendedImporte::query()->delete();
+
+            if ($items->isEmpty()) {
+                return;
+            }
+
+            $now = now();
+            $payloads = $items->map(function ($row) use ($percentage, $monthsLimit, $periodStart, $periodEnd, $now) {
+                return [
+                    'proveedor_id' => $row['provider_id'] ?? null,
+                    'provider_ident' => $row['provider_ident'],
+                    'provider_name' => $row['provider_name'],
+                    'provider_email' => $row['provider_email'] ?? null,
+                    'current_importe' => $row['current_importe'],
+                    'avg_monthly_sales' => $row['avg_monthly_sales'],
+                    'recommended_importe' => $row['recommended_importe'],
+                    'total_sales' => $row['total_sales'],
+                    'months' => $row['months'],
+                    'is_recommended' => $row['is_recommended'],
+                    'percentage_used' => $percentage,
+                    'months_window' => $monthsLimit,
+                    'period_start' => $periodStart->toDateString(),
+                    'period_end' => $periodEnd->toDateString(),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            })->all();
+
+            RecommendedImporte::insert($payloads);
+        });
+    }
+
+    protected function formatStoredRecommendedResponse($records): array
+    {
+        if ($records->isEmpty()) {
+            return [
+                'items' => [],
+                'settings' => [
+                    'percentage' => (float) SystemSettings::get('analysis_recommended_pct', '5'),
+                    'months' => max(1, (int) SystemSettings::get('analysis_recommended_months', '12')),
+                    'from' => null,
+                    'to' => null,
+                ],
+            ];
+        }
+
+        $items = $records->map(function (RecommendedImporte $record) {
+            return [
+                'provider_ident' => $record->provider_ident,
+                'provider_name' => $record->provider_name,
+                'provider_email' => $record->provider_email,
+                'current_importe' => (float) $record->current_importe,
+                'avg_monthly_sales' => (float) $record->avg_monthly_sales,
+                'recommended_importe' => (float) $record->recommended_importe,
+                'months' => (int) $record->months,
+                'total_sales' => (float) $record->total_sales,
+                'is_recommended' => (bool) $record->is_recommended,
+            ];
+        })->values()->all();
+
+        $first = $records->first();
+        $settings = [
+            'percentage' => $first ? (float) $first->percentage_used : (float) SystemSettings::get('analysis_recommended_pct', '5'),
+            'months' => $first ? (int) $first->months_window : max(1, (int) SystemSettings::get('analysis_recommended_months', '12')),
+            'from' => $first && $first->period_start ? $first->period_start->toDateString() : null,
+            'to' => $first && $first->period_end ? $first->period_end->toDateString() : null,
+        ];
+
+        return [
+            'items' => $items,
+            'settings' => $settings,
+        ];
     }
 
     public function topProducts(Request $request)
@@ -237,6 +354,12 @@ class AnalysisController extends Controller
                     ->subject('Confirmación de nuevo importe - ' . ($provider->nombre ?? 'Proveedor'));
             });
         }
+
+        RecommendedImporte::where('provider_ident', $data['provider_ident'])->update([
+            'current_importe' => $data['importe'],
+            'is_recommended' => true,
+            'updated_at' => now(),
+        ]);
 
         return response()->json(['message' => 'Importe actualizado correctamente.']);
     }

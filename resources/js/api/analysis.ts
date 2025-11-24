@@ -84,8 +84,8 @@ export type RecommendedImporteResponse = {
     };
 };
 
-export async function getRecommendedImportes() {
-    const { data } = await http.get<RecommendedImporteResponse>('/analysis/recommended-importes');
+export async function recalculateRecommendedImportes() {
+    const { data } = await http.post<RecommendedImporteResponse>('/analysis/recommended-importes/recalculate');
     return data;
 }
 

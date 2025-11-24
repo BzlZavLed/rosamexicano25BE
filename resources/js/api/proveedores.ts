@@ -1,5 +1,17 @@
 import http from '../api/http';
 
+export type ProveedorRecommendation = {
+    recommended_importe: number;
+    avg_monthly_sales: number;
+    total_sales: number;
+    months: number;
+    percentage_used: number;
+    months_window: number;
+    period_start?: string | null;
+    period_end?: string | null;
+    updated_at?: string | null;
+};
+
 export type Proveedor = {
     id: number;
     ident: number;
@@ -13,6 +25,7 @@ export type Proveedor = {
     importe?: number;   // cobro mensual
     tipo: 'normal' | 'consigna' | 'porcentaje';
     porcentaje_comision?: number | null;
+    recommendation?: ProveedorRecommendation | null;
 };
 
 export async function listProveedores(params?: { search?: string; page?: number; per_page?: number }) {
@@ -62,4 +75,21 @@ export async function importProveedoresCsv(payload: FormData) {
         headers: { 'Content-Type': 'multipart/form-data' },
     });
     return data;
+}
+
+export type BulkTipoUpdatePayload = {
+    items: Array<{
+        id: number;
+        tipo: 'normal' | 'consigna' | 'porcentaje';
+        importe?: number | null;
+        porcentaje?: number | null;
+    }>;
+};
+
+export async function bulkUpdateProveedorTipo(payload: BulkTipoUpdatePayload) {
+    const { data } = await http.post('/proveedores/bulk-tipo', payload);
+    return data as {
+        updated: number;
+        items: Proveedor[];
+    };
 }

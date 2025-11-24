@@ -158,17 +158,10 @@ const message = ref('');
 const error = ref('');
 
 const q = ref('');
-const existenciaFilter = ref<'all' | 'with' | 'without'>('all');
-const existenciaOptions = [
-    { value: 'all', label: 'Todas las existencias' },
-    { value: 'with', label: 'Con existencia' },
-    { value: 'without', label: 'Sin existencia' },
-] as const;
-const sortField = ref<'nombre' | 'proveedor' | 'existencia'>('nombre');
+const sortField = ref<'nombre' | 'proveedor'>('nombre');
 const sortOptions = [
     { value: 'nombre', label: 'Nombre' },
     { value: 'proveedor', label: 'Proveedor' },
-    { value: 'existencia', label: 'Existencia' },
 ] as const;
 const sortDirection = ref<'asc' | 'desc'>('asc');
 const directionOptions = [
@@ -318,7 +311,6 @@ function buildListParams(overrides: Partial<ListProductosParams> = {}): ListProd
         ...overrides,
     };
     if (q.value) params.search = q.value;
-    if (existenciaFilter.value !== 'all') params.has_inventory = existenciaFilter.value;
     if (sortField.value) params.sort = sortField.value;
     if (sortDirection.value) params.direction = sortDirection.value;
     return params;
@@ -441,27 +433,31 @@ async function remove() {
 }
 
 /* ---------- CSV Upload ---------- */
-const csvFile = ref<File | null>(null);
+const csvUploading = ref(false);
 const downloadingTemplate = ref(false);
 const downloadingCSV = ref(false);
 
 function onCsvFileChange(event: Event) {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) return;
-    csvFile.value = target.files?.[0] ?? null;
+    const file = target.files?.[0];
+    if (!file) return;
+    uploadCSV(file);
+    target.value = '';
 }
 
-async function uploadCSV() {
-    if (!csvFile.value) return;
-    saving.value = true; error.value = ''; message.value = '';
+async function uploadCSV(file: File) {
+    csvUploading.value = true;
+    error.value = '';
+    message.value = '';
     try {
-        await bulkUploadCSV(csvFile.value);
+        await bulkUploadCSV(file);
         message.value = 'Carga masiva enviada';
         await loadList();
     } catch (e: any) {
         error.value = e?.response?.data?.message || 'Error en carga masiva';
     } finally {
-        saving.value = false; csvFile.value = null;
+        csvUploading.value = false;
     }
 }
 
@@ -542,10 +538,6 @@ watch(q, () => {
     pagination.page = 1;
     loadList();
 });
-watch(existenciaFilter, () => {
-    pagination.page = 1;
-    loadList();
-});
 watch(sortField, () => {
     pagination.page = 1;
     loadList();
@@ -576,7 +568,7 @@ onMounted(async () => {
 <template>
     <AppLayout>
         <div class="space-y-8">
-        <div class="bg-white border border-gray-200 rounded-xl shadow p-6">
+        <section class="bg-white border border-gray-200 rounded-xl shadow p-6">
             <h2 class="text-2xl font-semibold mb-6">Crear producto</h2>
 
             <!-- Alerts -->
@@ -756,22 +748,26 @@ onMounted(async () => {
                 </button>
             </div>
 
-            <!-- ===== SEARCH / TABLE (moved below the form) ===== -->
-            <div class="mt-10 space-y-4">
+        </section>
+
+        <!-- ===== SEARCH / TABLE (moved below the form) ===== -->
+        <section class="bg-white border border-gray-200 rounded-xl shadow p-6">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900">Inventario actual</h3>
+                    <p class="text-xs text-gray-500">Filtra, selecciona y exporta productos.</p>
+                </div>
+                <div class="text-xs text-gray-500">
+                    Página {{ pagination.page }} de {{ pagination.lastPage }} · Total {{ pagination.total }}
+                </div>
+            </div>
+
+            <div class="mt-6 space-y-4">
                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Buscar / Consultar</label>
                         <input v-model="q" type="text" placeholder="Nombre, descripción, código…"
                             class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Existencia</label>
-                        <select v-model="existenciaFilter"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
-                            <option v-for="opt in existenciaOptions" :key="opt.value" :value="opt.value">
-                                {{ opt.label }}
-                            </option>
-                        </select>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Ordenar por</label>
@@ -840,7 +836,7 @@ onMounted(async () => {
                                 <p class="text-xs uppercase text-gray-500">Nombre</p>
                                 <p class="font-medium text-gray-900">{{ p.nombre }}</p>
                             </div>
-                            <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+                            <div class="flex flex-wrap items-center gap-2 text-sm text-gray-600">
                                 <span>
                                     Proveedor:
                                     <template v-if="p.proveedor?.nombre">
@@ -851,7 +847,6 @@ onMounted(async () => {
                                     </template>
                                 </span>
                                 <span>Precio: <b class="text-gray-900">{{ displayMoney(p.precio) }}</b></span>
-                                <span>Existencia: <b class="text-gray-900">{{ p.existencia ?? 0 }}</b></span>
                             </div>
                         </article>
                     </template>
@@ -864,8 +859,9 @@ onMounted(async () => {
                                 <th class="text-left font-medium px-3 py-2">Ident</th>
                                 <th class="text-left font-medium px-3 py-2">Nombre</th>
                                 <th class="text-left font-medium px-3 py-2">Proveedor</th>
-                                <th class="text-right font-medium px-3 py-2">Existencia</th>
-                                <th class="text-right font-medium px-3 py-2">Precio</th>
+                                <th class="text-right font-medium px-3 py-2">Precio venta</th>
+                                <th class="text-right font-medium px-3 py-2">Precio proveedor</th>
+                                <th class="text-left font-medium px-3 py-2">Fecha creación</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -878,11 +874,18 @@ onMounted(async () => {
                                     <span v-if="p.proveedor?.nombre">{{ p.proveedor.nombre }}</span>
                                     <span v-else class="text-rose-600 font-medium">No proveedor definido</span>
                                 </td>
-                                <td class="px-3 py-2 text-right">{{ p.inventario?.existencia ?? 0 }}</td>
                                 <td class="px-3 py-2 text-right">{{ displayMoney(p.precio) }}</td>
+                                <td class="px-3 py-2 text-right">
+                                    <span v-if="p.precio_proveedor != null">{{ displayMoney(p.precio_proveedor) }}</span>
+                                    <span v-else class="text-gray-400">—</span>
+                                </td>
+                                <td class="px-3 py-2 text-gray-500 text-xs">
+                                    <span v-if="p.fecha">{{ new Date(p.fecha).toLocaleDateString('es-MX') }}</span>
+                                    <span v-else>—</span>
+                                </td>
                             </tr>
                             <tr v-if="!loading && productos.length === 0">
-                                <td colspan="6" class="px-3 py-3 text-center text-gray-500">Sin resultados</td>
+                                <td colspan="7" class="px-3 py-3 text-center text-gray-500">Sin resultados</td>
                             </tr>
                             <tr v-if="loading">
                                 <td colspan="6" class="px-3 py-3 text-center text-gray-500">Cargando…</td>
@@ -919,9 +922,10 @@ onMounted(async () => {
                     </div>
                 </div>
             </div>
+        </section>
 
-            <!-- ===== CSV UPLOAD ===== -->
-            <div class="mt-8 space-y-3">
+        <!-- ===== CSV UPLOAD ===== -->
+        <section class="bg-white border border-gray-200 rounded-xl shadow p-6 space-y-3">
                 <label class="block text-sm font-medium text-gray-700">Subir archivo de productos (CSV)</label>
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span class="text-xs text-gray-500">
@@ -931,27 +935,34 @@ onMounted(async () => {
                         class="inline-flex items-center justify-center rounded-lg border px-2.5 py-2 text-sm hover:bg-gray-50 disabled:opacity-60 transition"
                         aria-label="Descargar plantilla CSV">
                         <svg v-if="!downloadingTemplate" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"
-                            class="h-4 w-4 text-gray-700">
+                            class="h-4 w-4 text-gray-700" aria-hidden="true">
                             <path fill="currentColor"
-                                d="M10 2a.75.75 0 0 1 .75.75v8.69l2.47-2.47a.75.75 0 0 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L6.72 10.03a.75.75 0 1 1 1.06-1.06l2.47 2.47V2.75A.75.75 0 0 1 10 2ZM4.5 12.5a.75.75 0 0 1 .75.75v1.5c0 .69.56 1.25 1.25 1.25h7c.69 0 1.25-.56 1.25-1.25v-1.5a.75.75 0 0 1 1.5 0v1.5A2.75 2.75 0 0 1 13.5 17h-7A2.75 2.75 0 0 1 3.75 14.75v-1.5a.75.75 0 0 1 .75-.75Z" />
+                                d="M10 2a.75.75 0 0 1 .75.75v8.69l2.47-2.47a.75.75 0 0 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L6.72 10.03a.75.75 0 1 1 1.06-1.06l2.47 2.47V2.75A.75.75 0 0 1 10 2Zm-5.5 10.5a.75.75 0 0 1 .75.75v1.5c0 .69.56 1.25 1.25 1.25h7c.69 0 1.25-.56 1.25-1.25v-1.5a.75.75 0 0 1 1.5 0v1.5A2.75 2.75 0 0 1 13.5 17h-7A2.75 2.75 0 0 1 3.75 14.75v-1.5a.75.75 0 0 1 .75-.75Z" />
                         </svg>
                         <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
                             class="h-4 w-4 animate-spin text-gray-500" aria-hidden="true">
                             <path fill="currentColor"
                                 d="M12 2a1 1 0 0 1 1 1v2.05a1 1 0 0 1-2 0V3a1 1 0 0 1 1-1Zm6.36 3.64a1 1 0 0 1 0 1.41l-1.45 1.45a1 1 0 1 1-1.41-1.41l1.45-1.45a1 1 0 0 1 1.41 0ZM21 11a1 1 0 1 1 0 2h-2.05a1 1 0 0 1 0-2H21ZM8.5 6.09a1 1 0 0 1-1.41 1.41L5.64 6.05A1 1 0 1 1 7.05 4.64L8.5 6.09ZM7 11a1 1 0 0 1 1 1H7Zm1 0a1 1 0 0 1 2 0H8Zm2 0a1 1 0 0 1 2 0h-2Zm2 0a1 1 0 0 1 2 0h-2Zm2 0a1 1 0 0 1 2 0h-2Z" />
                         </svg>
-                        <span class="sr-only">{{ downloadingTemplate ? 'Descargando plantilla CSV' : 'Descargar plantilla CSV' }}</span>
+                        <span>{{ downloadingTemplate ? 'Descargando plantilla' : 'Descargar plantilla' }}</span>
                     </button>
                 </div>
-                <input type="file" accept=".csv"
-                    @change="onCsvFileChange"
-                    class="block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border file:border-gray-300 file:bg-white file:px-3 file:py-2 file:text-sm hover:file:bg-gray-50" />
-                <button :disabled="!csvFile || saving" @click="uploadCSV"
-                    class="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-60">
-                    Subir archivo
-                </button>
-            </div>
-        </div>
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <label
+                        class="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
+                        :class="{ 'opacity-60': csvUploading }">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="h-4 w-4 text-gray-500"
+                            aria-hidden="true">
+                            <path fill="currentColor"
+                                d="M10 2a1 1 0 0 1 .96.73L12 6h4a1 1 0 0 1 .78 1.63l-8 10a1 1 0 0 1-1.75-.8L7.9 12H4a1 1 0 0 1-.78-1.63l5.68-7.36A1 1 0 0 1 10 2Z" />
+                        </svg>
+                        <span>{{ csvUploading ? 'Importando…' : 'Seleccionar archivo CSV' }}</span>
+                        <input type="file" accept=".csv" @change="onCsvFileChange"
+                            class="sr-only" />
+                    </label>
+                    <span class="text-xs text-gray-500">El archivo se carga en español, formato CSV (máx. 5MB).</span>
+                </div>
+        </section>
         </div>
     </AppLayout>
 </template>

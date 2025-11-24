@@ -20,6 +20,7 @@ const inventarioPage = ref(1);
 const inventarioPerPage = ref(50);
 const inventarioSort = ref<InventarioSort>('producto');
 const inventarioDirection = ref<SortDirection>('asc');
+const providerTipoFilter = ref<'all' | 'normal' | 'consigna' | 'porcentaje'>('all');
 
 const tableClasses = {
     wrapper: 'overflow-x-auto rounded-xl border border-gray-200 shadow-sm',
@@ -29,6 +30,28 @@ const tableClasses = {
     row: 'hover:bg-gray-50 transition',
     emptyRow: 'px-3 py-6 text-center text-gray-500',
 };
+
+const providerTypeLabels: Record<string, string> = {
+    normal: 'Normal',
+    consigna: 'Consigna',
+    porcentaje: 'Por porcentaje',
+};
+
+const providerTypeClasses: Record<string, string> = {
+    normal: 'bg-blue-50 text-blue-700 border-blue-100',
+    consigna: 'bg-amber-50 text-amber-700 border-amber-100',
+    porcentaje: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+};
+
+function getProviderTypeLabel(tipo?: string | null) {
+    if (!tipo) return 'Normal';
+    return providerTypeLabels[tipo] ?? tipo;
+}
+
+function getProviderTypeClass(tipo?: string | null) {
+    if (!tipo) return providerTypeClasses.normal;
+    return providerTypeClasses[tipo] ?? providerTypeClasses.normal;
+}
 
 function formatCurrency(value: number | string | null | undefined): string {
     const num = typeof value === 'string' ? Number(value) : value;
@@ -46,9 +69,20 @@ async function loadInventario() {
             per_page: inventarioPerPage.value,
             sort: inventarioSort.value,
             direction: inventarioDirection.value,
+            provider_tipo: providerTipoFilter.value !== 'all' ? providerTipoFilter.value : undefined,
         });
         inventarioItems.value = response.data;
         inventarioPagination.value = response.pagination;
+        if (response.totals) {
+            inventarioTotals.value = {
+                total_productos: response.totals.total_productos ?? (response.pagination?.total ?? inventarioItems.value.length),
+                total_existencia: response.totals.total_existencia ?? 0,
+                valor_publico: response.totals.valor_publico ?? 0,
+                valor_proveedor: response.totals.valor_proveedor ?? 0,
+            };
+        } else {
+            inventarioTotals.value = computeLocalTotals(inventarioItems.value);
+        }
     } catch (err: any) {
         inventarioError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el inventario.';
     } finally {
@@ -109,9 +143,41 @@ watch(inventarioPerPage, () => {
     loadInventario();
 });
 
+watch(providerTipoFilter, () => {
+    inventarioPage.value = 1;
+    loadInventario();
+});
+
 onMounted(() => {
     loadInventario();
 });
+
+const inventarioTotals = ref({
+    total_productos: 0,
+    total_existencia: 0,
+    valor_publico: 0,
+    valor_proveedor: 0,
+});
+
+function computeLocalTotals(items: InventarioRow[]) {
+    const summary = {
+        total_productos: items.length,
+        total_existencia: 0,
+        valor_publico: 0,
+        valor_proveedor: 0,
+    };
+    for (const item of items) {
+        const existencia = Number(item.existencia ?? 0);
+        summary.total_existencia += existencia;
+        summary.valor_publico += Number(item.costo_inventario ?? 0);
+        if (item.precio_proveedor !== null) {
+            summary.valor_proveedor += Number(item.precio_proveedor ?? 0) * existencia;
+        }
+    }
+    summary.valor_publico = Math.round(summary.valor_publico * 100) / 100;
+    summary.valor_proveedor = Math.round(summary.valor_proveedor * 100) / 100;
+    return summary;
+}
 </script>
 
 <template>
@@ -147,6 +213,19 @@ onMounted(() => {
                             <option :value="25">25</option>
                             <option :value="50">50</option>
                             <option :value="100">100</option>
+                            <option :value="200">200</option>
+                        </select>
+                    </label>
+                    <label class="flex items-center gap-2 text-xs text-gray-600">
+                        <span>Tipo proveedor</span>
+                        <select
+                            v-model="providerTipoFilter"
+                            class="rounded border border-gray-300 px-2 py-1 text-xs focus:border-gray-900 focus:ring-gray-900"
+                        >
+                            <option value="all">Todos</option>
+                            <option value="normal">Normal</option>
+                            <option value="consigna">Consigna</option>
+                            <option value="porcentaje">Por porcentaje</option>
                         </select>
                     </label>
                 </div>
@@ -173,6 +252,7 @@ onMounted(() => {
                                         </span>
                                     </th>
                                     <th class="px-3 py-2 text-right">Precio</th>
+                                    <th class="px-3 py-2 text-right">Precio proveedor</th>
                                     <th
                                         class="px-3 py-2 text-right cursor-pointer select-none"
                                         @click="toggleInventarioSort('existencia')"
@@ -206,6 +286,12 @@ onMounted(() => {
                                         <span v-else>—</span>
                                     </td>
                                     <td class="px-3 py-2 text-right">
+                                        <span v-if="item.precio_proveedor !== null">
+                                            {{ formatCurrency(item.precio_proveedor) }}
+                                        </span>
+                                        <span v-else>—</span>
+                                    </td>
+                                    <td class="px-3 py-2 text-right">
                                         {{ item.existencia }}
                                     </td>
                                     <td class="px-3 py-2 text-right">
@@ -216,19 +302,42 @@ onMounted(() => {
                                     </td>
                                     <td class="px-3 py-2">
                                         <template v-if="item.proveedor">
-                                            <div class="font-medium text-gray-900">{{ item.proveedor.nombre }}</div>
+                                            <div class="font-medium text-gray-900 flex items-center gap-2 flex-wrap">
+                                                <span>{{ item.proveedor.nombre }}</span>
+                                                <span
+                                                    class="rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                                                    :class="getProviderTypeClass(item.proveedor.tipo ?? null)"
+                                                >
+                                                    {{ getProviderTypeLabel(item.proveedor.tipo ?? null) }}
+                                                </span>
+                                            </div>
                                             <div class="text-[11px] text-gray-500">{{ item.proveedor.ident }}</div>
                                         </template>
                                         <template v-else>—</template>
                                     </td>
                                 </tr>
                                 <tr v-if="inventarioItems.length === 0">
-                                    <td colspan="7" :class="tableClasses.emptyRow">
+                                    <td colspan="8" :class="tableClasses.emptyRow">
                                         No se encontraron registros.
                                     </td>
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <div class="mt-4 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700 shadow-sm">
+                        <div class="flex flex-wrap items-center gap-4">
+                            <span>Total productos: <strong class="text-gray-900">{{ inventarioTotals.total_productos }}</strong></span>
+                            <span>Total existencia: <strong class="text-gray-900">{{ inventarioTotals.total_existencia }}</strong></span>
+                            <span>
+                                Valor público:
+                                <strong class="text-gray-900">{{ formatCurrency(inventarioTotals.valor_publico) }}</strong>
+                            </span>
+                            <span>
+                                Valor proveedor:
+                                <strong class="text-gray-900">{{ formatCurrency(inventarioTotals.valor_proveedor) }}</strong>
+                            </span>
+                        </div>
                     </div>
 
                     <div v-if="inventarioPagination" class="mt-3 flex flex-wrap items-center justify-between gap-3 text-[11px] text-gray-600">

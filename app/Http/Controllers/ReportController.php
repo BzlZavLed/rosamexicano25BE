@@ -830,37 +830,9 @@ class ReportController extends Controller
 
     public function mensualidad(Request $request)
     {
-        $mesCobro = $request->input('mes_cobro');
-        $status = $request->input('status');
-        $proveedorId = $request->input('proveedor_id');
+        $baseQuery = Mensualidad::query();
 
-        if (!$mesCobro) {
-            return response()->json(['message' => 'Debe proporcionar mes_cobro (formato YYYY-MM).'], 422);
-        }
-
-        try {
-            $month = Carbon::createFromFormat('Y-m', $mesCobro);
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Formato de mes inválido, use YYYY-MM.'], 422);
-        }
-
-        $mesCobroNormalized = $month->format('Y-m');
-
-        $query = Mensualidad::query()
-            ->with(['proveedor:id,nombre,email'])
-            ->where('mes_cobro', $mesCobroNormalized);
-
-        if ($proveedorId) {
-            $query->where('proveedor_id', $proveedorId);
-        }
-
-        if ($status && $status !== 'all') {
-            $query->where('status', $status);
-        }
-
-        $mensualidades = $query->orderBy('fecha')->orderBy('id')->get();
-
-        $mapped = $mensualidades->map(function (Mensualidad $mensualidad) {
+        $mapMensualidad = function (Mensualidad $mensualidad) {
             $fechaCobro = optional($mensualidad->fecha)->toDateString();
             $paymentDate = optional($mensualidad->payment_date)->toDateString();
 
@@ -884,19 +856,20 @@ class ReportController extends Controller
                 'receipt_path' => $mensualidad->receipt_path,
                 'cobro_path' => $mensualidad->cobro_path,
             ];
-        })->values();
+        };
 
-        $summary = [
-            'total_cobros' => $mensualidades->count(),
-            'importe_total' => round((float) $mensualidades->sum('importe'), 2),
-            'pagado_total' => round((float) $mensualidades->sum('cantidad_pago'), 2),
-            'restante_total' => round((float) $mensualidades->sum('restante'), 2),
-            'pagos_completos' => $mensualidades->where('pago_completo', true)->count(),
-        ];
+        $orderedQuery = (clone $baseQuery)
+            ->with(['proveedor:id,nombre,email'])
+            ->orderByDesc('mes_cobro')
+            ->orderByDesc('fecha')
+            ->orderByDesc('id');
 
         if ($request->boolean('download')) {
-            $filename = sprintf('reporte_mensualidad_%s.csv', Str::of($mesCobroNormalized)->replace('-', '_'));
-            return response()->streamDownload(function () use ($mapped) {
+            $rows = $orderedQuery->get()->map($mapMensualidad);
+
+            $filename = 'reporte_mensualidad_completo.csv';
+
+            return response()->streamDownload(function () use ($rows) {
                 $handle = fopen('php://output', 'w');
                 fputcsv($handle, [
                     'id',
@@ -915,7 +888,7 @@ class ReportController extends Controller
                     'receipt_path',
                 ]);
 
-                foreach ($mapped as $row) {
+                foreach ($rows as $row) {
                     fputcsv($handle, [
                         $row['id'],
                         $row['proveedor']['nombre'] ?? null,
@@ -940,13 +913,25 @@ class ReportController extends Controller
             ]);
         }
 
+        $summaryRow = (clone $baseQuery)
+            ->selectRaw('COUNT(*) as total_cobros')
+            ->selectRaw('COALESCE(SUM(importe), 0) as importe_total')
+            ->selectRaw('COALESCE(SUM(cantidad_pago), 0) as pagado_total')
+            ->selectRaw('COALESCE(SUM(restante), 0) as restante_total')
+            ->selectRaw('COALESCE(SUM(CASE WHEN pago_completo THEN 1 ELSE 0 END), 0) as pagos_completos')
+            ->first();
+
+        $mensualidades = $orderedQuery->get();
+        $mapped = $mensualidades->map($mapMensualidad)->values();
+
         return response()->json([
-            'mes_cobro' => $mesCobroNormalized,
-            'filters' => [
-                'status' => $status && $status !== 'all' ? $status : null,
-                'proveedor_id' => $proveedorId ? (int) $proveedorId : null,
+            'summary' => [
+                'total_cobros' => (int) ($summaryRow->total_cobros ?? 0),
+                'importe_total' => round((float) ($summaryRow->importe_total ?? 0), 2),
+                'pagado_total' => round((float) ($summaryRow->pagado_total ?? 0), 2),
+                'restante_total' => round((float) ($summaryRow->restante_total ?? 0), 2),
+                'pagos_completos' => (int) ($summaryRow->pagos_completos ?? 0),
             ],
-            'summary' => $summary,
             'items' => $mapped,
         ]);
     }
@@ -1034,6 +1019,12 @@ class ReportController extends Controller
                 'next_page_url' => $paginator->nextPageUrl(),
                 'prev_page_url' => $paginator->previousPageUrl(),
             ],
+            'totals' => [
+                'total_productos' => $paginator->total(),
+                'total_existencia' => (int) ($totalsRow->total_existencia ?? 0),
+                'valor_publico' => (float) ($totalsRow->valor_publico ?? 0),
+                'valor_proveedor' => (float) ($totalsRow->valor_proveedor ?? 0),
+            ],
         ]);
     }
 
@@ -1048,30 +1039,36 @@ class ReportController extends Controller
 
         $sort = strtolower((string) $request->input('sort', 'producto'));
         $direction = strtolower((string) $request->input('direction', 'asc')) === 'desc' ? 'desc' : 'asc';
+        $providerTipo = strtolower((string) $request->input('provider_tipo', ''));
 
-        $query = Inventario::query()
-            ->select('inventario.*')
+        $baseQuery = Inventario::query()
             ->leftJoin('producto as p', 'p.ident', '=', 'inventario.ident')
-            ->leftJoin('proveedores as pr', 'pr.ident', '=', 'p.proveedorid')
-            ->with([
-                'producto' => fn($q) => $q->select('id', 'ident', 'nombre', 'precio', 'proveedorid'),
-                'producto.proveedor' => fn($q) => $q->select('id', 'ident', 'nombre'),
-            ]);
+            ->leftJoin('proveedores as pr', 'pr.ident', '=', 'p.proveedorid');
 
-        if ($search !== '') {
+        $baseQuery->when($search !== '', function ($q) use ($search) {
             $normalized = Str::lower($search);
-            $query->where(function ($q) use ($search, $normalized) {
-                $like = "%{$normalized}%";
-                $q->where('inventario.ident', 'LIKE', "%{$search}%")
+            $like = "%{$normalized}%";
+            $q->where(function ($inner) use ($search, $like) {
+                $inner->where('inventario.ident', 'LIKE', "%{$search}%")
                     ->orWhereRaw('LOWER(p.nombre) LIKE ?', [$like])
                     ->orWhere('pr.ident', 'LIKE', "%{$search}%")
                     ->orWhereRaw('LOWER(pr.nombre) LIKE ?', [$like]);
             });
-        }
+        });
 
         if ($provider) {
-            $query->where('pr.ident', '=', $provider->ident);
+            $baseQuery->where('pr.ident', '=', $provider->ident);
         }
+        if ($providerTipo && in_array($providerTipo, ['normal', 'consigna', 'porcentaje'], true)) {
+            $baseQuery->where('pr.tipo', '=', $providerTipo);
+        }
+
+        $query = (clone $baseQuery)
+            ->select('inventario.*')
+            ->with([
+                'producto' => fn($q) => $q->select('id', 'ident', 'nombre', 'precio', 'precio_proveedor', 'proveedorid'),
+                'producto.proveedor' => fn($q) => $q->select('id', 'ident', 'nombre', 'tipo', 'porcentaje_comision'),
+            ]);
 
         switch ($sort) {
             case 'existencia':
@@ -1090,12 +1087,20 @@ class ReportController extends Controller
             'per_page' => $perPage,
             'sort' => $sort,
             'direction' => $direction,
+            'provider_tipo' => $providerTipo,
         ]);
+
+        $totalsRow = (clone $baseQuery)
+            ->selectRaw('SUM(COALESCE(inventario.existencia, 0)) as total_existencia')
+            ->selectRaw('SUM(COALESCE(p.precio, 0) * COALESCE(inventario.existencia, 0)) as valor_publico')
+            ->selectRaw('SUM(COALESCE(p.precio_proveedor, 0) * COALESCE(inventario.existencia, 0)) as valor_proveedor')
+            ->first();
 
         $items = $paginator->getCollection()->map(function (Inventario $inv) {
             $producto = $inv->producto;
             $proveedor = $producto?->proveedor;
             $precio = $producto?->precio;
+            $precioProveedor = $producto?->precio_proveedor;
             $existencia = (int) ($inv->existencia ?? 0);
             $costoInventario = $precio !== null ? round((float) $precio * $existencia, 2) : null;
 
@@ -1104,11 +1109,14 @@ class ReportController extends Controller
                 'producto_ident' => (string) ($producto->ident ?? $inv->ident),
                 'producto_nombre' => (string) ($producto->nombre ?? ''),
                 'precio' => $precio !== null ? (float) $precio : null,
+                'precio_proveedor' => $precioProveedor !== null ? (float) $precioProveedor : null,
                 'existencia' => $existencia,
                 'costo_inventario' => $costoInventario,
                 'proveedor' => $proveedor ? [
                     'ident' => (string) $proveedor->ident,
                     'nombre' => (string) $proveedor->nombre,
+                    'tipo' => (string) ($proveedor->tipo ?? 'normal'),
+                    'porcentaje_comision' => $proveedor->porcentaje_comision,
                 ] : null,
             ];
         });
