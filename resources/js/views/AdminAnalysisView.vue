@@ -630,6 +630,28 @@ function downloadTransitionProviderPdf() {
             currentY += rowHeight
         })
 
+        const totals = transitionProviderDetails.value.items.reduce(
+            (acc, item) => {
+                acc.cantidad += Number(item.cantidad ?? 0)
+                acc.monto += Number(item.monto ?? 0)
+                acc.descuento += Number(item.descuento ?? 0)
+                return acc
+            },
+            { cantidad: 0, monto: 0, descuento: 0 }
+        )
+
+        const footerHeight = lineHeight + 12
+        ensureSpace(footerHeight)
+        doc.setFontSize(10)
+        doc.setFont('helvetica', 'bold')
+        doc.text('Totales', (columnPositions[0] ?? marginX) + 6, currentY + 12)
+        const cantidadX = (columnPositions[3] ?? marginX) + (providerColumns[3]?.width ?? 0) - 6
+        const montoX = (columnPositions[4] ?? marginX) + (providerColumns[4]?.width ?? 0) - 6
+        const descuentoX = (columnPositions[5] ?? marginX) + (providerColumns[5]?.width ?? 0) - 6
+        doc.text(totals.cantidad.toLocaleString('es-MX'), cantidadX, currentY + 12, { align: 'right' })
+        doc.text(formatMoney(totals.monto), montoX, currentY + 12, { align: 'right' })
+        doc.text(formatMoney(totals.descuento), descuentoX, currentY + 12, { align: 'right' })
+
         doc.save(buildTransitionFilename(`detalle-${transitionProviderTarget.value?.identifier ?? 'proveedor'}`, 'pdf'))
     } catch (err: any) {
         window.alert(err?.message || 'No se pudo generar el PDF.')
