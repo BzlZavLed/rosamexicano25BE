@@ -136,6 +136,7 @@ export type TransitionProviderDetailsResponse = {
         monto: number;
         descuento: number;
         legacy: boolean;
+        unit_price: number | null;
     }>;
 };
 

@@ -78,7 +78,6 @@ const transitionCsvLoading = ref(false)
 const transitionPdfLoading = ref(false)
 const transitionProviderCsvLoading = ref(false)
 const transitionProviderPdfLoading = ref(false)
-const transitionMethodsVisible = ref(false)
 
 function assignRecommendedResponse(response: RecommendedImporteResponse) {
     recommendedData.value = response.items
@@ -319,6 +318,12 @@ function formatMoney(value: number | null | undefined) {
     return Number(value ?? 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })
 }
 
+function isPromotionLine(item: TransitionProviderItem) {
+    const unitPrice = Number(item.unit_price ?? 0)
+    const amount = Number(item.monto ?? 0)
+    return unitPrice === 0 || amount === 0
+}
+
 function sanitizeCsvValue(value: string | number | null | undefined) {
     if (value === null || value === undefined) return '""'
     const str = typeof value === 'number' ? value.toString() : String(value)
@@ -494,13 +499,14 @@ function downloadTransitionProviderCsv() {
     transitionProviderCsvLoading.value = true
     try {
         const lines: string[] = []
-        lines.push(['Venta', 'Fecha', 'Producto', 'Cantidad', 'Monto', 'Descuento', 'Método', 'Vendedor'].map(sanitizeCsvValue).join(','))
+        lines.push(['Venta', 'Fecha', 'Producto', 'Precio unitario', 'Cantidad', 'Monto', 'Descuento', 'Método', 'Vendedor'].map(sanitizeCsvValue).join(','))
         transitionProviderDetails.value.items.forEach((item) => {
             lines.push(
                 [
                     item.venta_id ?? '',
                     item.fecha ?? '',
                     `${item.producto_nombre ?? 'Producto sin nombre'} (${item.producto_ident ?? '—'})`,
+                    item.unit_price !== null && item.unit_price !== undefined ? item.unit_price.toFixed(2) : '',
                     item.cantidad ?? 0,
                     (item.monto ?? 0).toFixed(2),
                     (item.descuento ?? 0).toFixed(2),
@@ -535,14 +541,15 @@ function downloadTransitionProviderPdf() {
         const pageWidth = doc.internal.pageSize.getWidth()
         const pageHeight = doc.internal.pageSize.getHeight()
         const providerColumns: PdfColumn[] = [
-            { key: 'venta', title: 'Venta', width: 60 },
-            { key: 'fecha', title: 'Fecha', width: 70 },
-            { key: 'producto', title: 'Producto', width: 210 },
+            { key: 'venta', title: 'Venta', width: 50 },
+            { key: 'fecha', title: 'Fecha', width: 60 },
+            { key: 'producto', title: 'Producto', width: 180 },
+            { key: 'precio_unitario', title: 'Precio unitario', width: 70, align: 'right' },
             { key: 'cantidad', title: 'Cantidad', width: 60, align: 'right' },
             { key: 'monto', title: 'Monto', width: 90, align: 'right' },
             { key: 'descuento', title: 'Descuento', width: 90, align: 'right' },
-            { key: 'metodo', title: 'Método', width: 70 },
-            { key: 'vendedor', title: 'Vendedor', width: 70 },
+            { key: 'metodo', title: 'Método', width: 60 },
+            { key: 'vendedor', title: 'Vendedor', width: 60 },
         ]
         const columnPositions: number[] = []
         let offset = marginX
@@ -597,6 +604,7 @@ function downloadTransitionProviderPdf() {
                 String(item.venta_id ?? ''),
                 item.fecha ?? '—',
                 `${item.producto_nombre ?? 'Producto sin nombre'}\nIdent: ${item.producto_ident ?? '—'}`,
+                item.unit_price !== null ? formatMoney(item.unit_price) : '—',
                 (item.cantidad ?? 0).toLocaleString('es-MX'),
                 formatMoney(item.monto ?? 0),
                 formatMoney(item.descuento ?? 0),
@@ -645,9 +653,9 @@ function downloadTransitionProviderPdf() {
         doc.setFontSize(10)
         doc.setFont('helvetica', 'bold')
         doc.text('Totales', (columnPositions[0] ?? marginX) + 6, currentY + 12)
-        const cantidadX = (columnPositions[3] ?? marginX) + (providerColumns[3]?.width ?? 0) - 6
-        const montoX = (columnPositions[4] ?? marginX) + (providerColumns[4]?.width ?? 0) - 6
-        const descuentoX = (columnPositions[5] ?? marginX) + (providerColumns[5]?.width ?? 0) - 6
+        const cantidadX = (columnPositions[4] ?? marginX) + (providerColumns[4]?.width ?? 0) - 6
+        const montoX = (columnPositions[5] ?? marginX) + (providerColumns[5]?.width ?? 0) - 6
+        const descuentoX = (columnPositions[6] ?? marginX) + (providerColumns[6]?.width ?? 0) - 6
         doc.text(totals.cantidad.toLocaleString('es-MX'), cantidadX, currentY + 12, { align: 'right' })
         doc.text(formatMoney(totals.monto), montoX, currentY + 12, { align: 'right' })
         doc.text(formatMoney(totals.descuento), descuentoX, currentY + 12, { align: 'right' })
@@ -1020,51 +1028,6 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
 
                 <div v-if="transitionLoading" class="mt-4 text-sm text-gray-500">Calculando reporte de transición…</div>
                 <div v-else-if="transitionData" class="mt-4 space-y-6">
-                    <div class="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                        <div class="grid gap-4 md:grid-cols-2">
-                            <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                                <p class="text-xs uppercase tracking-wide text-gray-500">Periodo</p>
-                                <p class="text-sm font-semibold text-gray-900">{{ transitionData.range.from }} — {{ transitionData.range.to }}</p>
-                            </div>
-                            <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                                <p class="text-xs uppercase tracking-wide text-gray-500">Ventas registradas</p>
-                                <p class="text-xl font-semibold text-gray-900">
-                                    {{ transitionData.sales.total_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
-                                </p>
-                                <p class="text-xs text-gray-500">Tickets: {{ transitionData.sales.tickets }}</p>
-                            </div>
-                        </div>
-                        <section class="space-y-2">
-                            <header class="flex flex-wrap items-center justify-between gap-3">
-                                <div>
-                                    <h3 class="text-sm font-semibold text-gray-900">Detalle por método de pago</h3>
-                                    <p class="text-xs text-gray-500">El total debería coincidir con las ventas registradas.</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    class="rounded border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                                    @click="transitionMethodsVisible = !transitionMethodsVisible">
-                                    {{ transitionMethodsVisible ? 'Ocultar' : 'Mostrar' }} detalle
-                                </button>
-                            </header>
-                            <div v-if="transitionMethodsVisible" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                                <div
-                                    v-for="(method, idx) in transitionData.caja"
-                                    :key="method.metodo ?? `metodo-${idx}`"
-                                    class="rounded-lg border border-gray-100 bg-white p-3 text-sm">
-                                    <p class="text-xs uppercase text-gray-500">{{ method.metodo || 'Sin método' }}</p>
-                                    <p class="text-base font-semibold text-gray-900">
-                                        {{ method.total_ventas.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
-                                    </p>
-                                    <p class="text-[11px] text-gray-500">
-                                        Recibido: {{ method.total_recibido.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
-                                    </p>
-                                    <p class="text-[11px] text-gray-500">Tickets: {{ method.tickets }}</p>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
-
                     <section class="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
                         <header class="flex flex-wrap items-center justify-between gap-3">
                             <div>
@@ -1129,6 +1092,21 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                                         </td>
                                     </tr>
                                 </tbody>
+                                <tfoot class="bg-gray-50 text-xs uppercase tracking-wide text-gray-600">
+                                    <tr>
+                                        <td class="px-3 py-2 text-left font-semibold">Totales</td>
+                                        <td class="px-3 py-2 text-right font-semibold">
+                                            {{ transitionData.totals.total_publico.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                        </td>
+                                        <td class="px-3 py-2 text-right font-semibold">
+                                            {{ transitionData.totals.descuentos.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                        </td>
+                                        <td class="px-3 py-2 text-right font-semibold">
+                                            {{ transitionData.totals.total_neto.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                        </td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
                             </table>
                         </div>
                     </section>
@@ -1242,8 +1220,18 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                                                     <th class="px-3 py-2 text-left">Venta</th>
                                                     <th class="px-3 py-2 text-left">Fecha</th>
                                                     <th class="px-3 py-2 text-left">Producto</th>
+                                                    <th class="px-3 py-2 text-right">Precio unitario</th>
                                                     <th class="px-3 py-2 text-right">Cantidad</th>
-                                                    <th class="px-3 py-2 text-right">Monto</th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <span class="inline-flex items-center gap-1">
+                                                            Monto
+                                                            <span
+                                                                class="cursor-help text-gray-400"
+                                                                title="Monto = Precio unitario x Cantidad (traído desde el reporte de transición)">
+                                                                &#9432;
+                                                            </span>
+                                                        </span>
+                                                    </th>
                                                     <th class="px-3 py-2 text-right">Descuento</th>
                                                     <th class="px-3 py-2 text-left">Método</th>
                                                     <th class="px-3 py-2 text-left">Vendedor</th>
@@ -1254,8 +1242,27 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                                                     <td class="px-3 py-2">{{ item.venta_id }}</td>
                                                     <td class="px-3 py-2">{{ item.fecha ?? '—' }}</td>
                                                     <td class="px-3 py-2">
-                                                        <p class="font-medium text-gray-800">{{ item.producto_nombre ?? 'Producto sin nombre' }}</p>
+                                                        <div class="flex items-center gap-1">
+                                                            <p class="font-medium text-gray-800">{{ item.producto_nombre ?? 'Producto sin nombre' }}</p>
+                                                            <span
+                                                                v-if="isPromotionLine(item)"
+                                                                class="relative inline-flex items-center text-[10px] font-semibold text-amber-600 group"
+                                                            >
+                                                                Promo?
+                                                                <span
+                                                                    class="pointer-events-none absolute left-1/2 top-full z-10 mt-1 w-40 -translate-x-1/2 rounded bg-gray-900 px-2 py-1 text-[10px] text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                                                                >
+                                                                    Precio o monto en cero; posiblemente producto incluido en promoción
+                                                                </span>
+                                                            </span>
+                                                        </div>
                                                         <p class="text-[11px] text-gray-500">Ident: {{ item.producto_ident ?? '—' }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right">
+                                                        <span v-if="item.unit_price !== null">
+                                                            {{ formatMoney(item.unit_price) }}
+                                                        </span>
+                                                        <span v-else>—</span>
                                                     </td>
                                                     <td class="px-3 py-2 text-right">{{ item.cantidad.toLocaleString('es-MX') }}</td>
                                                     <td class="px-3 py-2 text-right">{{ item.monto.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
@@ -1264,12 +1271,12 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                                                     <td class="px-3 py-2">{{ item.vendedor ?? '—' }}</td>
                                                 </tr>
                                                 <tr v-if="transitionProviderDetails.items.length === 0">
-                                                    <td colspan="8" class="px-3 py-4 text-center text-gray-500">Sin líneas asociadas.</td>
+                                                    <td colspan="9" class="px-3 py-4 text-center text-gray-500">Sin líneas asociadas.</td>
                                                 </tr>
                                             </tbody>
                                             <tfoot v-if="transitionProviderDetails.items && transitionProviderDetails.items.length" class="bg-gray-50 text-gray-500 uppercase tracking-wide">
                                                 <tr>
-                                                    <td class="px-3 py-2 font-semibold text-right" colspan="3">Totales</td>
+                                                    <td class="px-3 py-2 font-semibold text-right" colspan="4">Totales</td>
                                                     <td class="px-3 py-2 text-right font-semibold">
                                                         {{
                                                             transitionProviderDetails.items

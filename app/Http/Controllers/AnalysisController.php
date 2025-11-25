@@ -425,9 +425,45 @@ class AnalysisController extends Controller
 
         $ventasLookup = $ventas->keyBy('venta_id');
 
-        $lineItemsList = $lineItems->map(function ($row) use ($ventasLookup) {
+        $productIdents = $lineItems
+            ->pluck('producto_id')
+            ->filter(fn($ident) => $ident !== null && $ident !== '')
+            ->map(fn($ident) => (string) $ident)
+            ->unique()
+            ->values();
+
+        $productPrices = $productIdents->isEmpty()
+            ? []
+            : DB::table('producto')
+                ->select(['ident', 'precio'])
+                ->whereIn('ident', $productIdents->all())
+                ->get()
+                ->mapWithKeys(function ($row) {
+                    return [
+                        (string) $row->ident => $row->precio !== null ? (float) $row->precio : null,
+                    ];
+                })
+                ->toArray();
+
+        $lineItemsList = $lineItems->map(function ($row) use ($ventasLookup, $productPrices) {
             $venta = $ventasLookup->get($row['venta_id']);
-            $discount = max(((float) ($row['public_total'] ?? 0)) - ((float) ($row['venta_total'] ?? 0)), 0);
+            $publicTotal = (float) ($row['public_total'] ?? 0);
+            $rawAmount = (float) ($row['venta_total'] ?? 0);
+            $rawDiscount = $publicTotal - $rawAmount;
+            $discount = $rawDiscount > 0 ? $rawDiscount : 0.0;
+            $amount = $rawAmount > 0 ? $rawAmount : 0.0;
+            $productoIdent = $row['producto_id'] !== null ? (string) $row['producto_id'] : null;
+            $unitPrice = null;
+            if ($productoIdent && array_key_exists($productoIdent, $productPrices)) {
+                $unitPrice = $productPrices[$productoIdent];
+            }
+            if ($unitPrice === null) {
+                $qty = (float) ($row['quantity'] ?? 0);
+                if ($qty > 0) {
+                    $unitPrice = round($publicTotal / $qty, 2);
+                }
+            }
+
             return [
                 'venta_id' => $row['venta_id'],
                 'fecha' => $row['fecha'],
@@ -436,9 +472,10 @@ class AnalysisController extends Controller
                 'cantidad' => $row['quantity'] ?? 0,
                 'metodo' => $venta['metodo'] ?? $row['metodo_pago'],
                 'vendedor' => $venta['vendedor'] ?? $row['vendedor'],
-                'monto' => (float) $row['venta_total'],
+                'monto' => $amount,
                 'descuento' => $discount,
                 'legacy' => $row['legacy'],
+                'unit_price' => $unitPrice,
             ];
         })->values()->all();
 
