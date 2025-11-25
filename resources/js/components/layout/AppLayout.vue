@@ -4,6 +4,7 @@ import { useAuthStore } from '../../stores/auth';
 import SidebarAdmin from './SidebarAdmin.vue';
 import SidebarProvider from './SidebarProvider.vue';
 import SettingsModal from '../modals/SettingsModal.vue';
+import AdminCancelSalesModal from '../modals/AdminCancelSalesModal.vue';
 
 const auth = useAuthStore();
 const isAdmin = computed(() => auth.isAdmin);
@@ -13,6 +14,7 @@ const isCompact = ref(false);
 const sidebarCollapsed = ref(false);
 const appName = import.meta.env.VITE_APP_NAME || 'Rosa Mexicano POS';
 const settingsOpen = ref(false);
+const cancelToolOpen = ref(false);
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }
 function closeDrawer() { drawerOpen.value = false; }
@@ -69,6 +71,12 @@ onUnmounted(() => {
                         @click="settingsOpen = true">
                         Configuración
                     </button>
+                    <button
+                        v-if="isAdmin"
+                        class="hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 text-xs hover:bg-gray-50 transition"
+                        @click="cancelToolOpen = true">
+                        Cancelar ventas
+                    </button>
                     <div class="leading-tight text-right max-w-[50vw] sm:max-w-xs truncate">
                         <span class="font-medium truncate">{{ auth.displayName }}</span>
                         <div class="text-xs text-gray-400" v-if="isAdmin">Administrador</div>
@@ -122,6 +130,7 @@ onUnmounted(() => {
             </div>
         </div>
         <SettingsModal :open="settingsOpen" @close="settingsOpen = false" />
+        <AdminCancelSalesModal :open="cancelToolOpen" @close="cancelToolOpen = false" />
     </div>
 </template>
 

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminSalesToolController;
 use App\Http\Controllers\AdminUsersController;
 use App\Http\Controllers\CashierController;
 use App\Http\Controllers\CashierLegacyController;
@@ -140,6 +141,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reports/inventario', [ReportController::class, 'inventario']);
     Route::get('/reports/entradas', [ReportController::class, 'entradas']);
     Route::get('/reports/caja-proveedores', [ReportController::class, 'cajaPorProveedor']);
+    Route::get('/reports/cancelaciones', [ReportController::class, 'cancelaciones']);
 
     // Inventario
     Route::get('/inventario', [InventarioController::class, 'index']);
@@ -161,4 +163,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Mailer tracking
     Route::get('/mailer-track', [MailerTrackController::class, 'index']);
+
+    // Admin sales tool
+    Route::post('/admin/sales/list', [AdminSalesToolController::class, 'list']);
+    Route::post('/admin/sales/{venta}/cancel', [AdminSalesToolController::class, 'cancel'])
+        ->whereNumber('venta');
 });

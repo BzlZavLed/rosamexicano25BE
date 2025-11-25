@@ -12,6 +12,7 @@ use App\Models\Mailer;
 use App\Models\Proveedor;
 use App\Models\Mensualidad;
 use App\Models\DailyCashSummary;
+use App\Models\VentaCancelacion;
 use App\Models\ProviderRestockForecast;
 use App\Models\Usuario;
 use App\Mail\RestockForecastMail;
@@ -1488,6 +1489,86 @@ class ReportController extends Controller
                 'ident' => $provider->ident,
                 'nombre' => $provider->nombre,
             ] : null,
+        ]);
+    }
+
+    public function cancelaciones(Request $request)
+    {
+        $fromDate = $request->input('from_date');
+        if (!$fromDate) {
+            return response()->json(['message' => 'Debe proporcionar from_date.'], 422);
+        }
+
+        try {
+            $inicio = $this->parseDateInput($fromDate)->startOfDay();
+            $fin = $request->filled('to_date')
+                ? $this->parseDateInput($request->input('to_date'))->endOfDay()
+                : (clone $inicio)->endOfDay();
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Formato de fecha inválido.'], 422);
+        }
+
+        if ($inicio->gt($fin)) {
+            return response()->json(['message' => 'from_date no puede ser mayor a to_date.'], 422);
+        }
+
+        $search = trim((string) $request->input('q', ''));
+
+        $query = VentaCancelacion::with(['admin:id,nombre,email'])
+            ->whereBetween('created_at', [$inicio, $fin])
+            ->orderByDesc('created_at');
+
+        if ($search !== '') {
+            $like = '%' . strtolower($search) . '%';
+            $query->where(function ($q) use ($like) {
+                $q->whereRaw('LOWER(idventa::text) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(reason) LIKE ?', [$like])
+                    ->orWhereHas('admin', function ($inner) use ($like) {
+                        $inner->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                            ->orWhereRaw('LOWER(email) LIKE ?', [$like]);
+                    });
+            });
+        }
+
+        $records = $query->get();
+
+        $items = $records->map(function (VentaCancelacion $cancel) {
+            $ventaPayload = $cancel->venta_payload ?? [];
+            $lineasPayload = $cancel->lineas_payload ?? [];
+            return [
+                'id' => $cancel->id,
+                'venta_id' => $cancel->venta_id,
+                'idventa' => $cancel->idventa,
+                'reason' => $cancel->reason,
+                'cancelled_at' => optional($cancel->created_at)->toDateTimeString(),
+                'admin' => $cancel->admin ? [
+                    'id' => $cancel->admin->id,
+                    'nombre' => $cancel->admin->nombre,
+                    'email' => $cancel->admin->email,
+                ] : null,
+                'sale_date' => $ventaPayload['fecha'] ?? null,
+                'sale_time' => $ventaPayload['hora'] ?? null,
+                'metodo' => $ventaPayload['metodo'] ?? null,
+                'vendedor' => $ventaPayload['vendedor'] ?? null,
+                'total' => isset($ventaPayload['totalventa']) ? (float) $ventaPayload['totalventa'] : null,
+                'line_items' => array_map(function ($line) {
+                    return [
+                        'producto_nombre' => $line['nombre'] ?? null,
+                        'producto_ident' => $line['producto_id'] ?? null,
+                        'cantidad' => isset($line['quantity']) ? (float) $line['quantity'] : null,
+                        'venta_total' => isset($line['venta_total']) ? (float) $line['venta_total'] : null,
+                    ];
+                }, $lineasPayload),
+            ];
+        });
+
+        return response()->json([
+            'range' => [
+                'from' => $inicio->toDateString(),
+                'to' => $fin->toDateString(),
+            ],
+            'count' => $items->count(),
+            'items' => $items,
         ]);
     }
 

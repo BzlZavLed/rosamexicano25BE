@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { jsPDF } from 'jspdf';
 import AppLayout from '../components/layout/AppLayout.vue';
 import {
     getCajaReport,
@@ -10,6 +11,7 @@ import {
     getRestockForecastReport,
     updateRestockPreference,
     getMensualidadReport,
+    getCancelacionesReport,
     type CajaReportResponse,
     type CajaReportVenta,
     type CajaReportLine,
@@ -26,6 +28,8 @@ import {
     type RestockForecastResponse,
     type RestockForecastItem,
     type RestockHorizon,
+    type CancelacionesReportResponse,
+    type CancelacionReportItem,
 } from '../api/reports';
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -107,7 +111,8 @@ type ReportType =
     | 'caja-egresos'
     | 'flujo-caja'
     | 'restock'
-    | 'mensualidad';
+    | 'mensualidad'
+    | 'cancelaciones';
 
 type MensualidadSortableColumn =
     | 'proveedor'
@@ -174,6 +179,10 @@ const groupedOptions: Array<{ group: string; options: Array<{ value: ReportType;
     {
         group: 'Proveedores',
         options: [{ value: 'mensualidad', label: 'Mensualidad' }],
+    },
+    {
+        group: 'Administrativo',
+        options: [{ value: 'cancelaciones', label: 'Cancelaciones' }],
     },
 ];
 
@@ -253,6 +262,70 @@ const restockData = ref<RestockForecastResponse | null>(null);
 const restockSearch = ref('');
 const restockSort = ref<'provider' | 'producto' | 'avg' | 'stock' | 'suggested' | 'cover'>('suggested');
 const restockSortDirection = ref<SortDirection>('desc');
+
+const cancelacionesLoading = ref(false);
+const cancelacionesError = ref('');
+const cancelacionesData = ref<CancelacionesReportResponse | null>(null);
+const cancelacionesSearch = ref('');
+const cancelacionesExpanded = ref<Record<number, boolean>>({});
+
+const filteredCancelaciones = computed(() => {
+    if (!cancelacionesData.value) return [];
+    const term = cancelacionesSearch.value.trim().toLowerCase();
+    if (!term) return cancelacionesData.value.items;
+    return cancelacionesData.value.items.filter((item) => {
+        const haystack = [
+            item.id?.toString() ?? '',
+            item.idventa?.toString() ?? '',
+            item.reason ?? '',
+            item.metodo ?? '',
+            item.vendedor ?? '',
+            item.admin?.nombre ?? '',
+            item.admin?.email ?? '',
+        ]
+            .filter(Boolean)
+            .map((value) => value.toLowerCase());
+        return haystack.some((value) => value.includes(term));
+    });
+});
+
+function formatDateTime(date?: string | null, time?: string | null) {
+    if (!date && !time) return '—';
+
+    const sanitizeDate = (value: string) => value.trim().replace(/\.\d+Z$/, 'Z');
+    const sanitizeTime = (value: string) => value.trim().replace(/^0+/, '') || '00:00:00';
+
+    let isoCandidate: string | null = null;
+
+    if (date) {
+        const base = sanitizeDate(date);
+        if (base.includes('T')) {
+            isoCandidate = base;
+        } else if (time) {
+            isoCandidate = `${base}T${sanitizeTime(time)}`;
+        } else {
+            isoCandidate = `${base}T00:00:00`;
+        }
+    } else if (time) {
+        const today = new Date().toISOString().split('T')[0];
+        isoCandidate = `${today}T${sanitizeTime(time)}`;
+    }
+
+    if (isoCandidate) {
+        const parsed = new Date(isoCandidate);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed.toLocaleString('es-MX', {
+                dateStyle: date ? 'short' : undefined,
+                timeStyle: 'medium',
+            });
+        }
+    }
+
+    const parts: string[] = [];
+    if (date) parts.push(date.replace(/T/, ' ').replace(/\.\d+Z$/, '').replace(/Z$/, ''));
+    if (time) parts.push(time.replace(/^0+/, ''));
+    return parts.length ? parts.join(' ') : '—';
+}
 const restockHorizon = ref<RestockHorizonOption>('2w');
 const restockSavingPref = ref(false);
 
@@ -666,6 +739,198 @@ async function fetchMensualidadReport(download = false) {
     } finally {
         mensualidadLoading.value = false;
     }
+}
+
+async function fetchCancelacionesReport() {
+    if (selected.value !== 'cancelaciones') return;
+    if (!rangeStart.value) {
+        window.alert('Selecciona una fecha inicial');
+        return;
+    }
+    cancelacionesLoading.value = true;
+    cancelacionesError.value = '';
+    try {
+        const data = await getCancelacionesReport({
+            from_date: rangeStart.value,
+            to_date: rangeEnd.value || undefined,
+        });
+        cancelacionesData.value = data;
+        cancelacionesExpanded.value = {};
+    } catch (err: any) {
+        cancelacionesError.value =
+            err?.response?.data?.message || err?.message || 'No se pudo cargar el reporte de cancelaciones.';
+        cancelacionesData.value = null;
+    } finally {
+        cancelacionesLoading.value = false;
+    }
+}
+
+function toggleCancelacionExpanded(id: number) {
+    cancelacionesExpanded.value = {
+        ...cancelacionesExpanded.value,
+        [id]: !cancelacionesExpanded.value[id],
+    };
+}
+
+function downloadCancelacionesCsv() {
+    if (!cancelacionesData.value?.items.length) return;
+    const lines = [
+        [
+            'Cancelada',
+            'Venta original',
+            'Ticket',
+            'Venta ID',
+            'Total original',
+            'Método',
+            'Vendedor',
+            'Administrador',
+            'Correo admin',
+            'Motivo',
+            'Productos',
+        ],
+    ];
+    cancelacionesData.value.items.forEach((item) => {
+        const productos = item.line_items
+            .map((line) => `${line.producto_nombre ?? 'Producto'} (${line.cantidad ?? 0})`)
+            .join('; ');
+        lines.push([
+            formatDateTime(item.cancelled_at),
+            formatDateTime(item.sale_date, item.sale_time),
+            String(item.idventa ?? item.venta_id ?? ''),
+            String(item.venta_id ?? ''),
+            item.total !== null ? formatCurrency(item.total) : '',
+            item.metodo ?? '',
+            item.vendedor ?? '',
+            item.admin?.nombre ?? '',
+            item.admin?.email ?? '',
+            item.reason ?? '',
+            productos,
+        ]);
+    });
+    const csv = lines
+        .map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `cancelaciones-${cancelacionesData.value.range.from}-${cancelacionesData.value.range.to}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function downloadCancelacionesPdf() {
+    if (!cancelacionesData.value?.items.length) return;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'legal' });
+    const marginX = 36;
+    const marginY = 36;
+    const lineHeight = 12;
+    const headerHeight = 60;
+    const columns = [
+        { title: 'Cancelada', width: 140 },
+        { title: 'Venta original', width: 140 },
+        { title: 'Ticket', width: 70 },
+        { title: 'Venta ID', width: 70 },
+        { title: 'Total', width: 80, align: 'right' },
+        { title: 'Método', width: 80 },
+        { title: 'Vendedor', width: 120 },
+        { title: 'Administrador', width: 130 },
+        { title: 'Motivo', width: 180 },
+    ];
+    const columnPositions: number[] = [];
+    let offset = marginX;
+    columns.forEach((col) => {
+        columnPositions.push(offset);
+        offset += col.width;
+    });
+
+    let currentY = marginY;
+    let page = 1;
+    const drawHeader = () => {
+        doc.setFontSize(16);
+        doc.text('Reporte de cancelaciones', marginX, currentY);
+        doc.setFontSize(10);
+        doc.text(
+            `Periodo: ${cancelacionesData.value?.range.from ?? ''} - ${cancelacionesData.value?.range.to ?? ''}`,
+            marginX,
+            currentY + 16
+        );
+        doc.text(`Generado: ${new Date().toLocaleString('es-MX')}`, marginX, currentY + 30);
+        doc.text(`Página ${page}`, doc.internal.pageSize.getWidth() - marginX, currentY + 30, { align: 'right' });
+        currentY += headerHeight;
+    };
+    const drawTableHeader = () => {
+        doc.setFontSize(9);
+        doc.setFillColor(243, 244, 246);
+        const totalWidth = columns.reduce((sum, col) => sum + col.width, 0);
+        doc.rect(marginX, currentY, totalWidth, 20, 'F');
+        columns.forEach((col, idx) => {
+            const textX =
+                col && columnPositions[idx] !== undefined
+                    ? (col.align ?? 'left') === 'right'
+                        ? columnPositions[idx]! + col.width - 6
+                        : columnPositions[idx]! + 6
+                    : 6;
+            doc.text(col.title, textX, currentY + 13, { align: (col.align ?? 'left') as 'right' | 'left' | 'center' | 'justify' });
+        });
+        currentY += 24;
+    };
+    const ensureSpace = (height: number) => {
+        if (currentY + height > doc.internal.pageSize.getHeight() - marginY) {
+            doc.addPage();
+            page += 1;
+            currentY = marginY;
+            drawHeader();
+            drawTableHeader();
+        }
+    };
+
+    drawHeader();
+    drawTableHeader();
+    doc.setFontSize(9);
+
+    cancelacionesData.value.items.forEach((item) => {
+        const rows = [
+            formatDateTime(item.cancelled_at),
+            formatDateTime(item.sale_date, item.sale_time),
+            String(item.idventa ?? item.venta_id ?? ''),
+            String(item.venta_id ?? ''),
+            item.total !== null ? formatCurrency(item.total) : '—',
+            item.metodo ?? '—',
+            item.vendedor ?? '—',
+            item.admin?.nombre ?? '—',
+            item.reason ?? '—',
+        ];
+        const lineChunks = rows.map((text, idx) => {
+            const width = columns[idx]?.width !== undefined ? columns[idx].width - 10 : 100;
+            return doc.splitTextToSize(text, width);
+        });
+        const maxLines = Math.max(...lineChunks.map((chunk) => chunk.length || 1));
+        const rowHeight = maxLines * lineHeight + 6;
+        ensureSpace(rowHeight);
+        lineChunks.forEach((chunk, idx) => {
+            const align = columns[idx]?.align ?? 'left';
+            const startX = (columnPositions[idx] ?? 0) + 6;
+            let textY = currentY + 12;
+            chunk.forEach((line) => {
+                if (align === 'right') {
+                    if (columns[idx] !== undefined && columnPositions[idx] !== undefined) {
+                        doc.text(line, columnPositions[idx] + columns[idx].width - 6, textY, { align: 'right' });
+                    } else {
+                        doc.text(line, startX, textY, { align: 'right' });
+                    }
+                } else {
+                    doc.text(line, startX, textY);
+                }
+                textY += lineHeight;
+            });
+        });
+        currentY += rowHeight;
+    });
+
+    doc.save(`cancelaciones-${cancelacionesData.value.range.from}-${cancelacionesData.value.range.to}.pdf`);
 }
 
 const cajaSummary = computed(() => {
@@ -1484,6 +1749,12 @@ watch(
                 fetchMensualidadReport();
             }
         }
+        if (val === 'cancelaciones') {
+            cancelacionesError.value = '';
+            if (!cancelacionesData.value && rangeStart.value) {
+                fetchCancelacionesReport();
+            }
+        }
     },
     { immediate: false }
 );
@@ -1511,6 +1782,11 @@ watch(
         if (selected.value === 'restock') {
             restockData.value = null;
             restockError.value = '';
+        }
+        if (selected.value === 'cancelaciones') {
+            cancelacionesData.value = null;
+            cancelacionesError.value = '';
+            cancelacionesExpanded.value = {};
         }
     }
 );
@@ -1551,6 +1827,14 @@ watch(
     }
 );
 
+watch(
+    () => cancelacionesData.value,
+    () => {
+        cancelacionesSearch.value = '';
+        cancelacionesExpanded.value = {};
+    }
+);
+
 
 </script>
 
@@ -1577,12 +1861,12 @@ watch(
                             </optgroup>
                         </select>
                     </label>
-                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado','caja-egresos','flujo-caja'].includes(selected)">
+                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado','caja-egresos','flujo-caja','cancelaciones'].includes(selected)">
                         <span class="font-medium text-gray-700">Fecha inicial</span>
                         <input v-model="rangeStart" type="date"
                             class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900" />
                     </label>
-                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado','caja-egresos','flujo-caja'].includes(selected)">
+                    <label class="flex flex-col text-sm text-gray-600" v-if="['caja', 'entradas','caja-condensado','caja-egresos','flujo-caja','cancelaciones'].includes(selected)">
                         <span class="font-medium text-gray-700">Fecha final <span
                                 class="text-xs text-gray-400">(opcional)</span></span>
                         <input v-model="rangeEnd" type="date"
@@ -2564,6 +2848,139 @@ watch(
                                 </div>
                             </template>
                             <p v-else class="text-xs text-gray-500">Consulta el reporte para ver los cobros del mes seleccionado.</p>
+                        </div>
+                    </template>
+
+                    <template v-else-if="selected === 'cancelaciones'">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                                :disabled="cancelacionesLoading"
+                                @click="fetchCancelacionesReport">
+                                <span v-if="cancelacionesLoading">Consultando…</span>
+                                <span v-else>Consultar reporte</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                :disabled="cancelacionesLoading || !cancelacionesData?.items.length"
+                                @click="downloadCancelacionesCsv"
+                            >
+                                Descargar CSV
+                            </button>
+                            <button
+                                type="button"
+                                class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                :disabled="cancelacionesLoading || !cancelacionesData?.items.length"
+                                @click="downloadCancelacionesPdf"
+                            >
+                                Descargar PDF
+                            </button>
+                        </div>
+                        <p v-if="cancelacionesError"
+                            class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            {{ cancelacionesError }}
+                        </p>
+                        <div v-else class="mt-4 space-y-4">
+                            <div v-if="cancelacionesLoading" class="text-xs text-gray-500">Cargando datos…</div>
+                            <template v-else-if="cancelacionesData">
+                                <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+                                    <div>
+                                        Periodo:
+                                        <span class="font-semibold text-gray-900">{{ cancelacionesData.range.from }}</span>
+                                        –
+                                        <span class="font-semibold text-gray-900">{{ cancelacionesData.range.to }}</span>
+                                    </div>
+                                    <label class="flex items-center gap-2 text-xs text-gray-600">
+                                        <span class="font-medium text-gray-700">Buscar</span>
+                                        <input
+                                            v-model="cancelacionesSearch"
+                                            type="search"
+                                            placeholder="Ticket, admin o motivo…"
+                                            class="w-60 rounded border border-gray-300 px-3 py-1 text-xs focus:border-gray-900 focus:ring-gray-900"
+                                        />
+                                    </label>
+                                </div>
+                                <div v-if="!filteredCancelaciones.length" class="text-xs text-gray-500">
+                                    No hay cancelaciones para los filtros seleccionados.
+                                </div>
+                                <div v-else :class="tableClasses.wrapper">
+                                    <table :class="tableClasses.table">
+                                        <thead :class="tableClasses.head">
+                                            <tr>
+                                                <th class="px-3 py-2">Cancelada</th>
+                                                <th class="px-3 py-2">Ticket</th>
+                                                <th class="px-3 py-2">Venta ID</th>
+                                                <th class="px-3 py-2 text-right">Total original</th>
+                                                <th class="px-3 py-2">Método</th>
+                                                <th class="px-3 py-2">Vendedor</th>
+                                                <th class="px-3 py-2">Administrador</th>
+                                                <th class="px-3 py-2">Motivo</th>
+                                                <th class="px-3 py-2 text-left">Productos</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody :class="tableClasses.body">
+                                            <template v-for="item in filteredCancelaciones" :key="item.id">
+                                                <tr :class="tableClasses.row">
+                                                    <td class="px-3 py-2">
+                                                        <div class="font-medium text-gray-900">{{ formatDateTime(item.cancelled_at) }}</div>
+                                                        <p class="text-[11px] text-gray-500">
+                                                            Venta original: {{ formatDateTime(item.sale_date, item.sale_time) }}
+                                                        </p>
+                                                    </td>
+                                                    <td class="px-3 py-2">{{ item.idventa ?? item.venta_id }}</td>
+                                                    <td class="px-3 py-2">{{ item.venta_id }}</td>
+                                                    <td class="px-3 py-2 text-right">
+                                                        <span v-if="item.total !== null">{{ formatCurrency(item.total) }}</span>
+                                                        <span v-else>—</span>
+                                                    </td>
+                                                    <td class="px-3 py-2">{{ item.metodo ?? '—' }}</td>
+                                                    <td class="px-3 py-2">{{ item.vendedor ?? '—' }}</td>
+                                                    <td class="px-3 py-2">
+                                                        <div class="font-medium text-gray-900">{{ item.admin?.nombre ?? '—' }}</div>
+                                                        <p class="text-[11px] text-gray-500">{{ item.admin?.email ?? '' }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2">{{ item.reason ?? '—' }}</td>
+                                                    <td class="px-3 py-2">
+                                                        {{ item.line_items.length }}
+                                                        <button
+                                                            type="button"
+                                                            class="ml-2 text-xs text-gray-500 underline"
+                                                            @click="toggleCancelacionExpanded(item.id)"
+                                                        >
+                                                            {{ cancelacionesExpanded[item.id] ? 'Ocultar' : 'Ver' }} detalle
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                                <tr v-if="cancelacionesExpanded[item.id]" class="bg-gray-50">
+                                                    <td colspan="8" class="px-4 py-3">
+                                                        <div class="space-y-2 text-xs text-gray-600">
+                                                            <p class="font-semibold text-gray-800">Productos cancelados</p>
+                                                            <div class="space-y-1">
+                                                                <div
+                                                                    v-for="line in item.line_items"
+                                                                    :key="`${item.id}-${line.producto_ident}-${line.producto_nombre}`"
+                                                                    class="flex flex-wrap items-center justify-between rounded border border-gray-200 bg-white px-3 py-2 text-[12px]"
+                                                                >
+                                                                    <div class="flex-1">
+                                                                        <p class="font-medium text-gray-800">{{ line.producto_nombre ?? 'Producto sin nombre' }}</p>
+                                                                        <p class="text-[11px] text-gray-500">Ident: {{ line.producto_ident ?? '—' }}</p>
+                                                                    </div>
+                                                                    <div class="text-right">
+                                                                        <p>Cant. {{ line.cantidad ?? '—' }}</p>
+                                                                        <p>Total {{ line.venta_total !== null ? formatCurrency(line.venta_total) : '—' }}</p>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </template>
+                            <div v-else class="text-xs text-gray-500">No hay datos disponibles.</div>
                         </div>
                     </template>
                     <template v-else-if="selected === 'caja-condensado'">

@@ -612,3 +612,41 @@ export async function getMensualidadReport(params: { download?: boolean } = {}) 
     const { data } = await http.get<MensualidadReportResponse>('/reports/mensualidad', { params: query });
     return data;
 }
+
+export type CancelacionReportItem = {
+    id: number;
+    venta_id: number;
+    idventa: string | number | null;
+    reason: string | null;
+    cancelled_at: string | null;
+    sale_date: string | null;
+    sale_time: string | null;
+    metodo: string | null;
+    vendedor: string | null;
+    total: number | null;
+    admin: {
+        id: number;
+        nombre: string | null;
+        email: string | null;
+    } | null;
+    line_items: Array<{
+        producto_nombre: string | null;
+        producto_ident: string | number | null;
+        cantidad: number | null;
+        venta_total: number | null;
+    }>;
+};
+
+export type CancelacionesReportResponse = {
+    range: { from: string; to: string };
+    count: number;
+    items: CancelacionReportItem[];
+};
+
+export async function getCancelacionesReport(params: { from_date: string; to_date?: string; q?: string }) {
+    const query: Record<string, string> = { from_date: params.from_date };
+    if (params.to_date) query.to_date = params.to_date;
+    if (params.q) query.q = params.q;
+    const { data } = await http.get<CancelacionesReportResponse>('/reports/cancelaciones', { params: query });
+    return data;
+}
