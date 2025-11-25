@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Illuminate\Support\Collection;
 use Carbon\CarbonPeriod;
 
 class ReportController extends Controller
@@ -1082,6 +1083,14 @@ class ReportController extends Controller
                 break;
         }
 
+        if ($request->boolean('download')) {
+            $downloadItems = (clone $query)
+                ->get()
+                ->map(fn(Inventario $inv) => $this->formatInventarioItem($inv));
+
+            return $this->downloadInventarioCsv($downloadItems);
+        }
+
         $paginator = $query->paginate($perPage)->appends([
             'q' => $search,
             'per_page' => $perPage,
@@ -1091,35 +1100,14 @@ class ReportController extends Controller
         ]);
 
         $totalsRow = (clone $baseQuery)
+            ->selectRaw('COUNT(*) as total_productos')
             ->selectRaw('SUM(COALESCE(inventario.existencia, 0)) as total_existencia')
             ->selectRaw('SUM(COALESCE(p.precio, 0) * COALESCE(inventario.existencia, 0)) as valor_publico')
             ->selectRaw('SUM(COALESCE(p.precio_proveedor, 0) * COALESCE(inventario.existencia, 0)) as valor_proveedor')
             ->first();
 
-        $items = $paginator->getCollection()->map(function (Inventario $inv) {
-            $producto = $inv->producto;
-            $proveedor = $producto?->proveedor;
-            $precio = $producto?->precio;
-            $precioProveedor = $producto?->precio_proveedor;
-            $existencia = (int) ($inv->existencia ?? 0);
-            $costoInventario = $precio !== null ? round((float) $precio * $existencia, 2) : null;
-
-            return [
-                'inventario_id' => (int) $inv->id,
-                'producto_ident' => (string) ($producto->ident ?? $inv->ident),
-                'producto_nombre' => (string) ($producto->nombre ?? ''),
-                'precio' => $precio !== null ? (float) $precio : null,
-                'precio_proveedor' => $precioProveedor !== null ? (float) $precioProveedor : null,
-                'existencia' => $existencia,
-                'costo_inventario' => $costoInventario,
-                'proveedor' => $proveedor ? [
-                    'ident' => (string) $proveedor->ident,
-                    'nombre' => (string) $proveedor->nombre,
-                    'tipo' => (string) ($proveedor->tipo ?? 'normal'),
-                    'porcentaje_comision' => $proveedor->porcentaje_comision,
-                ] : null,
-            ];
-        });
+        $items = $paginator->getCollection()
+            ->map(fn(Inventario $inv) => $this->formatInventarioItem($inv));
 
         return response()->json([
             'data' => $items,
@@ -1132,6 +1120,84 @@ class ReportController extends Controller
                 'next_page_url' => $paginator->nextPageUrl(),
                 'prev_page_url' => $paginator->previousPageUrl(),
             ],
+            'totals' => $totalsRow ? [
+                'total_productos' => $totalsRow->total_productos ?? null,
+                'total_existencia' => $totalsRow->total_existencia ?? null,
+                'valor_publico' => $totalsRow->valor_publico ?? null,
+                'valor_proveedor' => $totalsRow->valor_proveedor ?? null,
+            ] : null,
+        ]);
+    }
+
+    protected function formatInventarioItem(Inventario $inv): array
+    {
+        $producto = $inv->producto;
+        $proveedor = $producto?->proveedor;
+        $precio = $producto?->precio;
+        $precioProveedor = $producto?->precio_proveedor;
+        $existencia = (int) ($inv->existencia ?? 0);
+        $costoInventario = $precio !== null ? round((float) $precio * $existencia, 2) : null;
+
+        return [
+            'inventario_id' => (int) $inv->id,
+            'producto_ident' => (string) ($producto->ident ?? $inv->ident),
+            'producto_nombre' => (string) ($producto->nombre ?? ''),
+            'precio' => $precio !== null ? (float) $precio : null,
+            'precio_proveedor' => $precioProveedor !== null ? (float) $precioProveedor : null,
+            'existencia' => $existencia,
+            'costo_inventario' => $costoInventario,
+            'proveedor' => $proveedor ? [
+                'ident' => (string) $proveedor->ident,
+                'nombre' => (string) $proveedor->nombre,
+                'tipo' => (string) ($proveedor->tipo ?? 'normal'),
+                'porcentaje_comision' => $proveedor->porcentaje_comision,
+            ] : null,
+        ];
+    }
+
+    protected function downloadInventarioCsv(Collection $items)
+    {
+        $handle = fopen('php://temp', 'w+');
+        fputcsv($handle, [
+            'Producto ident',
+            'Producto',
+            'Proveedor ident',
+            'Proveedor',
+            'Tipo proveedor',
+            'Existencias',
+            'Precio venta',
+            'Precio proveedor',
+            'Valor inventario',
+        ]);
+
+        foreach ($items as $row) {
+            $provider = $row['proveedor'] ?? null;
+            $precioProveedor = $row['precio_proveedor'] ?? null;
+            $existencia = $row['existencia'] ?? 0;
+            $valorInventario = $row['costo_inventario'];
+
+            fputcsv($handle, [
+                $row['producto_ident'] ?? '',
+                $row['producto_nombre'] ?? '',
+                $provider['ident'] ?? '',
+                $provider['nombre'] ?? '',
+                $provider['tipo'] ?? 'normal',
+                $existencia,
+                $row['precio'] ?? '',
+                $precioProveedor ?? '',
+                $valorInventario ?? '',
+            ]);
+        }
+
+        rewind($handle);
+        $csv = stream_get_contents($handle);
+        fclose($handle);
+
+        $filename = 'reporte-inventario-' . Carbon::now()->format('Ymd-His') . '.csv';
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
         ]);
     }
 

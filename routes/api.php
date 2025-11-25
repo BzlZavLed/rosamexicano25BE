@@ -133,6 +133,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/analysis/recommended-importes', [AnalysisController::class, 'recommendedImportes']);
     Route::post('/analysis/recommended-importes/recalculate', [AnalysisController::class, 'recalculateRecommendedImportes']);
     Route::post('/analysis/recommended-importes/apply', [AnalysisController::class, 'applyRecommendedImport']);
+    Route::get('/analysis/transition-report', [AnalysisController::class, 'transitionReport']);
+    Route::get('/analysis/transition-report/provider', [AnalysisController::class, 'transitionProviderDetails']);
     Route::get('/reports/mensualidad', [ReportController::class, 'mensualidad']);
     Route::get('/reports/productos', [ReportController::class, 'productos']);
     Route::get('/reports/inventario', [ReportController::class, 'inventario']);

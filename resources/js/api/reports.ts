@@ -551,6 +551,25 @@ export async function getInventarioReport(opts: {
     return data;
 }
 
+export async function downloadInventarioReport(opts: {
+    q?: string;
+    sort?: 'producto' | 'existencia' | 'proveedor';
+    direction?: 'asc' | 'desc';
+    provider_tipo?: 'normal' | 'consigna' | 'porcentaje';
+} = {}): Promise<Blob> {
+    const params: Record<string, string | number> = { download: 1 };
+    if (opts.q) params.q = opts.q;
+    if (opts.sort) params.sort = opts.sort;
+    if (opts.direction) params.direction = opts.direction;
+    if (opts.provider_tipo) params.provider_tipo = opts.provider_tipo;
+
+    const { data } = await http.get('/reports/inventario', {
+        params,
+        responseType: 'blob',
+    });
+    return data as Blob;
+}
+
 export async function getEntradasReport(params: { from_date: string; to_date: string }) {
     const { from_date, to_date } = params;
     const query: Record<string, string> = { from_date, to_date };

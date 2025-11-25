@@ -89,6 +89,61 @@ export async function recalculateRecommendedImportes() {
     return data;
 }
 
+export type TransitionReportResponse = {
+    range: { from: string; to: string };
+    sales: {
+        total_sales: number;
+        total_recibido: number;
+        tickets: number;
+        by_day: Array<{ date: string; total: number; tickets: number }>;
+    };
+    caja: Array<{
+        metodo: string | null;
+        total_ventas: number;
+        total_recibido: number;
+        cambio: number;
+        tickets: number;
+    }>;
+    caja_condensado: Array<{
+        provider_ident: string | null;
+        provider_name: string;
+        legacy: boolean;
+        total_publico: number;
+        descuentos: number;
+        total_neto: number;
+    }>;
+    totals: {
+        total_publico: number;
+        descuentos: number;
+        total_neto: number;
+    };
+};
+
+export async function getTransitionReport(params: { month?: string }) {
+    const { data } = await http.get<TransitionReportResponse>('/analysis/transition-report', { params });
+    return data;
+}
+
+export type TransitionProviderDetailsResponse = {
+    items: Array<{
+        venta_id: number | string;
+        fecha: string | null;
+        producto_nombre: string | null;
+        producto_ident: string | null;
+        cantidad: number;
+        metodo: string | null;
+        vendedor: string | null;
+        monto: number;
+        descuento: number;
+        legacy: boolean;
+    }>;
+};
+
+export async function getTransitionProviderDetails(params: { month: string; provider_ident: string }) {
+    const { data } = await http.get<TransitionProviderDetailsResponse>('/analysis/transition-report/provider', { params });
+    return data;
+}
+
 export type TopProductsChartResponse = {
     range: {
         months: number;

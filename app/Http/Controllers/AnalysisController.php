@@ -268,6 +268,361 @@ class AnalysisController extends Controller
         ];
     }
 
+    public function transitionReport(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        $monthInput = $request->input('month', '2025-11');
+        try {
+            $start = Carbon::createFromFormat('Y-m', $monthInput)->startOfMonth();
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Formato de mes inválido (usa YYYY-MM).'], 422);
+        }
+
+        $end = (clone $start)->endOfMonth();
+
+        $ventas = $this->collectUnifiedVentas($start, $end);
+        $lineItems = $this->collectUnifiedVentadesg($start, $end);
+
+        $salesTotals = [
+            'total_sales' => round((float) $ventas->sum('totalventa'), 2),
+            'total_recibido' => round((float) $ventas->sum('total_recibido'), 2),
+            'tickets' => $ventas->count(),
+            'by_day' => $ventas
+                ->groupBy('fecha')
+                ->sortKeys()
+                ->map(function ($group, $date) {
+                    return [
+                        'date' => $date,
+                        'total' => round((float) $group->sum('totalventa'), 2),
+                        'tickets' => $group->count(),
+                    ];
+                })
+                ->values()
+                ->all(),
+        ];
+
+        $caja = $ventas
+            ->groupBy(function ($row) {
+                return $row['metodo'] ?: 'desconocido';
+            })
+            ->map(function ($group, $metodo) {
+                return [
+                    'metodo' => $metodo,
+                    'total_ventas' => round((float) $group->sum('totalventa'), 2),
+                    'total_recibido' => round((float) $group->sum('total_recibido'), 2),
+                    'cambio' => round((float) $group->sum('cambio'), 2),
+                    'tickets' => $group->count(),
+                ];
+            })
+            ->values()
+            ->all();
+
+        $providers = DB::table('proveedores')->select(['id', 'ident', 'nombre'])->get();
+        $providersById = $providers->keyBy('id');
+        $providersByIdent = $providers->keyBy(fn ($row) => (string) $row->ident);
+
+        $condensed = [];
+        foreach ($lineItems as $item) {
+            $providerIdent = (string) ($item['provider_ident'] ?? '');
+            $providerName = null;
+
+            if ($item['proveedor_id'] && isset($providersById[$item['proveedor_id']])) {
+                $providerIdent = (string) ($providersById[$item['proveedor_id']]->ident ?? $providerIdent);
+                $providerName = $providersById[$item['proveedor_id']]->nombre ?? null;
+            }
+
+            if (!$providerName && $providerIdent !== '' && isset($providersByIdent[$providerIdent])) {
+                $providerName = $providersByIdent[$providerIdent]->nombre;
+            }
+
+            $key = $providerIdent ?: 'sin-proveedor';
+            if (!isset($condensed[$key])) {
+                $condensed[$key] = [
+                    'provider_ident' => $providerIdent ?: null,
+                    'provider_name' => $providerName ?? 'Sin proveedor',
+                    'legacy' => (bool) $item['legacy'],
+                    'total_publico' => 0.0,
+                    'total_neto' => 0.0,
+                    'discounts' => 0.0,
+                ];
+            }
+
+            $condensed[$key]['total_publico'] += (float) $item['public_total'];
+            $condensed[$key]['total_neto'] += (float) $item['venta_total'];
+            $discount = (float) $item['public_total'] - (float) $item['venta_total'];
+            $condensed[$key]['discounts'] += max($discount, 0);
+        }
+
+        $cajaCondensado = collect($condensed)
+            ->map(function ($row) {
+                return [
+                    'provider_ident' => $row['provider_ident'],
+                    'provider_name' => $row['provider_name'],
+                    'legacy' => $row['legacy'],
+                    'total_publico' => round($row['total_publico'], 2),
+                    'descuentos' => round($row['discounts'], 2),
+                    'total_neto' => round($row['total_publico'] - $row['discounts'], 2),
+                ];
+            })
+            ->values()
+            ->all();
+
+        $totals = [
+            'total_publico' => round(array_sum(array_column($cajaCondensado, 'total_publico')), 2),
+            'descuentos' => round(array_sum(array_column($cajaCondensado, 'descuentos')), 2),
+        ];
+        $totals['total_neto'] = round($totals['total_publico'] - $totals['descuentos'], 2);
+
+        return response()->json([
+            'range' => [
+                'from' => $start->toDateString(),
+                'to' => $end->toDateString(),
+            ],
+            'sales' => $salesTotals,
+            'caja' => $caja,
+            'caja_condensado' => $cajaCondensado,
+            'totals' => $totals,
+        ]);
+    }
+
+    public function transitionProviderDetails(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        $monthInput = $request->input('month', '2025-11');
+        $providerIdent = (string) $request->input('provider_ident', '');
+
+        if ($providerIdent === '') {
+            return response()->json(['message' => 'provider_ident es requerido.'], 422);
+        }
+
+        try {
+            $start = Carbon::createFromFormat('Y-m', $monthInput)->startOfMonth();
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Formato de mes inválido (usa YYYY-MM).'], 422);
+        }
+
+        $end = (clone $start)->endOfMonth();
+
+        $ventas = $this->collectUnifiedVentas($start, $end);
+        $lineItems = $this->collectUnifiedVentadesg($start, $end);
+        
+
+        $providerRows = $lineItems->filter(function ($item) use ($providerIdent) {
+            return (string) ($item['provider_ident'] ?? '') === $providerIdent;
+        });
+        $ventasLookup = $ventas->keyBy('venta_id');
+
+        $lineItemsList = $providerRows->map(function ($row) use ($ventasLookup) {
+            $venta = $ventasLookup->get($row['venta_id']);
+            $discount = max(((float) ($row['public_total'] ?? 0)) - ((float) ($row['venta_total'] ?? 0)), 0);
+            return [
+                'venta_id' => $row['venta_id'],
+                'fecha' => $row['fecha'],
+                'producto_nombre' => $row['producto_nombre'],
+                'producto_ident' => $row['producto_id'],
+                'cantidad' => $row['quantity'] ?? 0,
+                'metodo' => $venta['metodo'] ?? $row['metodo_pago'],
+                'vendedor' => $venta['vendedor'] ?? $row['vendedor'],
+                'monto' => (float) $row['venta_total'],
+                'descuento' => $discount,
+                'legacy' => $row['legacy'],
+            ];
+        })->values()->all();
+
+        return response()->json([
+            'items' => $lineItemsList,
+        ]);
+    }
+
+    protected function collectUnifiedVentas(Carbon $start, Carbon $end)
+    {
+        $startDate = $start->toDateString();
+        $endDate = $end->toDateString();
+
+        $current = DB::table('ventas')
+            ->select([
+                'idventa as venta_id',
+                'fecha',
+                'hora',
+                'totalventa',
+                'total_recibido',
+                'metodo',
+                'cambio',
+                'vendedor',
+            ])
+            ->whereBetween('fecha', [$startDate, $endDate])
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'venta_id' => $row->venta_id,
+                    'fecha' => $row->fecha,
+                    'hora' => $row->hora,
+                    'totalventa' => (float) $row->totalventa,
+                    'total_recibido' => (float) $row->total_recibido,
+                    'metodo' => $row->metodo,
+                    'cambio' => (float) $row->cambio,
+                    'vendedor' => $row->vendedor,
+                    'legacy' => false,
+                ];
+            });
+
+        $legacy = DB::table('historic_ventas')
+            ->select([
+                'legacy_idventa as venta_id',
+                'fecha',
+                DB::raw('NULL as hora'),
+                'totalventa',
+                'recibo',
+                'metodo',
+                'cambio',
+                'vendedor',
+            ])
+            ->whereBetween('fecha', [$startDate, $endDate])
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'venta_id' => $row->venta_id,
+                    'fecha' => $row->fecha,
+                    'hora' => $row->hora,
+                    'totalventa' => (float) $row->totalventa,
+                    'total_recibido' => (float) $row->recibo,
+                    'metodo' => $row->metodo,
+                    'cambio' => (float) $row->cambio,
+                    'vendedor' => $row->vendedor,
+                    'legacy' => true,
+                ];
+            });
+
+        return $current->concat($legacy);
+    }
+
+    protected function collectUnifiedVentadesg(Carbon $start, Carbon $end)
+    {
+        $startDate = $start->toDateString();
+        $endDate = $end->toDateString();
+
+        $providers = DB::table('proveedores')
+            ->select(['id', 'ident'])
+            ->get()
+            ->keyBy('id');
+
+        $currentQuery = DB::table('ventadesg as vd')
+            ->leftJoin('ventas as v', 'v.idventa', '=', 'vd.idventa')
+            ->leftJoin('proveedores as pr', 'pr.id', '=', 'vd.proveedor_id')
+            ->select([
+                'vd.idventa as venta_id',
+                'vd.fecha',
+                'vd.hora',
+                'vd.proveedor_id',
+                'pr.ident as provider_ident',
+                'vd.producto_id',
+                'vd.nombre as producto_nombre',
+                'v.metodo as metodo_pago',
+                'v.vendedor',
+                'vd.public_total',
+                'vd.venta_total',
+                'vd.provider_payment',
+                'vd.provider_cost',
+                'vd.admin_earnings',
+                'vd.credit_card_discount',
+                'vd.provider_percentage_discount',
+                'vd.consigna_discount',
+                'vd.quantity',
+            ])
+            ->whereBetween('vd.fecha', [$startDate, $endDate]);
+
+     
+
+        $current = $currentQuery
+            ->get()
+            ->map(function ($row) use ($providers) {
+                $providerIdent = $row->provider_ident !== null ? (string) $row->provider_ident : null;
+
+                if ($providerIdent === null && $row->proveedor_id !== null) {
+                    $provider = $providers->get($row->proveedor_id);
+                    if ($provider && $provider->ident !== null) {
+                        $providerIdent = (string) $provider->ident;
+                    }
+                }
+
+                return [
+                    'venta_id' => $row->venta_id,
+                    'fecha' => $row->fecha,
+                    'hora' => $row->hora,
+                    'proveedor_id' => $row->proveedor_id,
+                    'provider_ident' => $providerIdent,
+                    'producto_id' => $row->producto_id,
+                    'producto_nombre' => $row->producto_nombre,
+                    'metodo_pago' => $row->metodo_pago,
+                    'vendedor' => $row->vendedor,
+                    'public_total' => (float) $row->public_total,
+                    'venta_total' => (float) $row->venta_total,
+                    'provider_payment' => (float) $row->provider_payment,
+                    'provider_cost' => (float) $row->provider_cost,
+                    'admin_earnings' => (float) $row->admin_earnings,
+                    'credit_card_discount' => (float) $row->credit_card_discount,
+                    'provider_percentage_discount' => (float) $row->provider_percentage_discount,
+                    'consigna_discount' => (float) $row->consigna_discount,
+                    'quantity' => (float) $row->quantity,
+                    'legacy' => false,
+                ];
+            });
+
+        $legacyQuery = DB::table('historic_ventadesg')
+            ->select([
+                'venta_legacy_id as venta_id',
+                'fecha',
+                'proveedor_ident',
+                'producto_ident',
+                'producto_nombre',
+                'total',
+                'total_descuento',
+                'cantidad',
+            ])
+            ->whereBetween('fecha', [$startDate, $endDate]);
+
+
+        $legacy = $legacyQuery
+            ->get()
+            ->map(function ($row) {
+                $total = (float) ($row->total ?? 0);
+                $discount = (float) ($row->total_descuento ?? 0);
+                $ventaTotal = $total - $discount;
+
+                return [
+                    'venta_id' => $row->venta_id,
+                    'fecha' => $row->fecha,
+                    'hora' => null,
+                    'proveedor_id' => null,
+                    'provider_ident' => $row->proveedor_ident,
+                    'producto_id' => $row->producto_ident,
+                    'producto_nombre' => $row->producto_nombre,
+                    'metodo_pago' => null,
+                    'vendedor' => null,
+                    'public_total' => $total,
+                    'venta_total' => $ventaTotal,
+                    'provider_payment' => 0.0,
+                    'provider_cost' => 0.0,
+                    'admin_earnings' => $ventaTotal,
+                    'credit_card_discount' => 0.0,
+                    'provider_percentage_discount' => 0.0,
+                    'consigna_discount' => 0.0,
+                    'quantity' => (float) ($row->cantidad ?? 0),
+                    'legacy' => true,
+                ];
+            });
+        Log::info( $legacy->count());
+        Log::info( $legacy->toArray());
+
+        $result = $current->concat($legacy);
+
+    
+
+        return $result;
+    }
+
     public function topProducts(Request $request)
     {
         $this->ensureAdmin($request);

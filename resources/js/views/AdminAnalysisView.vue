@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from 'vue'
 import AppLayout from '../components/layout/AppLayout.vue'
-import type { AnalysisSummary, TopSellersResponse, MonthDetailsResponse, RecommendedImporteItem, RecommendedImporteResponse, TopProductsChartResponse } from '../api/analysis'
+import type { AnalysisSummary, TopSellersResponse, MonthDetailsResponse, RecommendedImporteItem, RecommendedImporteResponse, TopProductsChartResponse, TransitionReportResponse } from '../api/analysis'
 import {
     getAnalysisSummary,
     importAnalysisFile,
@@ -10,6 +10,8 @@ import {
     recalculateRecommendedImportes,
     applyRecommendedImport,
     getTopProductsChart,
+    getTransitionReport,
+    getTransitionProviderDetails,
 } from '../api/analysis'
 
 const summary = ref<AnalysisSummary | null>(null)
@@ -19,7 +21,7 @@ const successMessage = ref('')
 const errorMessage = ref('')
 const ventasFile = ref<File | null>(null)
 const desgFile = ref<File | null>(null)
-const activeTab = ref<'import' | 'topSellers' | 'topProducts' | 'recommended'>('import')
+const activeTab = ref<'import' | 'topSellers' | 'topProducts' | 'recommended' | 'transition'>('import')
 const topData = ref<TopSellersResponse | null>(null)
 const topLoading = ref(false)
 const topError = ref('')
@@ -42,6 +44,17 @@ const acceptance = ref<Record<string, boolean>>({})
 const emailOverrides = ref<Record<string, string>>({})
 const applyLoading = ref<string | null>(null)
 const recommendedReloading = ref(false)
+
+// Transition report state
+const transitionLoading = ref(false)
+const transitionError = ref('')
+const transitionData = ref<TransitionReportResponse | null>(null)
+const transitionMonth = ref('2025-11')
+const transitionProviderModalOpen = ref(false)
+const transitionProviderDetails = ref<TransitionProviderDetailsResponse | null>(null)
+const transitionProviderTarget = ref<{ identifier: string | null; name: string } | null>(null)
+const transitionProviderLoading = ref(false)
+const transitionProviderError = ref('')
 
 function assignRecommendedResponse(response: RecommendedImporteResponse) {
     recommendedData.value = response.items
@@ -115,6 +128,9 @@ watch(
         }
         if (tab === 'recommended' && recommendedData.value.length === 0 && !recommendedLoading.value) {
             await loadRecommended()
+        }
+        if (tab === 'transition' && !transitionData.value && !transitionLoading.value) {
+            await loadTransitionReport()
         }
     }
 )
@@ -237,6 +253,45 @@ async function loadTopProductsChart() {
     }
 }
 
+async function loadTransitionReport() {
+    transitionLoading.value = true
+    transitionError.value = ''
+    try {
+        transitionData.value = await getTransitionReport({ month: transitionMonth.value })
+    } catch (err: any) {
+        transitionError.value = err?.response?.data?.message || err?.message || 'No se pudo generar el reporte.'
+        transitionData.value = null
+    } finally {
+        transitionLoading.value = false
+    }
+}
+
+async function openTransitionProviderDetails(row: { provider_ident: string | null; provider_name: string }) {
+    if (!transitionData.value) return
+    if (!row.provider_ident) return
+
+    transitionProviderModalOpen.value = true
+    transitionProviderTarget.value = {
+        identifier: row.provider_ident,
+        name: row.provider_name,
+    }
+    transitionProviderLoading.value = true
+    transitionProviderError.value = ''
+    transitionProviderDetails.value = null
+
+    try {
+        transitionProviderDetails.value = await getTransitionProviderDetails({
+            month: transitionMonth.value,
+            provider_ident: row.provider_ident,
+        })
+        console.log(transitionProviderDetails.value)
+    } catch (err: any) {
+        transitionProviderError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el detalle.'
+    } finally {
+        transitionProviderLoading.value = false
+    }
+}
+
 async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean) {
     recommendedActionError.value = ''
     recommendedSuccess.value = ''
@@ -301,6 +356,12 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                         :class="activeTab === 'recommended' ? 'text-emerald-700 border-b-2 border-emerald-600' : 'text-gray-500'"
                         @click="activeTab = 'recommended'">
                         Importes recomendados
+                    </button>
+                    <button
+                        class="px-3 py-2 text-sm font-semibold"
+                        :class="activeTab === 'transition' ? 'text-emerald-700 border-b-2 border-emerald-600' : 'text-gray-500'"
+                        @click="activeTab = 'transition'">
+                        Reporte transición (Nov)
                     </button>
                 </div>
             </div>
@@ -569,6 +630,100 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                 </div>
                 <div v-else class="text-sm text-gray-500">No hay datos suficientes para calcular importes.</div>
             </div>
+
+            <div v-else-if="activeTab === 'transition'">
+                <div class="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+                    <label class="flex items-center gap-2">
+                        <span class="font-semibold text-gray-700">Mes a consultar</span>
+                        <input type="month" v-model="transitionMonth"
+                            class="rounded border border-gray-300 px-3 py-1.5 focus:border-emerald-700 focus:ring-emerald-700" />
+                    </label>
+                    <button type="button"
+                        class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                        :disabled="transitionLoading"
+                        @click="loadTransitionReport">
+                        <span v-if="transitionLoading">Consultando…</span>
+                        <span v-else>Consultar</span>
+                    </button>
+                    <span v-if="transitionError" class="rounded border border-rose-200 bg-rose-50 px-3 py-1 text-xs text-rose-700">
+                        {{ transitionError }}
+                    </span>
+                </div>
+
+                <div v-if="transitionLoading" class="mt-4 text-sm text-gray-500">Calculando reporte de transición…</div>
+                <div v-else-if="transitionData" class="mt-4 space-y-6">
+                    <div class="grid gap-4 md:grid-cols-3">
+                        <div class="rounded-xl border border-gray-200 bg-white p-4">
+                            <p class="text-xs uppercase tracking-wide text-gray-500">Periodo</p>
+                            <p class="text-sm font-semibold text-gray-900">{{ transitionData.range.from }} — {{ transitionData.range.to }}</p>
+                        </div>
+                        <div class="rounded-xl border border-gray-200 bg-white p-4">
+                            <p class="text-xs uppercase tracking-wide text-gray-500">Ventas registradas</p>
+                            <p class="text-lg font-semibold text-gray-900">
+                                {{ transitionData.sales.total_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                            </p>
+                            <p class="text-xs text-gray-500">Tickets: {{ transitionData.sales.tickets }}</p>
+                        </div>
+                        <div class="rounded-xl border border-gray-200 bg-white p-4">
+                            <p class="text-xs uppercase tracking-wide text-gray-500">Cobrado</p>
+                            <p class="text-lg font-semibold text-gray-900">
+                                {{ transitionData.sales.total_recibido.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                            </p>
+                        </div>
+                    </div>
+
+                    <section class="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                        <header>
+                            <h3 class="text-sm font-semibold text-gray-900">Caja condensado (transición)</h3>
+                            <p class="text-xs text-gray-500">Ventas consolidadas por proveedor.</p>
+                        </header>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                                <thead class="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+                                    <tr>
+                                        <th class="px-3 py-2 text-left">Proveedor</th>
+                                        <th class="px-3 py-2 text-right">Ventas brutas</th>
+                                        <th class="px-3 py-2 text-right">Descuentos</th>
+                                        <th class="px-3 py-2 text-right">Ventas netas</th>
+                                        <th class="px-3 py-2 text-left">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100">
+                                    <tr v-for="row in transitionData.caja_condensado" :key="`${row.provider_ident ?? 'sin'}-${row.provider_name}`">
+                                        <td class="px-3 py-2">
+                                            <p class="font-semibold text-gray-900">{{ row.provider_name }}</p>
+                                            <p class="text-xs text-gray-500">Ident: {{ row.provider_ident ?? '—' }}</p>
+                                            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px]"
+                                                :class="row.legacy ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
+                                                {{ row.legacy ? 'Histórico' : 'Actual' }}
+                                            </span>
+                                        </td>
+                                        <td class="px-3 py-2 text-right">
+                                            {{ row.total_publico.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                        </td>
+                                        <td class="px-3 py-2 text-right">
+                                            {{ row.descuentos.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                        </td>
+                                        <td class="px-3 py-2 text-right">
+                                            {{ row.total_neto.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                        </td>
+                                        <td class="px-3 py-2 text-left text-xs text-gray-500">
+                                            <button v-if="row.provider_ident"
+                                                type="button"
+                                                class="inline-flex items-center rounded-full border border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50"
+                                                @click="openTransitionProviderDetails(row)">
+                                                Ver productos
+                                            </button>
+                                            <span v-else>--</span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                </div>
+                <div v-else class="mt-4 text-sm text-gray-500">Consulta el reporte para ver los datos combinados de noviembre.</div>
+            </div>
         </div>
 
         <teleport to="body">
@@ -626,6 +781,95 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                                 </div>
                             </div>
                             <div v-else class="text-gray-500">No hay productos registrados para este mes.</div>
+                        </div>
+                    </div>
+                </div>
+            </transition>
+            <transition name="fade">
+                <div v-if="transitionProviderModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div class="absolute inset-0 bg-black/40" @click="transitionProviderModalOpen = false"></div>
+                    <div class="relative z-10 w-full max-w-4xl h-[80vh] rounded-2xl bg-white shadow-xl flex flex-col">
+                        <header class="border-b border-gray-200 px-5 py-4 flex items-center justify-between">
+                            <div>
+                                <p class="text-xs uppercase tracking-wide text-gray-500">Detalle transición · Noviembre</p>
+                                <h2 class="text-lg font-semibold text-gray-900">
+                                    {{ transitionProviderTarget?.name ?? 'Proveedor' }} · Ident {{ transitionProviderTarget?.identifier ?? '—' }}
+                                </h2>
+                            </div>
+                            <button class="rounded border border-gray-300 px-3 py-1.5 text-sm" @click="transitionProviderModalOpen = false">Cerrar</button>
+                        </header>
+                        <div class="px-5 py-4 space-y-4 text-sm flex-1 overflow-y-auto">
+                            <div v-if="transitionProviderLoading" class="text-gray-500">Cargando ventas…</div>
+                            <div v-else-if="transitionProviderError" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
+                                {{ transitionProviderError }}
+                            </div>
+                            <div v-else-if="transitionProviderDetails">
+                                <section class="space-y-2">
+                                    <h3 class="text-sm font-semibold text-gray-900">Ventas por producto</h3>
+                                    <div class="overflow-x-auto rounded border border-gray-200">
+                                        <table class="min-w-full divide-y divide-gray-200 text-xs">
+                                            <thead class="bg-gray-50 text-gray-500 uppercase tracking-wide">
+                                                <tr>
+                                                    <th class="px-3 py-2 text-left">Venta</th>
+                                                    <th class="px-3 py-2 text-left">Fecha</th>
+                                                    <th class="px-3 py-2 text-left">Producto</th>
+                                                    <th class="px-3 py-2 text-right">Cantidad</th>
+                                                    <th class="px-3 py-2 text-right">Monto</th>
+                                                    <th class="px-3 py-2 text-right">Descuento</th>
+                                                    <th class="px-3 py-2 text-left">Método</th>
+                                                    <th class="px-3 py-2 text-left">Vendedor</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-gray-100">
+                                                <tr v-for="item in transitionProviderDetails.items" :key="`${item.venta_id}-${item.fecha}`">
+                                                    <td class="px-3 py-2">{{ item.venta_id }}</td>
+                                                    <td class="px-3 py-2">{{ item.fecha ?? '—' }}</td>
+                                                    <td class="px-3 py-2">
+                                                        <p class="font-medium text-gray-800">{{ item.producto_nombre ?? 'Producto sin nombre' }}</p>
+                                                        <p class="text-[11px] text-gray-500">Ident: {{ item.producto_ident ?? '—' }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right">{{ item.cantidad.toLocaleString('es-MX') }}</td>
+                                                    <td class="px-3 py-2 text-right">{{ item.monto.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
+                                                    <td class="px-3 py-2 text-right">{{ item.descuento.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</td>
+                                                    <td class="px-3 py-2 capitalize">{{ item.metodo ?? '—' }}</td>
+                                                    <td class="px-3 py-2">{{ item.vendedor ?? '—' }}</td>
+                                                </tr>
+                                                <tr v-if="transitionProviderDetails.items.length === 0">
+                                                    <td colspan="8" class="px-3 py-4 text-center text-gray-500">Sin líneas asociadas.</td>
+                                                </tr>
+                                            </tbody>
+                                            <tfoot v-if="transitionProviderDetails.items && transitionProviderDetails.items.length" class="bg-gray-50 text-gray-500 uppercase tracking-wide">
+                                                <tr>
+                                                    <td class="px-3 py-2 font-semibold text-right" colspan="3">Totales</td>
+                                                    <td class="px-3 py-2 text-right font-semibold">
+                                                        {{
+                                                            transitionProviderDetails.items
+                                                                .reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0)
+                                                                .toLocaleString('es-MX')
+                                                        }}
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right font-semibold">
+                                                        {{
+                                                            transitionProviderDetails.items
+                                                                .reduce((sum, item) => sum + Number(item.monto || 0), 0)
+                                                                .toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })
+                                                        }}
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right font-semibold">
+                                                        {{
+                                                            transitionProviderDetails.items
+                                                                .reduce((sum, item) => sum + Number(item.descuento || 0), 0)
+                                                                .toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })
+                                                        }}
+                                                    </td>
+                                                    <td colspan="2"></td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    </div>
+                                </section>
+                            </div>
+                            <div v-else class="text-gray-500">Selecciona un proveedor para ver su detalle.</div>
                         </div>
                     </div>
                 </div>

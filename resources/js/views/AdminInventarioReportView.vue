@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
 import {
     getInventarioReport,
+    downloadInventarioReport,
     type InventarioReportResponse,
     type InventarioRow,
     type ProductosPagination,
@@ -10,6 +11,14 @@ import {
 
 type SortDirection = 'asc' | 'desc';
 type InventarioSort = 'producto' | 'existencia' | 'proveedor';
+type InventarioFilters = {
+    q?: string;
+    page: number;
+    per_page: number;
+    sort: InventarioSort;
+    direction: SortDirection;
+    provider_tipo?: 'normal' | 'consigna' | 'porcentaje';
+};
 
 const inventarioItems = ref<InventarioRow[]>([]);
 const inventarioPagination = ref<ProductosPagination | null>(null);
@@ -21,6 +30,16 @@ const inventarioPerPage = ref(50);
 const inventarioSort = ref<InventarioSort>('producto');
 const inventarioDirection = ref<SortDirection>('asc');
 const providerTipoFilter = ref<'all' | 'normal' | 'consigna' | 'porcentaje'>('all');
+const inventarioDownloadLoading = ref(false);
+let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+const lastAppliedFilters = ref<InventarioFilters>({
+    q: undefined,
+    page: 1,
+    per_page: 50,
+    sort: 'producto',
+    direction: 'asc',
+    provider_tipo: undefined,
+});
 
 const tableClasses = {
     wrapper: 'overflow-x-auto rounded-xl border border-gray-200 shadow-sm',
@@ -62,15 +81,16 @@ function formatCurrency(value: number | string | null | undefined): string {
 async function loadInventario() {
     inventarioLoading.value = true;
     inventarioError.value = '';
+    const filters: InventarioFilters = {
+        q: inventarioSearch.value.trim() || undefined,
+        page: inventarioPage.value,
+        per_page: inventarioPerPage.value,
+        sort: inventarioSort.value,
+        direction: inventarioDirection.value,
+        provider_tipo: providerTipoFilter.value !== 'all' ? providerTipoFilter.value : undefined,
+    };
     try {
-        const response: InventarioReportResponse = await getInventarioReport({
-            q: inventarioSearch.value.trim() || undefined,
-            page: inventarioPage.value,
-            per_page: inventarioPerPage.value,
-            sort: inventarioSort.value,
-            direction: inventarioDirection.value,
-            provider_tipo: providerTipoFilter.value !== 'all' ? providerTipoFilter.value : undefined,
-        });
+        const response: InventarioReportResponse = await getInventarioReport(filters);
         inventarioItems.value = response.data;
         inventarioPagination.value = response.pagination;
         if (response.totals) {
@@ -83,6 +103,7 @@ async function loadInventario() {
         } else {
             inventarioTotals.value = computeLocalTotals(inventarioItems.value);
         }
+        lastAppliedFilters.value = filters;
     } catch (err: any) {
         inventarioError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el inventario.';
     } finally {
@@ -148,6 +169,16 @@ watch(providerTipoFilter, () => {
     loadInventario();
 });
 
+watch(inventarioSearch, () => {
+    if (searchDebounce) {
+        clearTimeout(searchDebounce);
+    }
+    searchDebounce = setTimeout(() => {
+        inventarioPage.value = 1;
+        loadInventario();
+    }, 300);
+});
+
 onMounted(() => {
     loadInventario();
 });
@@ -177,6 +208,39 @@ function computeLocalTotals(items: InventarioRow[]) {
     summary.valor_publico = Math.round(summary.valor_publico * 100) / 100;
     summary.valor_proveedor = Math.round(summary.valor_proveedor * 100) / 100;
     return summary;
+}
+
+async function downloadInventarioCsv() {
+    if (inventarioDownloadLoading.value) return;
+    inventarioDownloadLoading.value = true;
+    try {
+        const filters = lastAppliedFilters.value;
+        const blob = await downloadInventarioReport({
+            q: filters.q,
+            sort: filters.sort,
+            direction: filters.direction,
+            provider_tipo: filters.provider_tipo,
+        });
+        const url = URL.createObjectURL(blob);
+        const now = new Date();
+        const pad = (num: number) => String(num).padStart(2, '0');
+        const filename = `reporte-inventario-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
+            now.getDate(),
+        )}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.csv`;
+
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    } catch (err: any) {
+        const message = err?.response?.data?.message || err?.message || 'No se pudo descargar el reporte.';
+        window.alert(message);
+    } finally {
+        inventarioDownloadLoading.value = false;
+    }
 }
 </script>
 
@@ -228,6 +292,16 @@ function computeLocalTotals(items: InventarioRow[]) {
                             <option value="porcentaje">Por porcentaje</option>
                         </select>
                     </label>
+                    <div class="ml-auto">
+                        <button
+                            type="button"
+                            class="rounded border border-gray-900 px-3 py-1.5 text-xs font-semibold text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            :disabled="inventarioDownloadLoading"
+                            @click="downloadInventarioCsv"
+                        >
+                            {{ inventarioDownloadLoading ? 'Generando…' : 'Descargar CSV' }}
+                        </button>
+                    </div>
                 </div>
 
                 <div v-if="inventarioError" class="mt-4 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
