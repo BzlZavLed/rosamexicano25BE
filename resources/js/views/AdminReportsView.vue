@@ -29,7 +29,6 @@ import {
     type RestockForecastItem,
     type RestockHorizon,
     type CancelacionesReportResponse,
-    type CancelacionReportItem,
 } from '../api/reports';
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -914,7 +913,7 @@ function downloadCancelacionesPdf() {
             const align = columns[idx]?.align ?? 'left';
             const startX = (columnPositions[idx] ?? 0) + 6;
             let textY = currentY + 12;
-            chunk.forEach((line) => {
+            chunk.forEach((line: string) => {
                 if (align === 'right') {
                     if (columns[idx] !== undefined && columnPositions[idx] !== undefined) {
                         doc.text(line, columnPositions[idx] + columns[idx].width - 6, textY, { align: 'right' });
