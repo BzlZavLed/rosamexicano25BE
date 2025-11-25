@@ -67,6 +67,13 @@ const transitionProviderDetails = ref<TransitionProviderDetailsResponse | null>(
 const transitionProviderTarget = ref<{ identifier: string | null; name: string } | null>(null)
 const transitionProviderLoading = ref(false)
 const transitionProviderError = ref('')
+type PdfColumn = {
+    key: string
+    title: string
+    width: number
+    align?: 'left' | 'right'
+}
+
 const transitionCsvLoading = ref(false)
 const transitionPdfLoading = ref(false)
 const transitionProviderCsvLoading = ref(false)
@@ -378,16 +385,16 @@ function downloadTransitionCondensedPdf() {
         const lineHeight = 12
         const pageWidth = doc.internal.pageSize.getWidth()
         const pageHeight = doc.internal.pageSize.getHeight()
-        const columns = [
+        const condensedColumns: PdfColumn[] = [
             { key: 'proveedor', title: 'Proveedor', width: 220 },
             { key: 'ventas_brutas', title: 'Ventas brutas', width: 120, align: 'right' },
             { key: 'descuentos', title: 'Descuentos', width: 120, align: 'right' },
             { key: 'ventas_netas', title: 'Ventas netas', width: 120, align: 'right' },
             { key: 'origen', title: 'Origen', width: 90 },
-        ] as const
+]
         const columnPositions: number[] = []
         let offset = marginX
-        columns.forEach((col) => {
+        condensedColumns.forEach((col) => {
             columnPositions.push(offset)
             offset += col.width
         })
@@ -408,11 +415,13 @@ function downloadTransitionCondensedPdf() {
         const drawTableHeader = () => {
             doc.setFontSize(9)
             doc.setFillColor(243, 244, 246)
-            const totalWidth = columns.reduce((sum, col) => sum + col.width, 0)
+            const totalWidth = condensedColumns.reduce((sum, col) => sum + col.width, 0)
             doc.rect(marginX, currentY, totalWidth, 20, 'F')
-            columns.forEach((col, idx) => {
-                const x = col.align === 'right' ? columnPositions[idx] + col.width - 6 : columnPositions[idx] + 6
-                doc.text(col.title, x, currentY + 13, { align: col.align ?? 'left' })
+            condensedColumns.forEach((col, idx) => {
+                const start = columnPositions[idx] ?? marginX
+                const width = col?.width ?? 0
+                const x = (col?.align ?? 'left') === 'right' ? start + width - 6 : start + 6
+                doc.text(col.title, x, currentY + 13, { align: col?.align ?? 'left' })
             })
             currentY += tablePadding
         }
@@ -445,7 +454,7 @@ function downloadTransitionCondensedPdf() {
                 origen,
             ]
             const linesPerColumn = cellData.map((value, idx) => {
-                const width = Math.max(columns[idx].width - 10, 20)
+                const width = Math.max((condensedColumns[idx]?.width ?? 20) - 10, 20)
                 return doc.splitTextToSize(value, width)
             })
             const maxLines = Math.max(...linesPerColumn.map((lines) => lines.length || 1))
@@ -453,12 +462,15 @@ function downloadTransitionCondensedPdf() {
             ensureSpace(rowHeight)
 
             linesPerColumn.forEach((lines, idx) => {
-                const col = columns[idx]
-                const startX = columnPositions[idx] + 6
+                const col = condensedColumns[idx]
+                const start = columnPositions[idx] ?? marginX
+                const width = col?.width ?? 0
+                const align = col?.align ?? 'left'
+                const startX = start + 6
                 let textY = currentY + 12
-                lines.forEach((line) => {
-                    if (col.align === 'right') {
-                        doc.text(line, columnPositions[idx] + col.width - 6, textY, { align: 'right' })
+                lines.forEach((line: string) => {
+                    if (align === 'right') {
+                        doc.text(line, start + width - 6, textY, { align: 'right' })
                     } else {
                         doc.text(line, startX, textY)
                     }
@@ -522,19 +534,19 @@ function downloadTransitionProviderPdf() {
         const lineHeight = 12
         const pageWidth = doc.internal.pageSize.getWidth()
         const pageHeight = doc.internal.pageSize.getHeight()
-        const columns = [
+        const providerColumns: PdfColumn[] = [
             { key: 'venta', title: 'Venta', width: 70 },
             { key: 'fecha', title: 'Fecha', width: 80 },
             { key: 'producto', title: 'Producto', width: 220 },
-            { key: 'cantidad', title: 'Cantidad', width: 70, align: 'right' },
-            { key: 'monto', title: 'Monto', width: 90, align: 'right' },
-            { key: 'descuento', title: 'Descuento', width: 90, align: 'right' },
-            { key: 'metodo', title: 'Método', width: 80 },
-            { key: 'vendedor', title: 'Vendedor', width: 100 },
-        ] as const
+    { key: 'cantidad', title: 'Cantidad', width: 70, align: 'right' },
+    { key: 'monto', title: 'Monto', width: 90, align: 'right' },
+    { key: 'descuento', title: 'Descuento', width: 90, align: 'right' },
+    { key: 'metodo', title: 'Método', width: 80 },
+    { key: 'vendedor', title: 'Vendedor', width: 100 },
+]
         const columnPositions: number[] = []
         let offset = marginX
-        columns.forEach((col) => {
+        providerColumns.forEach((col) => {
             columnPositions.push(offset)
             offset += col.width
         })
@@ -555,11 +567,13 @@ function downloadTransitionProviderPdf() {
         const drawTableHeader = () => {
             doc.setFontSize(9)
             doc.setFillColor(243, 244, 246)
-            const totalWidth = columns.reduce((sum, col) => sum + col.width, 0)
+            const totalWidth = providerColumns.reduce((sum, col) => sum + col.width, 0)
             doc.rect(marginX, currentY, totalWidth, 20, 'F')
-            columns.forEach((col, idx) => {
-                const x = col.align === 'right' ? columnPositions[idx] + col.width - 6 : columnPositions[idx] + 6
-                doc.text(col.title, x, currentY + 13, { align: col.align ?? 'left' })
+            providerColumns.forEach((col, idx) => {
+                const start = columnPositions[idx] ?? marginX
+                const width = col?.width ?? 0
+                const x = (col?.align ?? 'left') === 'right' ? start + width - 6 : start + 6
+                doc.text(col.title, x, currentY + 13, { align: col?.align ?? 'left' })
             })
             currentY += tablePadding
         }
@@ -590,7 +604,7 @@ function downloadTransitionProviderPdf() {
                 item.vendedor ?? '—',
             ]
             const linesPerColumn = cellData.map((value, idx) => {
-                const width = Math.max(columns[idx].width - 10, 20)
+                const width = Math.max((providerColumns[idx]?.width ?? 20) - 10, 20)
                 return doc.splitTextToSize(value, width)
             })
             const maxLines = Math.max(...linesPerColumn.map((lines) => lines.length || 1))
@@ -598,12 +612,15 @@ function downloadTransitionProviderPdf() {
             ensureSpace(rowHeight)
 
             linesPerColumn.forEach((lines, idx) => {
-                const col = columns[idx]
-                const startX = columnPositions[idx] + 6
+                const col = providerColumns[idx]
+                const start = columnPositions[idx] ?? marginX
+                const width = col?.width ?? 0
+                const align = col?.align ?? 'left'
+                const startX = start + 6
                 let textY = currentY + 12
-                lines.forEach((line) => {
-                    if (col.align === 'right') {
-                        doc.text(line, columnPositions[idx] + col.width - 6, textY, { align: 'right' })
+                lines.forEach((line: string) => {
+                    if (align === 'right') {
+                        doc.text(line, start + width - 6, textY, { align: 'right' })
                     } else {
                         doc.text(line, startX, textY)
                     }
@@ -1010,8 +1027,8 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                             </header>
                             <div v-if="transitionMethodsVisible" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                                 <div
-                                    v-for="method in transitionData.caja"
-                                    :key="method.metodo"
+                                    v-for="(method, idx) in transitionData.caja"
+                                    :key="method.metodo ?? `metodo-${idx}`"
                                     class="rounded-lg border border-gray-100 bg-white p-3 text-sm">
                                     <p class="text-xs uppercase text-gray-500">{{ method.metodo || 'Sin método' }}</p>
                                     <p class="text-base font-semibold text-gray-900">
