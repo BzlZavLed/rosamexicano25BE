@@ -789,10 +789,10 @@ function downloadCancelacionesCsv() {
         ],
     ];
     cancelacionesData.value.items.forEach((item) => {
-        const productos = item.line_items
-            .map((line) => `${line.producto_nombre ?? 'Producto'} (${line.cantidad ?? 0})`)
-            .join('; ');
-        lines.push([
+            const productos = item.line_items
+                .map((line) => `${line.producto_nombre ?? 'Producto'} (${line.cantidad ?? 0})`)
+                .join('; ');
+            lines.push([
             formatDateTime(item.cancelled_at),
             formatDateTime(item.sale_date, item.sale_time),
             String(item.idventa ?? item.venta_id ?? ''),
@@ -2966,8 +2966,14 @@ watch(
                                                                         <p class="text-[11px] text-gray-500">Ident: {{ line.producto_ident ?? '—' }}</p>
                                                                     </div>
                                                                     <div class="text-right">
-                                                                        <p>Cant. {{ line.cantidad ?? '—' }}</p>
-                                                                        <p>Total {{ line.venta_total !== null ? formatCurrency(line.venta_total) : '—' }}</p>
+                                                                        <p>
+                                                                            Cant.
+                                                                            {{ line.cantidad ?? '—' }}
+                                                                        </p>
+                                                                        <p>
+                                                                            Total
+                                                                            {{ line.line_total !== null ? formatCurrency(line.line_total) : '—' }}
+                                                                        </p>
                                                                     </div>
                                                                 </div>
                                                             </div>

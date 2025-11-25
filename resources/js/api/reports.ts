@@ -633,7 +633,8 @@ export type CancelacionReportItem = {
         producto_nombre: string | null;
         producto_ident: string | number | null;
         cantidad: number | null;
-        venta_total: number | null;
+        unit_price: number | null;
+        line_total: number | null;
     }>;
 };
 

@@ -1552,11 +1552,27 @@ class ReportController extends Controller
                 'vendedor' => $ventaPayload['vendedor'] ?? null,
                 'total' => isset($ventaPayload['totalventa']) ? (float) $ventaPayload['totalventa'] : null,
                 'line_items' => array_map(function ($line) {
+                    $qty = isset($line['quantity']) ? (float) $line['quantity'] : (isset($line['cantidad']) ? (float) $line['cantidad'] : 0);
+                    $unitPrice = null;
+                    if (isset($line['unit_price'])) {
+                        $unitPrice = (float) $line['unit_price'];
+                    } elseif ($qty > 0 && isset($line['public_total'])) {
+                        $unitPrice = round(((float) $line['public_total']) / $qty, 2);
+                    }
+                    $lineTotal = isset($line['venta_total']) ? (float) $line['venta_total'] : null;
+                    if ($lineTotal === null || $lineTotal == 0) {
+                        if (isset($line['public_total'])) {
+                            $lineTotal = (float) $line['public_total'];
+                        } elseif ($unitPrice !== null) {
+                            $lineTotal = $unitPrice * $qty;
+                        }
+                    }
                     return [
                         'producto_nombre' => $line['nombre'] ?? null,
                         'producto_ident' => $line['producto_id'] ?? null,
-                        'cantidad' => isset($line['quantity']) ? (float) $line['quantity'] : null,
-                        'venta_total' => isset($line['venta_total']) ? (float) $line['venta_total'] : null,
+                        'cantidad' => $qty,
+                        'unit_price' => $unitPrice,
+                        'line_total' => $lineTotal,
                     ];
                 }, $lineasPayload),
             ];
