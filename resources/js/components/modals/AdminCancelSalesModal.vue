@@ -199,6 +199,7 @@ async function handleCancel(sale: DaySale) {
                                                         <div class="text-right">
                                                             <p>Cant. {{ line.cantidad }}</p>
                                                             <p>Total {{ line.public_total.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</p>
+                                                            <p>P Uni {{ line.unit_price.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</p>
                                                         </div>
                                                     </div>
                                                 </div>
