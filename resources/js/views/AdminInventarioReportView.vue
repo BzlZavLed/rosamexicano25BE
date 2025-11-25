@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { jsPDF } from 'jspdf';
 import AppLayout from '../components/layout/AppLayout.vue';
 import {
     getInventarioReport,
@@ -31,6 +32,7 @@ const inventarioSort = ref<InventarioSort>('producto');
 const inventarioDirection = ref<SortDirection>('asc');
 const providerTipoFilter = ref<'all' | 'normal' | 'consigna' | 'porcentaje'>('all');
 const inventarioDownloadLoading = ref(false);
+const inventarioPdfLoading = ref(false);
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 const lastAppliedFilters = ref<InventarioFilters>({
     q: undefined,
@@ -103,7 +105,7 @@ async function loadInventario() {
         } else {
             inventarioTotals.value = computeLocalTotals(inventarioItems.value);
         }
-        lastAppliedFilters.value = filters;
+        lastAppliedFilters.value = { ...filters };
     } catch (err: any) {
         inventarioError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el inventario.';
     } finally {
@@ -179,6 +181,12 @@ watch(inventarioSearch, () => {
     }, 300);
 });
 
+onBeforeUnmount(() => {
+    if (searchDebounce) {
+        clearTimeout(searchDebounce);
+    }
+});
+
 onMounted(() => {
     loadInventario();
 });
@@ -242,6 +250,224 @@ async function downloadInventarioCsv() {
         inventarioDownloadLoading.value = false;
     }
 }
+
+async function downloadInventarioPdf() {
+    if (inventarioPdfLoading.value) return;
+    inventarioPdfLoading.value = true;
+    try {
+        const filters = lastAppliedFilters.value;
+        const items = await fetchAllInventarioItems(filters);
+        const doc = buildInventarioPdf(items, filters);
+        const now = new Date();
+        const pad = (num: number) => String(num).padStart(2, '0');
+        const filename = `reporte-inventario-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
+            now.getDate(),
+        )}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.pdf`;
+        doc.save(filename);
+    } catch (err: any) {
+        const message = err?.response?.data?.message || err?.message || 'No se pudo generar el PDF.';
+        window.alert(message);
+    } finally {
+        inventarioPdfLoading.value = false;
+    }
+}
+
+async function fetchAllInventarioItems(filters: InventarioFilters) {
+    const perPage = 200;
+    let currentPage = 1;
+    const aggregated: InventarioRow[] = [];
+
+    while (true) {
+        const response = await getInventarioReport({
+            q: filters.q,
+            page: currentPage,
+            per_page: perPage,
+            sort: filters.sort,
+            direction: filters.direction,
+            provider_tipo: filters.provider_tipo,
+        });
+
+        aggregated.push(...response.data);
+
+        const pagination = response.pagination;
+        if (!pagination || pagination.current_page >= pagination.last_page || !pagination.next_page_url) {
+            break;
+        }
+        currentPage += 1;
+    }
+
+    return aggregated;
+}
+
+type InventarioPdfColumnKey =
+    | 'producto_ident'
+    | 'producto_nombre'
+    | 'proveedor_nombre'
+    | 'proveedor_tipo'
+    | 'existencia'
+    | 'precio'
+    | 'precio_proveedor'
+    | 'costo_inventario';
+
+type InventarioPdfColumn = {
+    key: InventarioPdfColumnKey;
+    title: string;
+    width: number;
+    align?: 'left' | 'right';
+};
+
+const inventarioPdfColumns: InventarioPdfColumn[] = [
+    { key: 'producto_ident', title: 'Ident', width: 90 },
+    { key: 'producto_nombre', title: 'Producto', width: 170 },
+    { key: 'proveedor_nombre', title: 'Proveedor', width: 160 },
+    { key: 'proveedor_tipo', title: 'Tipo', width: 70 },
+    { key: 'existencia', title: 'Existencia', width: 70, align: 'right' },
+    { key: 'precio', title: 'Precio público', width: 100, align: 'right' },
+    { key: 'precio_proveedor', title: 'Precio proveedor', width: 110, align: 'right' },
+    { key: 'costo_inventario', title: 'Valor inventario', width: 110, align: 'right' },
+];
+
+function buildInventarioPdf(items: InventarioRow[], filters: InventarioFilters) {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+    const marginX = 36;
+    const marginY = 36;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const headerHeight = 70;
+    const lineHeight = 12;
+    const tablePadding = 20;
+
+    const columnPositions: number[] = [];
+    let offset = marginX;
+    inventarioPdfColumns.forEach((col) => {
+        columnPositions.push(offset);
+        offset += col.width;
+    });
+
+    const totals = inventarioTotals.value;
+    const totalsSummary = [
+        `Productos: ${totals.total_productos ?? '--'}`,
+        `Existencia: ${totals.total_existencia ?? '--'}`,
+        `Valor público: ${formatCurrency(totals.valor_publico ?? 0)}`,
+        `Valor proveedor: ${formatCurrency(totals.valor_proveedor ?? 0)}`,
+    ].join(' · ');
+
+    let currentY = marginY;
+    let pageNumber = 1;
+
+    const drawPageHeader = () => {
+        doc.setFontSize(16);
+        doc.text('Reporte de inventario', marginX, currentY);
+        doc.setFontSize(10);
+        doc.text(`Generado: ${new Date().toLocaleString('es-MX')}`, marginX, currentY + 14);
+        doc.text(buildFilterSummary(filters), marginX, currentY + 28);
+        doc.text(totalsSummary, marginX, currentY + 42);
+        doc.text(`Página ${pageNumber}`, pageWidth - marginX, currentY + 42, { align: 'right' });
+        currentY += headerHeight;
+    };
+
+    const drawTableHeader = () => {
+        doc.setFillColor(243, 244, 246);
+        const totalWidth = inventarioPdfColumns.reduce((sum, col) => sum + col.width, 0);
+        doc.rect(marginX, currentY, totalWidth, 20, 'F');
+        doc.setFontSize(9);
+        inventarioPdfColumns.forEach((col, idx) => {
+            const textX = col.align === 'right' ? columnPositions[idx] + col.width - 6 : columnPositions[idx] + 6;
+            doc.text(col.title, textX, currentY + 13, { align: col.align ?? 'left' });
+        });
+        currentY += tablePadding;
+    };
+
+    const ensureSpace = (rowHeight: number) => {
+        if (currentY + rowHeight > pageHeight - marginY) {
+            doc.addPage();
+            pageNumber += 1;
+            currentY = marginY;
+            drawPageHeader();
+            drawTableHeader();
+        }
+    };
+
+    drawPageHeader();
+    drawTableHeader();
+
+    if (items.length === 0) {
+        doc.text('Sin registros para los filtros seleccionados.', marginX, currentY + 12);
+        return doc;
+    }
+
+    doc.setFontSize(9);
+
+    items.forEach((item) => {
+        const linesPerColumn = inventarioPdfColumns.map((col) => {
+            const value = getPdfCellValue(item, col.key);
+            const width = Math.max(col.width - 10, 20);
+            return doc.splitTextToSize(value, width);
+        });
+        const maxLines = Math.max(...linesPerColumn.map((lines) => lines.length || 1));
+        const rowHeight = maxLines * lineHeight + 6;
+        ensureSpace(rowHeight);
+
+        linesPerColumn.forEach((lines, idx) => {
+            const col = inventarioPdfColumns[idx];
+            const startX = columnPositions[idx] + 6;
+            let textY = currentY + 12;
+            lines.forEach((line) => {
+                if (col.align === 'right') {
+                    doc.text(line, columnPositions[idx] + col.width - 6, textY, { align: 'right' });
+                } else {
+                    doc.text(line, startX, textY);
+                }
+                textY += lineHeight;
+            });
+        });
+
+        currentY += rowHeight;
+    });
+
+    return doc;
+}
+
+function getPdfCellValue(item: InventarioRow, key: InventarioPdfColumnKey) {
+    switch (key) {
+        case 'producto_ident':
+            return item.producto_ident ?? '';
+        case 'producto_nombre':
+            return item.producto_nombre ?? '';
+        case 'proveedor_nombre':
+            if (!item.proveedor) return '—';
+            const ident = item.proveedor.ident ? `Ident: ${item.proveedor.ident}` : '';
+            return [item.proveedor.nombre ?? '', ident].filter(Boolean).join('\n');
+        case 'proveedor_tipo':
+            return getProviderTypeLabel(item.proveedor?.tipo ?? null);
+        case 'existencia':
+            return (item.existencia ?? 0).toLocaleString('es-MX');
+        case 'precio':
+            return item.precio !== null && item.precio !== undefined ? formatCurrency(item.precio) : '—';
+        case 'precio_proveedor':
+            return item.precio_proveedor !== null && item.precio_proveedor !== undefined
+                ? formatCurrency(item.precio_proveedor)
+                : '—';
+        case 'costo_inventario':
+            return item.costo_inventario !== null && item.costo_inventario !== undefined
+                ? formatCurrency(item.costo_inventario)
+                : '—';
+        default:
+            return '';
+    }
+}
+
+function buildFilterSummary(filters: InventarioFilters) {
+    const parts: string[] = [];
+    if (filters.q) {
+        parts.push(`Búsqueda: "${filters.q}"`);
+    }
+    if (filters.provider_tipo) {
+        parts.push(`Tipo: ${getProviderTypeLabel(filters.provider_tipo)}`);
+    }
+    parts.push(`Orden: ${filters.sort} (${filters.direction.toUpperCase()})`);
+    return parts.join(' · ');
+}
 </script>
 
 <template>
@@ -292,14 +518,22 @@ async function downloadInventarioCsv() {
                             <option value="porcentaje">Por porcentaje</option>
                         </select>
                     </label>
-                    <div class="ml-auto">
+                    <div class="ml-auto flex flex-wrap items-center gap-2">
                         <button
                             type="button"
                             class="rounded border border-gray-900 px-3 py-1.5 text-xs font-semibold text-gray-900 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                             :disabled="inventarioDownloadLoading"
                             @click="downloadInventarioCsv"
                         >
-                            {{ inventarioDownloadLoading ? 'Generando…' : 'Descargar CSV' }}
+                            {{ inventarioDownloadLoading ? 'Generando CSV…' : 'Descargar CSV' }}
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                            :disabled="inventarioPdfLoading"
+                            @click="downloadInventarioPdf"
+                        >
+                            {{ inventarioPdfLoading ? 'Generando PDF…' : 'Descargar PDF' }}
                         </button>
                     </div>
                 </div>
