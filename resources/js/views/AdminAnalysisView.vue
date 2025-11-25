@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from 'vue'
 import AppLayout from '../components/layout/AppLayout.vue'
-import type { AnalysisSummary, TopSellersResponse, MonthDetailsResponse, RecommendedImporteItem, RecommendedImporteResponse, TopProductsChartResponse, TransitionReportResponse } from '../api/analysis'
+import type {
+    AnalysisSummary,
+    TopSellersResponse,
+    MonthDetailsResponse,
+    RecommendedImporteItem,
+    RecommendedImporteResponse,
+    TopProductsChartResponse,
+    TransitionReportResponse,
+    TransitionProviderDetailsResponse,
+} from '../api/analysis'
 import {
     getAnalysisSummary,
     importAnalysisFile,
@@ -13,6 +22,8 @@ import {
     getTransitionReport,
     getTransitionProviderDetails,
 } from '../api/analysis'
+
+type TransitionProviderItem = TransitionProviderDetailsResponse['items'][number]
 
 const summary = ref<AnalysisSummary | null>(null)
 const loading = ref(false)
@@ -844,21 +855,21 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                                                     <td class="px-3 py-2 text-right font-semibold">
                                                         {{
                                                             transitionProviderDetails.items
-                                                                .reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0)
+                                                                .reduce((sum: number, item: TransitionProviderItem) => sum + (Number(item.cantidad) || 0), 0)
                                                                 .toLocaleString('es-MX')
                                                         }}
                                                     </td>
                                                     <td class="px-3 py-2 text-right font-semibold">
                                                         {{
                                                             transitionProviderDetails.items
-                                                                .reduce((sum, item) => sum + Number(item.monto || 0), 0)
+                                                                .reduce((sum: number, item: TransitionProviderItem) => sum + Number(item.monto || 0), 0)
                                                                 .toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })
                                                         }}
                                                     </td>
                                                     <td class="px-3 py-2 text-right font-semibold">
                                                         {{
                                                             transitionProviderDetails.items
-                                                                .reduce((sum, item) => sum + Number(item.descuento || 0), 0)
+                                                                .reduce((sum: number, item: TransitionProviderItem) => sum + Number(item.descuento || 0), 0)
                                                                 .toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })
                                                         }}
                                                     </td>
