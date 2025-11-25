@@ -29,6 +29,7 @@ export async function listSalesByDate(payload: { date: string; admin_password: s
         '/admin/sales/list',
         payload
     );
+    console.log(data);
     return data;
 }
 

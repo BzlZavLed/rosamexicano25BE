@@ -198,7 +198,7 @@ async function handleCancel(sale: DaySale) {
                                                         </div>
                                                         <div class="text-right">
                                                             <p>Cant. {{ line.cantidad }}</p>
-                                                            <p>Total {{ line.venta_total.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</p>
+                                                            <p>Total {{ line.public_total.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}</p>
                                                         </div>
                                                     </div>
                                                 </div>
