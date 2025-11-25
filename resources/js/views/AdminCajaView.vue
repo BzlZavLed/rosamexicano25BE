@@ -187,7 +187,7 @@ function clampManualDiscount(row: CartRow) {
     const manual = Math.max(0, Math.min(Number(row.manualDiscount ?? 0) || 0, maxDiscount));
     row.manualDiscount = Math.round(manual * 100) / 100;
     const percent = computeManualPercent(row);
-    row.manualDiscountPercent = percent > 0 ? percent : null;
+    row.manualDiscountPercent = percent > 0 ? percent : undefined;
     return row.manualDiscount;
 }
 
@@ -195,7 +195,7 @@ const lineManualDiscount = (row: CartRow) => Math.max(0, Number(row.manualDiscou
 
 function applyManualDiscountPercent(row: CartRow, percent: number) {
     if (!Number.isFinite(percent) || percent <= 0) {
-        row.manualDiscountPercent = null;
+        row.manualDiscountPercent = undefined;
         row.manualDiscount = 0;
         onManualDiscountChange(row);
         return;
@@ -204,7 +204,7 @@ function applyManualDiscountPercent(row: CartRow, percent: number) {
     row.manualDiscountPercent = safePercent;
     const base = lineGross(row);
     if (base <= 0) {
-        row.manualDiscountPercent = null;
+        row.manualDiscountPercent = undefined;
         row.manualDiscount = 0;
         onManualDiscountChange(row);
         return;
@@ -216,7 +216,7 @@ function applyManualDiscountPercent(row: CartRow, percent: number) {
 function onManualPercentInput(row: CartRow) {
     const percent = Number(row.manualDiscountPercent ?? 0);
     if (!Number.isFinite(percent) || percent <= 0) {
-        row.manualDiscountPercent = null;
+        row.manualDiscountPercent = undefined;
         row.manualDiscount = 0;
         onManualDiscountChange(row);
         return;
@@ -962,7 +962,7 @@ async function addToCart(producto: Producto) {
         proveedorPct,
         precioProveedor,
         manualDiscount: 0,
-        manualDiscountPercent: null,
+        manualDiscountPercent: undefined,
     };
 
     await applyPromotionsToRow(newRow, proveedorIdent);
