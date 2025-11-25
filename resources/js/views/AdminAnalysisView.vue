@@ -729,7 +729,7 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                         class="px-3 py-2 text-sm font-semibold"
                         :class="activeTab === 'transition' ? 'text-emerald-700 border-b-2 border-emerald-600' : 'text-gray-500'"
                         @click="activeTab = 'transition'">
-                        Reporte transición (Nov)
+                        Reporte transición
                     </button>
                 </div>
             </div>
