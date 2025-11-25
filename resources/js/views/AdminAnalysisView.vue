@@ -1065,7 +1065,16 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                                 <tbody class="divide-y divide-gray-100">
                                     <tr v-for="row in transitionData.caja_condensado" :key="`${row.provider_ident ?? 'sin'}-${row.provider_name}`">
                                         <td class="px-3 py-2">
-                                            <p class="font-semibold text-gray-900">{{ row.provider_name }}</p>
+                                            <div class="flex items-center gap-2">
+                                                <p class="font-semibold text-gray-900">{{ row.provider_name }}</p>
+                                                <span
+                                                    v-if="row.total_publico < 0 || row.descuentos < 0 || row.total_neto < 0"
+                                                    class="text-xs text-red-600"
+                                                    title="Esta fila contiene valores negativos en el condensado."
+                                                >
+                                                    &#9888;
+                                                </span>
+                                            </div>
                                             <p class="text-xs text-gray-500">Ident: {{ row.provider_ident ?? '—' }}</p>
                                             <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px]"
                                                 :class="row.legacy ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
