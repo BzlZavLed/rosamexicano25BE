@@ -389,7 +389,7 @@ class AnalysisController extends Controller
     public function transitionProviderDetails(Request $request)
     {
         $this->ensureAdmin($request);
-
+        Log::info($request->all());
         $monthInput = $request->input('month', '2025-11');
         $providerIdent = (string) $request->input('provider_ident', '');
 
@@ -405,16 +405,27 @@ class AnalysisController extends Controller
 
         $end = (clone $start)->endOfMonth();
 
-        $ventas = $this->collectUnifiedVentas($start, $end);
-        $lineItems = $this->collectUnifiedVentadesg($start, $end);
-        
+        $lineItems = $this->collectUnifiedVentadesg($start, $end, $providerIdent);
+        if ($lineItems->isEmpty()) {
+            return response()->json([
+                'items' => [],
+            ]);
+        }
 
-        $providerRows = $lineItems->filter(function ($item) use ($providerIdent) {
-            return (string) ($item['provider_ident'] ?? '') === $providerIdent;
-        });
+        $ventaIds = $lineItems
+            ->pluck('venta_id')
+            ->filter(fn($id) => $id !== null && $id !== '')
+            ->unique()
+            ->values()
+            ->all();
+
+        $ventas = empty($ventaIds)
+            ? collect()
+            : $this->collectUnifiedVentas($start, $end, $ventaIds);
+
         $ventasLookup = $ventas->keyBy('venta_id');
 
-        $lineItemsList = $providerRows->map(function ($row) use ($ventasLookup) {
+        $lineItemsList = $lineItems->map(function ($row) use ($ventasLookup) {
             $venta = $ventasLookup->get($row['venta_id']);
             $discount = max(((float) ($row['public_total'] ?? 0)) - ((float) ($row['venta_total'] ?? 0)), 0);
             return [
@@ -436,10 +447,17 @@ class AnalysisController extends Controller
         ]);
     }
 
-    protected function collectUnifiedVentas(Carbon $start, Carbon $end)
+    protected function collectUnifiedVentas(Carbon $start, Carbon $end, ?array $ventaIds = null)
     {
         $startDate = $start->toDateString();
         $endDate = $end->toDateString();
+        $idsFilter = null;
+        if (is_array($ventaIds)) {
+            $idsFilter = array_values(array_filter($ventaIds, fn($value) => $value !== null && $value !== ''));
+            if (empty($idsFilter)) {
+                return collect();
+            }
+        }
 
         $current = DB::table('ventas')
             ->select([
@@ -452,7 +470,13 @@ class AnalysisController extends Controller
                 'cambio',
                 'vendedor',
             ])
-            ->whereBetween('fecha', [$startDate, $endDate])
+            ->whereBetween('fecha', [$startDate, $endDate]);
+
+        if ($idsFilter !== null) {
+            $current->whereIn('idventa', $idsFilter);
+        }
+
+        $current = $current
             ->get()
             ->map(function ($row) {
                 return [
@@ -468,7 +492,7 @@ class AnalysisController extends Controller
                 ];
             });
 
-        $legacy = DB::table('historic_ventas')
+        $legacyQuery = DB::table('historic_ventas')
             ->select([
                 'legacy_idventa as venta_id',
                 'fecha',
@@ -479,8 +503,15 @@ class AnalysisController extends Controller
                 'cambio',
                 'vendedor',
             ])
-            ->whereBetween('fecha', [$startDate, $endDate])
-            ->get()
+            ->whereBetween('fecha', [$startDate, $endDate]);
+
+        if ($idsFilter !== null) {
+            $legacyQuery->whereIn('legacy_idventa', $idsFilter);
+        }
+
+        $legacyRaw = $legacyQuery->get();
+
+        $legacy = $legacyRaw
             ->map(function ($row) {
                 return [
                     'venta_id' => $row->venta_id,
@@ -495,18 +526,37 @@ class AnalysisController extends Controller
                 ];
             });
 
+        if ($idsFilter !== null) {
+            return $current->concat($legacy);
+        }
+
         return $current->concat($legacy);
     }
 
-    protected function collectUnifiedVentadesg(Carbon $start, Carbon $end)
+    protected function collectUnifiedVentadesg(Carbon $start, Carbon $end, ?string $providerIdentFilter = null)
     {
         $startDate = $start->toDateString();
         $endDate = $end->toDateString();
+        $providerIdentFilter = $providerIdentFilter !== null ? trim($providerIdentFilter) : null;
+        if ($providerIdentFilter === '') {
+            $providerIdentFilter = null;
+        }
 
         $providers = DB::table('proveedores')
             ->select(['id', 'ident'])
-            ->get()
-            ->keyBy('id');
+            ->get();
+        $providersById = $providers->keyBy('id');
+        $providersByIdent = $providers
+            ->filter(fn($row) => $row->ident !== null && $row->ident !== '')
+            ->keyBy(fn($row) => (string) $row->ident);
+
+        $targetProviderId = null;
+        if ($providerIdentFilter !== null) {
+            $match = $providersByIdent->get($providerIdentFilter);
+            if ($match) {
+                $targetProviderId = $match->id;
+            }
+        }
 
         $currentQuery = DB::table('ventadesg as vd')
             ->leftJoin('ventas as v', 'v.idventa', '=', 'vd.idventa')
@@ -533,15 +583,24 @@ class AnalysisController extends Controller
             ])
             ->whereBetween('vd.fecha', [$startDate, $endDate]);
 
-     
+        if ($providerIdentFilter !== null) {
+            $currentQuery->where(function ($query) use ($providerIdentFilter, $targetProviderId) {
+                if ($targetProviderId !== null) {
+                    $query->where('vd.proveedor_id', '=', $targetProviderId)
+                        ->orWhere('pr.ident', '=', $providerIdentFilter);
+                } else {
+                    $query->where('pr.ident', '=', $providerIdentFilter);
+                }
+            });
+        }
 
         $current = $currentQuery
             ->get()
-            ->map(function ($row) use ($providers) {
+            ->map(function ($row) use ($providersById) {
                 $providerIdent = $row->provider_ident !== null ? (string) $row->provider_ident : null;
 
                 if ($providerIdent === null && $row->proveedor_id !== null) {
-                    $provider = $providers->get($row->proveedor_id);
+                    $provider = $providersById->get($row->proveedor_id);
                     if ($provider && $provider->ident !== null) {
                         $providerIdent = (string) $provider->ident;
                     }
@@ -583,7 +642,10 @@ class AnalysisController extends Controller
             ])
             ->whereBetween('fecha', [$startDate, $endDate]);
 
-
+        if ($providerIdentFilter !== null) {
+            $legacyQuery->where('proveedor_ident', '=', $providerIdentFilter);
+        }
+        
         $legacy = $legacyQuery
             ->get()
             ->map(function ($row) {
@@ -613,8 +675,7 @@ class AnalysisController extends Controller
                     'legacy' => true,
                 ];
             });
-        Log::info( $legacy->count());
-        Log::info( $legacy->toArray());
+
 
         $result = $current->concat($legacy);
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from 'vue'
+import { jsPDF } from 'jspdf'
 import AppLayout from '../components/layout/AppLayout.vue'
 import type {
     AnalysisSummary,
@@ -66,6 +67,11 @@ const transitionProviderDetails = ref<TransitionProviderDetailsResponse | null>(
 const transitionProviderTarget = ref<{ identifier: string | null; name: string } | null>(null)
 const transitionProviderLoading = ref(false)
 const transitionProviderError = ref('')
+const transitionCsvLoading = ref(false)
+const transitionPdfLoading = ref(false)
+const transitionProviderCsvLoading = ref(false)
+const transitionProviderPdfLoading = ref(false)
+const transitionMethodsVisible = ref(false)
 
 function assignRecommendedResponse(response: RecommendedImporteResponse) {
     recommendedData.value = response.items
@@ -295,11 +301,323 @@ async function openTransitionProviderDetails(row: { provider_ident: string | nul
             month: transitionMonth.value,
             provider_ident: row.provider_ident,
         })
-        console.log(transitionProviderDetails.value)
     } catch (err: any) {
         transitionProviderError.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el detalle.'
     } finally {
         transitionProviderLoading.value = false
+    }
+}
+
+function formatMoney(value: number | null | undefined) {
+    return Number(value ?? 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })
+}
+
+function sanitizeCsvValue(value: string | number | null | undefined) {
+    if (value === null || value === undefined) return '""'
+    const str = typeof value === 'number' ? value.toString() : String(value)
+    return `"${str.replace(/"/g, '""')}"`
+}
+
+function buildTransitionFilename(suffix: string, extension: string) {
+    const month = transitionMonth.value || 'reporte'
+    return `transicion-${suffix}-${month}.${extension}`
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+}
+
+function downloadTransitionCondensedCsv() {
+    if (!transitionData.value || transitionData.value.caja_condensado.length === 0) return
+    if (transitionCsvLoading.value) return
+    transitionCsvLoading.value = true
+    try {
+        const lines: string[] = []
+        lines.push(['Proveedor', 'Identificador', 'Origen', 'Ventas brutas', 'Descuentos', 'Ventas netas'].map(sanitizeCsvValue).join(','))
+        transitionData.value.caja_condensado.forEach((row) => {
+            lines.push(
+                [
+                    row.provider_name ?? 'Sin proveedor',
+                    row.provider_ident ?? '',
+                    row.legacy ? 'Histórico' : 'Actual',
+                    row.total_publico.toFixed(2),
+                    row.descuentos.toFixed(2),
+                    row.total_neto.toFixed(2),
+                ]
+                    .map(sanitizeCsvValue)
+                    .join(',')
+            )
+        })
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+        triggerDownload(blob, buildTransitionFilename('caja-condensado', 'csv'))
+    } catch (err: any) {
+        window.alert(err?.message || 'No se pudo generar el CSV.')
+    } finally {
+        transitionCsvLoading.value = false
+    }
+}
+
+function downloadTransitionCondensedPdf() {
+    if (!transitionData.value || transitionData.value.caja_condensado.length === 0) return
+    if (transitionPdfLoading.value) return
+    transitionPdfLoading.value = true
+    try {
+        const rows = transitionData.value.caja_condensado
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' })
+        const marginX = 36
+        const marginY = 36
+        const headerHeight = 60
+        const tablePadding = 18
+        const lineHeight = 12
+        const pageWidth = doc.internal.pageSize.getWidth()
+        const pageHeight = doc.internal.pageSize.getHeight()
+        const columns = [
+            { key: 'proveedor', title: 'Proveedor', width: 220 },
+            { key: 'ventas_brutas', title: 'Ventas brutas', width: 120, align: 'right' },
+            { key: 'descuentos', title: 'Descuentos', width: 120, align: 'right' },
+            { key: 'ventas_netas', title: 'Ventas netas', width: 120, align: 'right' },
+            { key: 'origen', title: 'Origen', width: 90 },
+        ] as const
+        const columnPositions: number[] = []
+        let offset = marginX
+        columns.forEach((col) => {
+            columnPositions.push(offset)
+            offset += col.width
+        })
+
+        let currentY = marginY
+        let pageNumber = 1
+
+        const drawHeader = () => {
+            doc.setFontSize(16)
+            doc.text('Caja condensado · Reporte de transición', marginX, currentY)
+            doc.setFontSize(10)
+            doc.text(`Mes: ${transitionMonth.value}`, marginX, currentY + 16)
+            doc.text(`Generado: ${new Date().toLocaleString('es-MX')}`, marginX, currentY + 30)
+            doc.text(`Página ${pageNumber}`, pageWidth - marginX, currentY + 30, { align: 'right' })
+            currentY += headerHeight
+        }
+
+        const drawTableHeader = () => {
+            doc.setFontSize(9)
+            doc.setFillColor(243, 244, 246)
+            const totalWidth = columns.reduce((sum, col) => sum + col.width, 0)
+            doc.rect(marginX, currentY, totalWidth, 20, 'F')
+            columns.forEach((col, idx) => {
+                const x = col.align === 'right' ? columnPositions[idx] + col.width - 6 : columnPositions[idx] + 6
+                doc.text(col.title, x, currentY + 13, { align: col.align ?? 'left' })
+            })
+            currentY += tablePadding
+        }
+
+        const ensureSpace = (height: number) => {
+            if (currentY + height > pageHeight - marginY) {
+                doc.addPage()
+                pageNumber += 1
+                currentY = marginY
+                drawHeader()
+                drawTableHeader()
+            }
+        }
+
+        drawHeader()
+        drawTableHeader()
+        doc.setFontSize(9)
+
+        rows.forEach((row) => {
+            const providerLines = [
+                row.provider_name ?? 'Sin proveedor',
+                `Ident: ${row.provider_ident ?? '--'}`,
+            ]
+            const origen = row.legacy ? 'Histórico' : 'Actual'
+            const cellData = [
+                providerLines.join('\n'),
+                formatMoney(row.total_publico),
+                formatMoney(row.descuentos),
+                formatMoney(row.total_neto),
+                origen,
+            ]
+            const linesPerColumn = cellData.map((value, idx) => {
+                const width = Math.max(columns[idx].width - 10, 20)
+                return doc.splitTextToSize(value, width)
+            })
+            const maxLines = Math.max(...linesPerColumn.map((lines) => lines.length || 1))
+            const rowHeight = maxLines * lineHeight + 6
+            ensureSpace(rowHeight)
+
+            linesPerColumn.forEach((lines, idx) => {
+                const col = columns[idx]
+                const startX = columnPositions[idx] + 6
+                let textY = currentY + 12
+                lines.forEach((line) => {
+                    if (col.align === 'right') {
+                        doc.text(line, columnPositions[idx] + col.width - 6, textY, { align: 'right' })
+                    } else {
+                        doc.text(line, startX, textY)
+                    }
+                    textY += lineHeight
+                })
+            })
+            currentY += rowHeight
+        })
+
+        doc.save(buildTransitionFilename('caja-condensado', 'pdf'))
+    } catch (err: any) {
+        window.alert(err?.message || 'No se pudo generar el PDF.')
+    } finally {
+        transitionPdfLoading.value = false
+    }
+}
+
+function downloadTransitionProviderCsv() {
+    if (!transitionProviderDetails.value || transitionProviderDetails.value.items.length === 0) return
+    if (transitionProviderCsvLoading.value) return
+    transitionProviderCsvLoading.value = true
+    try {
+        const lines: string[] = []
+        lines.push(['Venta', 'Fecha', 'Producto', 'Cantidad', 'Monto', 'Descuento', 'Método', 'Vendedor'].map(sanitizeCsvValue).join(','))
+        transitionProviderDetails.value.items.forEach((item) => {
+            lines.push(
+                [
+                    item.venta_id ?? '',
+                    item.fecha ?? '',
+                    `${item.producto_nombre ?? 'Producto sin nombre'} (${item.producto_ident ?? '—'})`,
+                    item.cantidad ?? 0,
+                    (item.monto ?? 0).toFixed(2),
+                    (item.descuento ?? 0).toFixed(2),
+                    item.metodo ?? '',
+                    item.vendedor ?? '',
+                ]
+                    .map(sanitizeCsvValue)
+                    .join(',')
+            )
+        })
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+        const suffix = transitionProviderTarget.value?.identifier ?? 'proveedor'
+        triggerDownload(blob, buildTransitionFilename(`detalle-${suffix}`, 'csv'))
+    } catch (err: any) {
+        window.alert(err?.message || 'No se pudo generar el CSV.')
+    } finally {
+        transitionProviderCsvLoading.value = false
+    }
+}
+
+function downloadTransitionProviderPdf() {
+    if (!transitionProviderDetails.value || transitionProviderDetails.value.items.length === 0) return
+    if (transitionProviderPdfLoading.value) return
+    transitionProviderPdfLoading.value = true
+    try {
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' })
+        const marginX = 36
+        const marginY = 36
+        const headerHeight = 60
+        const tablePadding = 18
+        const lineHeight = 12
+        const pageWidth = doc.internal.pageSize.getWidth()
+        const pageHeight = doc.internal.pageSize.getHeight()
+        const columns = [
+            { key: 'venta', title: 'Venta', width: 70 },
+            { key: 'fecha', title: 'Fecha', width: 80 },
+            { key: 'producto', title: 'Producto', width: 220 },
+            { key: 'cantidad', title: 'Cantidad', width: 70, align: 'right' },
+            { key: 'monto', title: 'Monto', width: 90, align: 'right' },
+            { key: 'descuento', title: 'Descuento', width: 90, align: 'right' },
+            { key: 'metodo', title: 'Método', width: 80 },
+            { key: 'vendedor', title: 'Vendedor', width: 100 },
+        ] as const
+        const columnPositions: number[] = []
+        let offset = marginX
+        columns.forEach((col) => {
+            columnPositions.push(offset)
+            offset += col.width
+        })
+
+        let currentY = marginY
+        let pageNumber = 1
+
+        const drawHeader = () => {
+            doc.setFontSize(16)
+            doc.text(`Detalle de ventas · ${transitionProviderTarget.value?.name ?? 'Proveedor'}`, marginX, currentY)
+            doc.setFontSize(10)
+            doc.text(`Ident: ${transitionProviderTarget.value?.identifier ?? '--'}`, marginX, currentY + 16)
+            doc.text(`Mes: ${transitionMonth.value}`, marginX, currentY + 30)
+            doc.text(`Página ${pageNumber}`, pageWidth - marginX, currentY + 30, { align: 'right' })
+            currentY += headerHeight
+        }
+
+        const drawTableHeader = () => {
+            doc.setFontSize(9)
+            doc.setFillColor(243, 244, 246)
+            const totalWidth = columns.reduce((sum, col) => sum + col.width, 0)
+            doc.rect(marginX, currentY, totalWidth, 20, 'F')
+            columns.forEach((col, idx) => {
+                const x = col.align === 'right' ? columnPositions[idx] + col.width - 6 : columnPositions[idx] + 6
+                doc.text(col.title, x, currentY + 13, { align: col.align ?? 'left' })
+            })
+            currentY += tablePadding
+        }
+
+        const ensureSpace = (height: number) => {
+            if (currentY + height > pageHeight - marginY) {
+                doc.addPage()
+                pageNumber += 1
+                currentY = marginY
+                drawHeader()
+                drawTableHeader()
+            }
+        }
+
+        drawHeader()
+        drawTableHeader()
+        doc.setFontSize(9)
+
+        transitionProviderDetails.value.items.forEach((item) => {
+            const cellData = [
+                String(item.venta_id ?? ''),
+                item.fecha ?? '—',
+                `${item.producto_nombre ?? 'Producto sin nombre'}\nIdent: ${item.producto_ident ?? '—'}`,
+                (item.cantidad ?? 0).toLocaleString('es-MX'),
+                formatMoney(item.monto ?? 0),
+                formatMoney(item.descuento ?? 0),
+                item.metodo ?? '—',
+                item.vendedor ?? '—',
+            ]
+            const linesPerColumn = cellData.map((value, idx) => {
+                const width = Math.max(columns[idx].width - 10, 20)
+                return doc.splitTextToSize(value, width)
+            })
+            const maxLines = Math.max(...linesPerColumn.map((lines) => lines.length || 1))
+            const rowHeight = maxLines * lineHeight + 6
+            ensureSpace(rowHeight)
+
+            linesPerColumn.forEach((lines, idx) => {
+                const col = columns[idx]
+                const startX = columnPositions[idx] + 6
+                let textY = currentY + 12
+                lines.forEach((line) => {
+                    if (col.align === 'right') {
+                        doc.text(line, columnPositions[idx] + col.width - 6, textY, { align: 'right' })
+                    } else {
+                        doc.text(line, startX, textY)
+                    }
+                    textY += lineHeight
+                })
+            })
+            currentY += rowHeight
+        })
+
+        doc.save(buildTransitionFilename(`detalle-${transitionProviderTarget.value?.identifier ?? 'proveedor'}`, 'pdf'))
+    } catch (err: any) {
+        window.alert(err?.message || 'No se pudo generar el PDF.')
+    } finally {
+        transitionProviderPdfLoading.value = false
     }
 }
 
@@ -663,30 +981,73 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
 
                 <div v-if="transitionLoading" class="mt-4 text-sm text-gray-500">Calculando reporte de transición…</div>
                 <div v-else-if="transitionData" class="mt-4 space-y-6">
-                    <div class="grid gap-4 md:grid-cols-3">
-                        <div class="rounded-xl border border-gray-200 bg-white p-4">
-                            <p class="text-xs uppercase tracking-wide text-gray-500">Periodo</p>
-                            <p class="text-sm font-semibold text-gray-900">{{ transitionData.range.from }} — {{ transitionData.range.to }}</p>
+                    <div class="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                                <p class="text-xs uppercase tracking-wide text-gray-500">Periodo</p>
+                                <p class="text-sm font-semibold text-gray-900">{{ transitionData.range.from }} — {{ transitionData.range.to }}</p>
+                            </div>
+                            <div class="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                                <p class="text-xs uppercase tracking-wide text-gray-500">Ventas registradas</p>
+                                <p class="text-xl font-semibold text-gray-900">
+                                    {{ transitionData.sales.total_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                </p>
+                                <p class="text-xs text-gray-500">Tickets: {{ transitionData.sales.tickets }}</p>
+                            </div>
                         </div>
-                        <div class="rounded-xl border border-gray-200 bg-white p-4">
-                            <p class="text-xs uppercase tracking-wide text-gray-500">Ventas registradas</p>
-                            <p class="text-lg font-semibold text-gray-900">
-                                {{ transitionData.sales.total_sales.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
-                            </p>
-                            <p class="text-xs text-gray-500">Tickets: {{ transitionData.sales.tickets }}</p>
-                        </div>
-                        <div class="rounded-xl border border-gray-200 bg-white p-4">
-                            <p class="text-xs uppercase tracking-wide text-gray-500">Cobrado</p>
-                            <p class="text-lg font-semibold text-gray-900">
-                                {{ transitionData.sales.total_recibido.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
-                            </p>
-                        </div>
+                        <section class="space-y-2">
+                            <header class="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-gray-900">Detalle por método de pago</h3>
+                                    <p class="text-xs text-gray-500">El total debería coincidir con las ventas registradas.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="rounded border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                                    @click="transitionMethodsVisible = !transitionMethodsVisible">
+                                    {{ transitionMethodsVisible ? 'Ocultar' : 'Mostrar' }} detalle
+                                </button>
+                            </header>
+                            <div v-if="transitionMethodsVisible" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                                <div
+                                    v-for="method in transitionData.caja"
+                                    :key="method.metodo"
+                                    class="rounded-lg border border-gray-100 bg-white p-3 text-sm">
+                                    <p class="text-xs uppercase text-gray-500">{{ method.metodo || 'Sin método' }}</p>
+                                    <p class="text-base font-semibold text-gray-900">
+                                        {{ method.total_ventas.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                    </p>
+                                    <p class="text-[11px] text-gray-500">
+                                        Recibido: {{ method.total_recibido.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) }}
+                                    </p>
+                                    <p class="text-[11px] text-gray-500">Tickets: {{ method.tickets }}</p>
+                                </div>
+                            </div>
+                        </section>
                     </div>
 
                     <section class="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                        <header>
-                            <h3 class="text-sm font-semibold text-gray-900">Caja condensado (transición)</h3>
-                            <p class="text-xs text-gray-500">Ventas consolidadas por proveedor.</p>
+                        <header class="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <h3 class="text-sm font-semibold text-gray-900">Caja condensado (transición)</h3>
+                                <p class="text-xs text-gray-500">Ventas consolidadas por proveedor.</p>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2 text-xs">
+                                <button
+                                    type="button"
+                                    class="rounded border border-gray-300 px-3 py-1.5 font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                                    :disabled="transitionCsvLoading || !transitionData?.caja_condensado.length"
+                                    @click="downloadTransitionCondensedCsv">
+                                    {{ transitionCsvLoading ? 'Generando CSV…' : 'Descargar CSV' }}
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                    :disabled="transitionPdfLoading || !transitionData?.caja_condensado.length"
+                                    @click="downloadTransitionCondensedPdf">
+                                    {{ transitionPdfLoading ? 'Generando PDF…' : 'Descargar PDF' }}
+                                </button>
+                            </div>
                         </header>
                         <div class="overflow-x-auto">
                             <table class="min-w-full divide-y divide-gray-200 text-sm">
@@ -816,7 +1177,25 @@ async function handleApplyImport(row: RecommendedImporteItem, sendEmail: boolean
                             </div>
                             <div v-else-if="transitionProviderDetails">
                                 <section class="space-y-2">
-                                    <h3 class="text-sm font-semibold text-gray-900">Ventas por producto</h3>
+                                    <div class="flex flex-wrap items-center justify-between gap-3">
+                                        <h3 class="text-sm font-semibold text-gray-900">Ventas por producto</h3>
+                                        <div class="flex flex-wrap items-center gap-2 text-xs">
+                                            <button
+                                                type="button"
+                                                class="rounded border border-gray-300 px-3 py-1.5 font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                                                :disabled="transitionProviderCsvLoading || !transitionProviderDetails?.items.length"
+                                                @click="downloadTransitionProviderCsv">
+                                                {{ transitionProviderCsvLoading ? 'Generando CSV…' : 'Descargar CSV' }}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="rounded bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                                :disabled="transitionProviderPdfLoading || !transitionProviderDetails?.items.length"
+                                                @click="downloadTransitionProviderPdf">
+                                                {{ transitionProviderPdfLoading ? 'Generando PDF…' : 'Descargar PDF' }}
+                                            </button>
+                                        </div>
+                                    </div>
                                     <div class="overflow-x-auto rounded border border-gray-200">
                                         <table class="min-w-full divide-y divide-gray-200 text-xs">
                                             <thead class="bg-gray-50 text-gray-500 uppercase tracking-wide">
