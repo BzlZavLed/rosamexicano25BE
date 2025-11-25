@@ -372,8 +372,10 @@ function buildInventarioPdf(items: InventarioRow[], filters: InventarioFilters) 
         doc.rect(marginX, currentY, totalWidth, 20, 'F');
         doc.setFontSize(9);
         inventarioPdfColumns.forEach((col, idx) => {
-            const textX = col.align === 'right' ? columnPositions[idx] + col.width - 6 : columnPositions[idx] + 6;
-            doc.text(col.title, textX, currentY + 13, { align: col.align ?? 'left' });
+            const columnStart = columnPositions[idx] ?? marginX;
+            const columnWidth = col?.width ?? 0;
+            const textX = (col?.align ?? 'left') === 'right' ? columnStart + columnWidth - 6 : columnStart + 6;
+            doc.text(col?.title ?? '', textX, currentY + 13, { align: col?.align ?? 'left' });
         });
         currentY += tablePadding;
     };
@@ -410,11 +412,14 @@ function buildInventarioPdf(items: InventarioRow[], filters: InventarioFilters) 
 
         linesPerColumn.forEach((lines, idx) => {
             const col = inventarioPdfColumns[idx];
-            const startX = columnPositions[idx] + 6;
+            const columnStart = columnPositions[idx] ?? marginX;
+            const columnWidth = col?.width ?? 0;
+            const align = col?.align ?? 'left';
+            const startX = columnStart + 6;
             let textY = currentY + 12;
-            lines.forEach((line) => {
-                if (col.align === 'right') {
-                    doc.text(line, columnPositions[idx] + col.width - 6, textY, { align: 'right' });
+            lines.forEach((line: string) => {
+                if (align === 'right') {
+                    doc.text(line, columnStart + columnWidth - 6, textY, { align: 'right' });
                 } else {
                     doc.text(line, startX, textY);
                 }
