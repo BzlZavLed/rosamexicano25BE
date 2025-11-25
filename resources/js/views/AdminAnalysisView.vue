@@ -535,15 +535,15 @@ function downloadTransitionProviderPdf() {
         const pageWidth = doc.internal.pageSize.getWidth()
         const pageHeight = doc.internal.pageSize.getHeight()
         const providerColumns: PdfColumn[] = [
-            { key: 'venta', title: 'Venta', width: 70 },
-            { key: 'fecha', title: 'Fecha', width: 80 },
-            { key: 'producto', title: 'Producto', width: 220 },
-    { key: 'cantidad', title: 'Cantidad', width: 70, align: 'right' },
-    { key: 'monto', title: 'Monto', width: 90, align: 'right' },
-    { key: 'descuento', title: 'Descuento', width: 90, align: 'right' },
-    { key: 'metodo', title: 'Método', width: 80 },
-    { key: 'vendedor', title: 'Vendedor', width: 100 },
-]
+            { key: 'venta', title: 'Venta', width: 60 },
+            { key: 'fecha', title: 'Fecha', width: 70 },
+            { key: 'producto', title: 'Producto', width: 210 },
+            { key: 'cantidad', title: 'Cantidad', width: 60, align: 'right' },
+            { key: 'monto', title: 'Monto', width: 90, align: 'right' },
+            { key: 'descuento', title: 'Descuento', width: 90, align: 'right' },
+            { key: 'metodo', title: 'Método', width: 70 },
+            { key: 'vendedor', title: 'Vendedor', width: 70 },
+        ]
         const columnPositions: number[] = []
         let offset = marginX
         providerColumns.forEach((col) => {
