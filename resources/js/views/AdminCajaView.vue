@@ -56,6 +56,7 @@ type CartRow = {
     promoFreeQty?: number;
     promoNote?: string;
     manualDiscount?: number;
+    manualDiscountPercent?: number;
 };
 
 type SaleSnapshot = {
@@ -172,15 +173,56 @@ const linePromoDiscount = (row: CartRow) => {
 
 const lineGross = (row: CartRow) => Math.max(0, row.precio * row.qty);
 
+function computeManualPercent(row: CartRow) {
+    const base = lineGross(row);
+    if (base <= 0) return 0;
+    const percent = ((Number(row.manualDiscount ?? 0) || 0) / base) * 100;
+    const clamped = Math.min(80, Math.max(0, percent));
+    return Math.round(clamped * 10) / 10;
+}
+
 function clampManualDiscount(row: CartRow) {
     const promoDiscount = linePromoDiscount(row);
     const maxDiscount = Math.max(0, lineGross(row) - promoDiscount);
     const manual = Math.max(0, Math.min(Number(row.manualDiscount ?? 0) || 0, maxDiscount));
     row.manualDiscount = Math.round(manual * 100) / 100;
+    const percent = computeManualPercent(row);
+    row.manualDiscountPercent = percent > 0 ? percent : null;
     return row.manualDiscount;
 }
 
 const lineManualDiscount = (row: CartRow) => Math.max(0, Number(row.manualDiscount ?? 0));
+
+function applyManualDiscountPercent(row: CartRow, percent: number) {
+    if (!Number.isFinite(percent) || percent <= 0) {
+        row.manualDiscountPercent = null;
+        row.manualDiscount = 0;
+        onManualDiscountChange(row);
+        return;
+    }
+    const safePercent = Math.min(Math.max(percent, 0), 80);
+    row.manualDiscountPercent = safePercent;
+    const base = lineGross(row);
+    if (base <= 0) {
+        row.manualDiscountPercent = null;
+        row.manualDiscount = 0;
+        onManualDiscountChange(row);
+        return;
+    }
+    row.manualDiscount = Math.round(base * (safePercent / 100) * 100) / 100;
+    onManualDiscountChange(row);
+}
+
+function onManualPercentInput(row: CartRow) {
+    const percent = Number(row.manualDiscountPercent ?? 0);
+    if (!Number.isFinite(percent) || percent <= 0) {
+        row.manualDiscountPercent = null;
+        row.manualDiscount = 0;
+        onManualDiscountChange(row);
+        return;
+    }
+    applyManualDiscountPercent(row, percent);
+}
 
 const lineNet = (row: CartRow) =>
     Math.max(0, lineGross(row) - linePromoDiscount(row) - lineManualDiscount(row));
@@ -920,6 +962,7 @@ async function addToCart(producto: Producto) {
         proveedorPct,
         precioProveedor,
         manualDiscount: 0,
+        manualDiscountPercent: null,
     };
 
     await applyPromotionsToRow(newRow, proveedorIdent);
@@ -1580,15 +1623,25 @@ onUnmounted(() => {
                                                 </div>
                                             </div>
                                         </div>
-                                        <label class="flex flex-col gap-1">
-                                            <span class="font-medium text-gray-700">Desc. manual ($)</span>
+                                        <label class="flex flex-col gap-2">
+                                            <span class="font-medium text-gray-700">Desc. (%)</span>
                                             <input
-                                                v-model.number="r.manualDiscount"
-                                                @change="onManualDiscountChange(r)"
+                                                v-model.number="r.manualDiscountPercent"
                                                 type="number"
                                                 min="0"
-                                                step="0.01"
+                                                step="0.1"
+                                                placeholder="%"
                                                 class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
+                                                @input="onManualPercentInput(r)"
+                                            />
+                                        </label>
+                                        <label class="flex flex-col gap-2">
+                                            <span class="font-medium text-gray-700">Desc. manual ($)</span>
+                                            <input
+                                                :value="(r.manualDiscount ?? 0).toFixed(2)"
+                                                type="number"
+                                                disabled
+                                                class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm bg-gray-100 text-gray-600"
                                             />
                                         </label>
                                     </div>
@@ -1614,6 +1667,7 @@ onUnmounted(() => {
                                             <th class="text-right font-medium px-2.5 py-1.5">P. Unit.</th>
                                             <th class="text-right font-medium px-2.5 py-1.5">Exist.</th>
                                             <th class="text-right font-medium px-2.5 py-1.5">Cantidad</th>
+                                            <th class="text-right font-medium px-2.5 py-1.5">Desc. (%)</th>
                                             <th class="text-right font-medium px-2.5 py-1.5">Desc. ($)</th>
                                             <th class="text-right font-medium px-2.5 py-1.5">Importe</th>
                                             <th class="px-2.5 py-1.5"></th>
@@ -1654,12 +1708,21 @@ onUnmounted(() => {
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right">
                                                 <input
-                                                    v-model.number="r.manualDiscount"
-                                                    @change="onManualDiscountChange(r)"
+                                                    v-model.number="r.manualDiscountPercent"
                                                     type="number"
                                                     min="0"
-                                                    step="0.01"
-                                                    class="w-20 rounded border px-2 py-1 text-right text-[12px]"
+                                                    step="0.1"
+                                                    placeholder="%"
+                                                    class="w-16 rounded border px-2 py-1 text-right text-[12px]"
+                                                    @input="onManualPercentInput(r)"
+                                                />
+                                            </td>
+                                            <td class="px-2.5 py-1.5 text-right">
+                                                <input
+                                                    :value="(r.manualDiscount ?? 0).toFixed(2)"
+                                                    type="number"
+                                                    disabled
+                                                    class="w-20 rounded border px-2 py-1 text-right text-[12px] bg-gray-100 text-gray-600"
                                                 />
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
@@ -1673,7 +1736,7 @@ onUnmounted(() => {
                                             </td>
                                         </tr>
                                         <tr v-if="cart.length === 0">
-                                            <td colspan="9" class="px-2.5 py-4 text-center text-gray-500">No hay productos en
+                                            <td colspan="10" class="px-2.5 py-4 text-center text-gray-500">No hay productos en
                                                 el carrito</td>
                                         </tr>
                                     </tbody>
