@@ -25,6 +25,7 @@ export type ListProductosParams = {
     has_inventory?: 'with' | 'without';
     sort?: 'nombre' | 'proveedor' | 'existencia' | 'importe';
     direction?: 'asc' | 'desc';
+    proveedor_id?: number;
 };
 
 export async function listProductos(params?: ListProductosParams) {
