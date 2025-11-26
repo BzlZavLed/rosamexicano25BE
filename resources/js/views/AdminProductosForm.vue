@@ -184,6 +184,22 @@ const pageInfo = computed(() => {
     const end = Math.min(start + pagination.perPage - 1, pagination.total);
     return { start, end };
 });
+const filteredProductos = computed<Producto[]>(() => {
+    const term = q.value.trim().toLowerCase();
+    if (!term) return productos.value;
+    return productos.value.filter((p) => {
+        const nombre = p.nombre?.toLowerCase() ?? '';
+        const descripcion = p.descripcion?.toLowerCase() ?? '';
+        const ident = String(p.ident ?? '').toLowerCase();
+        const proveedor = p.proveedor?.nombre?.toLowerCase() ?? '';
+        return (
+            nombre.includes(term) ||
+            descripcion.includes(term) ||
+            ident.includes(term) ||
+            proveedor.includes(term)
+        );
+    });
+});
 
 type FormT = {
     id?: number | null;
@@ -827,14 +843,14 @@ onMounted(async () => {
                         Cargando…
                     </div>
                     <div
-                        v-else-if="!productos.length"
+                        v-else-if="!filteredProductos.length"
                         class="rounded-lg border border-gray-200 bg-white px-4 py-4 text-sm text-gray-500"
                     >
                         Sin resultados
                     </div>
                     <template v-else>
                         <article
-                            v-for="p in productos"
+                            v-for="p in filteredProductos"
                             :key="p.id"
                             class="space-y-2 rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm"
                             :class="selectedId === p.id ? 'ring-2 ring-gray-300' : ''"
@@ -875,6 +891,7 @@ onMounted(async () => {
                                 <th class="text-left font-medium px-3 py-2">ID</th>
                                 <th class="text-left font-medium px-3 py-2">Ident</th>
                                 <th class="text-left font-medium px-3 py-2">Nombre</th>
+                                <th class="text-left font-medium px-3 py-2">Descripción</th>
                                 <th class="text-left font-medium px-3 py-2">Proveedor</th>
                                 <th class="text-right font-medium px-3 py-2">Precio venta</th>
                                 <th class="text-right font-medium px-3 py-2">Precio proveedor</th>
@@ -882,11 +899,15 @@ onMounted(async () => {
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="p in productos" :key="p.id" @click="selectRow(p)"
+                            <tr v-for="p in filteredProductos" :key="p.id" @click="selectRow(p)"
                                 :class="['cursor-pointer hover:bg-gray-50', selectedId === p.id ? 'bg-gray-100' : '']">
                                 <td class="px-3 py-2">{{ p.id }}</td>
                                 <td class="px-3 py-2">{{ p.ident }}</td>
                                 <td class="px-3 py-2">{{ p.nombre }}</td>
+                                <td class="px-3 py-2 text-gray-600 text-xs">
+                                    <span v-if="p.descripcion">{{ p.descripcion }}</span>
+                                    <span v-else class="text-gray-400">—</span>
+                                </td>
                                 <td class="px-3 py-2">
                                     <span v-if="p.proveedor?.nombre">{{ p.proveedor.nombre }}</span>
                                     <span v-else class="text-rose-600 font-medium">No proveedor definido</span>
