@@ -19,7 +19,7 @@ class UsuarioFactory extends Factory
             'nombre' => $this->faker->name(),
             'email' => $this->faker->unique()->safeEmail(),
             'password' => Hash::make('password'),
-            'puesto' => 'admin',
+            'puesto' => 1,
             'priv1' => 1,
             'priv2' => 1,
             'priv3' => 1,
@@ -32,7 +32,7 @@ class UsuarioFactory extends Factory
     public function cashier(): self
     {
         return $this->state(fn () => [
-            'puesto' => 'cashier',
+            'puesto' => 2,
             'role' => 'cashier',
         ]);
     }

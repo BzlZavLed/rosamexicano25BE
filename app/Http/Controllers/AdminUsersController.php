@@ -50,6 +50,7 @@ class AdminUsersController extends Controller
         $data = $request->validated();
         $role = $data['role'] ?? 'admin';
         $data['role'] = $role;
+        $data['puesto'] = $this->legacyPuesto($role);
         $staffRole = $this->resolveStaffRole($data['staff_role_id'] ?? null, $role, allowNull: true);
         $data['staff_role_id'] = $staffRole?->id;
         $data['modules'] = $staffRole ? null : $this->normalizeModules($data['modules'] ?? null, $role);
@@ -78,6 +79,7 @@ class AdminUsersController extends Controller
         $data = $request->validated();
         $role = $data['role'] ?? $usuario->role ?? 'admin';
         $data['role'] = $role;
+        $data['puesto'] = $this->legacyPuesto($role);
 
         $staffRoleId = $data['staff_role_id'] ?? $usuario->staff_role_id;
         $staffRole = $this->resolveStaffRole($staffRoleId, $role, allowNull: true);
@@ -321,5 +323,10 @@ class AdminUsersController extends Controller
         }
 
         return $staffRole;
+    }
+
+    protected function legacyPuesto(string $role): int
+    {
+        return $role === 'admin' ? 1 : 2;
     }
 }
