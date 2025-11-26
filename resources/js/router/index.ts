@@ -157,9 +157,15 @@ router.beforeEach(async (to) => {
     if (to.meta.requiresAuth) {
         const requiredRole = to.meta.role as "admin" | "provider" | undefined;
         if (requiredRole && auth.role !== requiredRole) {
-            return auth.isAdmin
+            const fallback = auth.isAdmin
                 ? { name: "admin-dashboard" }
-                : { name: "provider-dashboard" };
+                : auth.isProvider
+                    ? { name: "provider-dashboard" }
+                    : { name: "login" };
+            if (to.name === fallback.name) {
+                return;
+            }
+            return fallback;
         }
     }
 });

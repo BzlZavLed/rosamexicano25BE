@@ -171,6 +171,8 @@ const directionOptions = [
 const productos = ref<Producto[]>([]);
 const selectedId = ref<number | null>(null);
 const proveedores = ref<Proveedor[]>([]);
+const tableProviderFilter = ref<string>('');
+const selectedTableProvider = computed(() => (tableProviderFilter.value ? Number(tableProviderFilter.value) : null));
 const pagination = reactive({ page: 1, perPage: 20, lastPage: 1, total: 0 });
 const pageNumbers = computed(() => {
     const pages = Math.max(1, pagination.lastPage || 1);
@@ -313,6 +315,7 @@ function buildListParams(overrides: Partial<ListProductosParams> = {}): ListProd
     if (q.value) params.search = q.value;
     if (sortField.value) params.sort = sortField.value;
     if (sortDirection.value) params.direction = sortDirection.value;
+    if (selectedTableProvider.value) params.proveedor_id = selectedTableProvider.value;
     return params;
 }
 
@@ -535,6 +538,10 @@ function goToNextPage() {
 /* ---------- barcode preview (svg) ---------- */
 
 watch(q, () => {
+    pagination.page = 1;
+    loadList();
+});
+watch(tableProviderFilter, () => {
     pagination.page = 1;
     loadList();
 });
@@ -768,6 +775,16 @@ onMounted(async () => {
                         <label class="block text-sm font-medium text-gray-700 mb-1">Buscar / Consultar</label>
                         <input v-model="q" type="text" placeholder="Nombre, descripción, código…"
                             class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
+                        <select v-model="tableProviderFilter"
+                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                            <option value="">Todos los proveedores</option>
+                            <option v-for="prov in proveedores" :key="prov.ident" :value="String(prov.ident)">
+                                {{ prov.nombre }} (#{{ prov.ident }})
+                            </option>
+                        </select>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Ordenar por</label>
