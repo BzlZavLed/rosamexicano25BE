@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\Usuario;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +32,11 @@ class AuditLogger
             return;
         }
 
+        $authUser = Auth::user();
+        if (! $authUser instanceof Usuario) {
+            return;
+        }
+
         $action = static::detectAction($query->sql);
         if (! $action) {
             return;
@@ -42,7 +48,7 @@ class AuditLogger
         }
 
         static::record([
-            'user_id'    => Auth::id(),
+            'user_id'    => $authUser->id,
             'action'     => $action,
             'table_name' => $table,
             'record_id'  => static::guessPrimaryKey($query->bindings),

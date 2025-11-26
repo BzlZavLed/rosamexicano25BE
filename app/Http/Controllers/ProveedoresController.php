@@ -190,11 +190,11 @@ class ProveedoresController extends Controller
             if ($row === [null] || count(array_filter($row, fn ($value) => trim((string) ($value ?? '')) !== '')) === 0) {
                 $skipped++;
                 continue;
-            }
+        }
 
-            $payload = [];
-            foreach ($mappedHeader as $index => $field) {
-                if ($field === null) {
+        $payload = [];
+        foreach ($mappedHeader as $index => $field) {
+            if ($field === null) {
                     continue;
                 }
                 $value = $row[$index] ?? null;
@@ -402,5 +402,25 @@ class ProveedoresController extends Controller
             'updated' => $updated,
             'items' => ProveedorResource::collection($refreshed),
         ]);
+    }
+
+    public function updateSelf(Request $request)
+    {
+        $provider = $request->user();
+        if (!$provider instanceof Proveedor) {
+            abort(403, 'Solo los proveedores pueden actualizar su perfil.');
+        }
+
+        $data = $request->validate([
+            'email' => ['nullable', 'email', 'max:150'],
+            'tel' => ['nullable', 'string', 'max:40'],
+        ]);
+
+        $provider->fill($data);
+        if ($provider->isDirty()) {
+            $provider->save();
+        }
+
+        return new ProveedorResource($provider->fresh()->load('recommendedImporte'));
     }
 }

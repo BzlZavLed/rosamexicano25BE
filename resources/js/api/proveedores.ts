@@ -52,6 +52,11 @@ export async function updateProveedor(id: number, p: Partial<Proveedor>) {
     return data as Proveedor;
 }
 
+export async function updateProviderProfile(payload: { email?: string | null; tel?: string | null }) {
+    const { data } = await http.put('/provider/profile', payload);
+    return data as Proveedor;
+}
+
 export async function deleteProveedor(id: number) {
     await http.delete(`/proveedores/${id}`);
 }

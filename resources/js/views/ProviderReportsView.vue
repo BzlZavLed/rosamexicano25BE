@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, reactive } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
 import {
     getCajaProveedoresReport,
@@ -13,7 +13,15 @@ const downloading = ref(false);
 const error = ref('');
 const success = ref('');
 const report = ref<CajaProveedoresResponse | null>(null);
-const selectedDate = ref(new Date().toISOString().slice(0, 10));
+const today = new Date();
+const todayIso = formatDate(today);
+const defaultMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+const rangeMode = ref<'month' | 'range'>('month');
+const selectedMonth = ref(defaultMonth);
+const customRange = reactive({
+    from: formatDate(startOfMonth(today)),
+    to: todayIso,
+});
 const activeTab = ref<'summary' | 'trends'>('summary');
 
 const trends = ref<ProviderTrendsResponse | null>(null);
@@ -109,7 +117,6 @@ const earningsChart = computed(() => {
 });
 
 async function fetchReport() {
-    if (!selectedDate.value) return;
     loading.value = true;
     error.value = '';
     success.value = '';
@@ -124,8 +131,7 @@ async function fetchReport() {
             success.value = 'El reporte se generó correctamente. Revisa tu carpeta de descargas.';
         } else {
             report.value = data;
-            const total = data?.resumen?.ganancias ?? 0;
-            success.value = `Reporte del ${fromDate} al ${toDate} listo. Ganancia estimada: $${total.toFixed(2)}.`;
+            success.value = '';
         }
     } catch (err: any) {
         error.value = err?.response?.data?.message || 'No se pudo generar el reporte.';
@@ -135,7 +141,6 @@ async function fetchReport() {
 }
 
 async function downloadReport() {
-    if (!selectedDate.value) return;
     downloading.value = true;
     error.value = '';
     try {
@@ -157,7 +162,7 @@ async function downloadReport() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        success.value = `Descarga completada para ${selectedDate.value}.`;
+        success.value = `Descarga completada para el periodo ${fromDate} al ${toDate}.`;
     } catch (err: any) {
         error.value = err?.response?.data?.message || err?.message || 'No se pudo descargar el reporte.';
     } finally {
@@ -189,15 +194,39 @@ function selectTab(tab: 'summary' | 'trends') {
 }
 
 function computeRange() {
-    const endDate = new Date(selectedDate.value);
-    const startDateObj = new Date(endDate);
-    startDateObj.setDate(endDate.getDate() - 9);
-    const formatIso = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (rangeMode.value === 'month') {
+        const [yearStr, monthStr] = (selectedMonth.value || defaultMonth).split('-');
+        const year = Number(yearStr) || today.getFullYear();
+        const monthIndex = Number(monthStr) - 1;
+        const firstDay = new Date(year, isNaN(monthIndex) ? today.getMonth() : monthIndex, 1);
+        const lastDay = new Date(firstDay.getFullYear(), firstDay.getMonth() + 1, 0);
+        return {
+            fromDate: formatDate(firstDay),
+            toDate: formatDate(lastDay),
+        };
+    }
+    const from = customRange.from ? new Date(customRange.from) : startOfMonth(today);
+    const to = customRange.to ? new Date(customRange.to) : today;
+    const fromTime = from.getTime();
+    const toTime = to.getTime();
+    if (fromTime > toTime) {
+        return {
+            fromDate: formatDate(to),
+            toDate: formatDate(from),
+        };
+    }
     return {
-        fromDate: formatIso(startDateObj),
-        toDate: formatIso(endDate),
+        fromDate: formatDate(from),
+        toDate: formatDate(to),
     };
+}
+
+function formatDate(date: Date): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function startOfMonth(date: Date): Date {
+    return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 </script>
 
@@ -213,17 +242,21 @@ function computeRange() {
 
             </header>
             <div class="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
-                <button type="button"
+                <button
+                    type="button"
                     class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-[#E4007C]/80"
                     :class="activeTab === 'summary' ? 'text-[#E4007C] border-[#E4007C] bg-white shadow-sm' : ''"
-                    @click="selectTab('summary')">
-                    Resumen diario
+                    @click="selectTab('summary')"
+                >
+                    Resumen (mes / rango)
                 </button>
-                <button type="button"
+                <button
+                    type="button"
                     class="px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 border-transparent text-gray-500 hover:text-[#E4007C]/80"
                     :class="activeTab === 'trends' ? 'text-[#E4007C] border-[#E4007C] bg-white shadow-sm' : ''"
-                    @click="selectTab('trends')">
-                    Tendencias (10 días)
+                    @click="selectTab('trends')"
+                >
+                    Tendencias (periodo seleccionado)
                 </button>
             </div>
 
@@ -231,30 +264,81 @@ function computeRange() {
             <div v-if="activeTab === 'summary'"
                 class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
                 <div>
-                    <h2 class="text-base font-semibold text-gray-800">Reporte diario</h2>
+                    <h2 class="text-base font-semibold text-gray-800">Reporte por mes o rango</h2>
                     <p class="text-sm text-gray-500">
-                        Selecciona una fecha para obtener el resumen de ventas y cargos correspondiente a ese día.
+                        Selecciona un mes completo o un rango personalizado de fechas para generar el resumen de ventas.
                     </p>
                 </div>
 
-                <div class="flex flex-wrap items-center gap-3">
-                    <label class="text-sm text-gray-700 flex items-center gap-2">
-                        <span>Fecha</span>
-                        <input type="date" v-model="selectedDate"
-                            class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]">
-                    </label>
-                    <button type="button"
-                        class="rounded-lg bg-[#E4007C] px-4 py-2 text-sm font-medium text-white hover:bg-[#cc006f] disabled:opacity-60 disabled:cursor-not-allowed"
-                        :disabled="loading" @click="fetchReport">
+                <div class="flex flex-col gap-3">
+                    <div class="flex flex-wrap items-center gap-4 text-sm text-gray-700">
+                        <label class="flex items-center gap-2">
+                            <input
+                                type="radio"
+                                value="month"
+                                v-model="rangeMode"
+                                class="text-[#E4007C] focus:ring-[#E4007C]"
+                            />
+                            <span>Mes completo</span>
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <input
+                                type="radio"
+                                value="range"
+                                v-model="rangeMode"
+                                class="text-[#E4007C] focus:ring-[#E4007C]"
+                            />
+                            <span>Rango personalizado</span>
+                        </label>
+                    </div>
+                    <div v-if="rangeMode === 'month'" class="flex flex-wrap items-center gap-3">
+                        <label class="text-sm text-gray-700 flex items-center gap-2">
+                            <span>Mes</span>
+                            <input
+                                type="month"
+                                v-model="selectedMonth"
+                                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]"
+                            />
+                        </label>
+                    </div>
+                    <div v-else class="flex flex-wrap items-center gap-3">
+                        <label class="text-sm text-gray-700 flex items-center gap-2">
+                            <span>Desde</span>
+                            <input
+                                type="date"
+                                v-model="customRange.from"
+                                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]"
+                            />
+                        </label>
+                        <label class="text-sm text-gray-700 flex items-center gap-2">
+                            <span>Hasta</span>
+                            <input
+                                type="date"
+                                v-model="customRange.to"
+                                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]"
+                            />
+                        </label>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button
+                            type="button"
+                            class="rounded-lg bg-[#E4007C] px-4 py-2 text-sm font-medium text-white hover:bg-[#cc006f] disabled:opacity-60 disabled:cursor-not-allowed"
+                            :disabled="loading"
+                            @click="fetchReport"
+                        >
                         {{ loading ? 'Generando…' : 'Generar resumen' }}
-                    </button>
-                    <button type="button"
-                        class="rounded-lg border border-[#E4007C] px-4 py-2 text-sm font-medium text-[#E4007C] hover:bg-[#E4007C]/10 disabled:opacity-60 disabled:cursor-not-allowed"
-                        :disabled="downloading" @click="downloadReport">
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-lg border border-[#E4007C] px-4 py-2 text-sm font-medium text-[#E4007C] hover:bg-[#E4007C]/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                            :disabled="downloading"
+                            @click="downloadReport"
+                        >
                         {{ downloading ? 'Descargando…' : 'Descargar CSV' }}
-                    </button>
+                        </button>
+                    </div>
                     <p class="text-xs text-gray-500">
-                        El cálculo se realiza con base en las ventas registradas en la fecha seleccionada.
+                        El cálculo se realiza con base en las ventas registradas durante el periodo seleccionado.
                     </p>
                 </div>
 

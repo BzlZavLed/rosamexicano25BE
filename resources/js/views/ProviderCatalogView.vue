@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, reactive } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
 import type { ProductoRow, InventarioRow } from '../api/reports';
 import { getProductosReport, getInventarioReport } from '../api/reports';
@@ -9,6 +9,7 @@ import { storeToRefs } from 'pinia';
 type CatalogRow = {
     ident: string;
     nombre: string;
+    descripcion: string;
     precio: number | null;
     existencia: number;
     costo_inventario: number | null;
@@ -22,17 +23,73 @@ const error = ref('');
 const productos = ref<ProductoRow[]>([]);
 const inventario = ref<InventarioRow[]>([]);
 const lastUpdated = ref<Date | null>(null);
+const pagination = reactive({
+    page: 1,
+    perPage: 25,
+});
+const perPageOptions = [10, 25, 50, 100, 200];
+
+async function fetchAllProductos(perPage = 10) {
+    const rows: ProductoRow[] = [];
+    let page = 1;
+    let lastPage: number | null = null;
+
+    while (true) {
+        const resp = await getProductosReport({
+            page,
+            per_page: perPage,
+            sort: 'nombre',
+            direction: 'asc',
+        });
+        rows.push(...resp.data);
+        const paginationInfo = resp.pagination;
+        lastPage = paginationInfo?.last_page ?? lastPage;
+        const isLastPage =
+            (paginationInfo && page >= paginationInfo.last_page) ||
+            (!paginationInfo && resp.data.length < perPage);
+        if (isLastPage) break;
+        page++;
+    }
+
+    return rows;
+}
+
+async function fetchAllInventario(perPage = 200) {
+    const rows: InventarioRow[] = [];
+    let page = 1;
+    let lastPage: number | null = null;
+
+    while (true) {
+        const resp = await getInventarioReport({
+            page,
+            per_page: perPage,
+            sort: 'producto',
+            direction: 'asc',
+        });
+        rows.push(...resp.data);
+        const paginationInfo = resp.pagination;
+        lastPage = paginationInfo?.last_page ?? lastPage;
+        const isLastPage =
+            (paginationInfo && page >= paginationInfo.last_page) ||
+            (!paginationInfo && resp.data.length < perPage);
+        if (isLastPage) break;
+        page++;
+    }
+
+    return rows;
+}
 
 async function fetchData() {
     loading.value = true;
     error.value = '';
     try {
-        const [productosResp, inventarioResp] = await Promise.all([
-            getProductosReport({ per_page: 500 }),
-            getInventarioReport({ per_page: 500 }),
+        const [allProductos, allInventario] = await Promise.all([
+            fetchAllProductos(),
+            fetchAllInventario(),
         ]);
-        productos.value = productosResp?.data ?? [];
-        inventario.value = inventarioResp?.data ?? [];
+        productos.value = allProductos;
+        inventario.value = allInventario;
+        pagination.page = 1;
         lastUpdated.value = new Date();
     } catch (err: any) {
         error.value = err?.response?.data?.message || 'No se pudo cargar el catálogo.';
@@ -64,9 +121,12 @@ const catalogRows = computed<CatalogRow[]>(() => {
     for (const producto of productos.value) {
         const ident = String(producto.ident);
         const inventarioRow = invMap.get(ident);
+        const descripcion =
+            (producto as ProductoRow & { descripcion?: string | null }).descripcion ?? '';
         rows.push({
             ident,
             nombre: producto.nombre,
+            descripcion,
             precio: producto.precio ?? null,
             existencia: inventarioRow?.existencia ?? 0,
             costo_inventario: inventarioRow?.costo_inventario ?? null,
@@ -80,6 +140,7 @@ const catalogRows = computed<CatalogRow[]>(() => {
         rows.push({
             ident,
             nombre: inventarioRow.producto_nombre,
+            descripcion: inventarioRow.producto_nombre ?? '',
             precio: inventarioRow.precio ?? null,
             existencia: inventarioRow.existencia ?? 0,
             costo_inventario: inventarioRow.costo_inventario ?? null,
@@ -91,6 +152,20 @@ const catalogRows = computed<CatalogRow[]>(() => {
 
 const totalProductos = computed(() => catalogRows.value.length);
 const totalExistencia = computed(() => catalogRows.value.reduce((acc, row) => acc + row.existencia, 0));
+const paginatedRows = computed(() => {
+    const start = (pagination.page - 1) * pagination.perPage;
+    return catalogRows.value.slice(start, start + pagination.perPage);
+});
+const totalPages = computed(() => Math.max(1, Math.ceil(totalProductos.value / pagination.perPage)));
+function nextPage() {
+    if (pagination.page < totalPages.value) pagination.page++;
+}
+function prevPage() {
+    if (pagination.page > 1) pagination.page--;
+}
+function resetPage() {
+    pagination.page = 1;
+}
 </script>
 
 <template>
@@ -139,6 +214,7 @@ const totalExistencia = computed(() => catalogRows.value.reduce((acc, row) => ac
                         <thead class="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
                             <tr>
                                 <th scope="col" class="px-4 py-3 text-left">Producto</th>
+                                <th scope="col" class="px-4 py-3 text-left">Descripción</th>
                                 <th scope="col" class="px-4 py-3 text-left">Ident</th>
                                 <th scope="col" class="px-4 py-3 text-right">Precio</th>
                                 <th scope="col" class="px-4 py-3 text-right">Existencia</th>
@@ -147,17 +223,18 @@ const totalExistencia = computed(() => catalogRows.value.reduce((acc, row) => ac
                         </thead>
                         <tbody class="divide-y divide-gray-100">
                             <tr v-if="loading">
-                                <td colspan="5" class="px-4 py-6 text-center text-gray-500">
+                                <td colspan="6" class="px-4 py-6 text-center text-gray-500">
                                     Cargando catálogo…
                                 </td>
                             </tr>
                             <tr v-else-if="catalogRows.length === 0">
-                                <td colspan="5" class="px-4 py-6 text-center text-gray-500">
+                                <td colspan="6" class="px-4 py-6 text-center text-gray-500">
                                     No hay productos asignados en este momento.
                                 </td>
                             </tr>
-                            <tr v-for="row in catalogRows" :key="row.ident" class="hover:bg-gray-50">
+                            <tr v-for="row in paginatedRows" :key="row.ident" class="hover:bg-gray-50">
                                 <td class="px-4 py-3 font-medium text-gray-900">{{ row.nombre }}</td>
+                                <td class="px-4 py-3 text-gray-600">{{ row.descripcion || '—' }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ row.ident }}</td>
                                 <td class="px-4 py-3 text-right text-gray-700">
                                     <span v-if="row.precio !== null">${{ row.precio.toFixed(2) }}</span>
@@ -173,6 +250,30 @@ const totalExistencia = computed(() => catalogRows.value.reduce((acc, row) => ac
                             </tr>
                         </tbody>
                     </table>
+                </div>
+                <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+                    <div class="flex items-center gap-2">
+                        <label for="per-page" class="text-gray-600">Registros por página:</label>
+                        <select
+                            id="per-page"
+                            v-model.number="pagination.perPage"
+                            @change="resetPage"
+                            class="rounded border border-gray-300 px-2 py-1 text-sm text-gray-700"
+                        >
+                            <option v-for="option in perPageOptions" :key="option" :value="option">
+                                {{ option }}
+                            </option>
+                        </select>
+                    </div>
+                    <div>
+                        Página {{ pagination.page }} de {{ totalPages }}
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" @click="prevPage" :disabled="pagination.page === 1"
+                            class="rounded border px-3 py-1 disabled:opacity-50">Anterior</button>
+                        <button type="button" @click="nextPage" :disabled="pagination.page === totalPages"
+                            class="rounded border px-3 py-1 disabled:opacity-50">Siguiente</button>
+                    </div>
                 </div>
             </section>
         </div>

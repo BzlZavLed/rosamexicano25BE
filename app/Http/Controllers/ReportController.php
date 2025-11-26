@@ -23,6 +23,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Support\Collection;
 use Carbon\CarbonPeriod;
@@ -1633,17 +1634,63 @@ class ReportController extends Controller
             'to' => $toIso,
         ]);
 
+        $columnResolver = static function (array $candidates) {
+            foreach ($candidates as $candidate) {
+                if (Schema::hasColumn('ventadesg', $candidate)) {
+                    return 'vd.' . $candidate;
+                }
+            }
+            return null;
+        };
+
+        $productoColumnExpr = $columnResolver(['idprod', 'producto_id', 'producto_ident']);
+        $cantidadColumnExpr = $columnResolver(['cant', 'quantity', 'cantidad']);
+        $totalColumnExpr = $columnResolver(['total', 'venta_total', 'public_total']);
+        $descuentoColumnExpr = $columnResolver([
+            'descuento_producto',
+            'provider_percentage_discount',
+            'provider_discount_amount',
+            'manual_discount_amount',
+        ]);
+        $cargoTarjetaColumnExpr = $columnResolver([
+            'cargo_tarjeta_proveedor',
+            'credit_card_discount',
+            'provider_card_fee',
+        ]);
+
+        $providerColumn = null;
+        $providerValue = $provider->ident;
+        $providerColumnCandidates = [
+            ['name' => 'proveedor_id', 'value' => $provider->id],
+            ['name' => 'provider_id', 'value' => $provider->id],
+            ['name' => 'proveedor', 'value' => $provider->ident],
+            ['name' => 'provider', 'value' => $provider->ident],
+            ['name' => 'proveedor_ident', 'value' => $provider->ident],
+            ['name' => 'provider_ident', 'value' => $provider->ident],
+        ];
+        foreach ($providerColumnCandidates as $candidate) {
+            if (Schema::hasColumn('ventadesg', $candidate['name'])) {
+                $providerColumn = 'vd.' . $candidate['name'];
+                $providerValue = $candidate['value'];
+                break;
+            }
+        }
+        if (!$providerColumn) {
+            $providerColumn = DB::raw('1');
+            $providerValue = 1;
+        }
+
         $query = DB::table('ventadesg as vd')
             ->select([
-                'vd.idprod',
+                DB::raw(($productoColumnExpr ?? 'NULL') . ' as producto_ident'),
                 'vd.nombre as producto_nombre',
-                'vd.cant',
-                'vd.total',
-                'vd.descuento_producto',
-                'vd.cargo_tarjeta_proveedor',
+                DB::raw(($cantidadColumnExpr ?? '0') . ' as cantidad'),
+                DB::raw(($totalColumnExpr ?? '0') . ' as total'),
+                DB::raw(($descuentoColumnExpr ?? '0') . ' as descuento_producto'),
+                DB::raw(($cargoTarjetaColumnExpr ?? '0') . ' as cargo_tarjeta_proveedor'),
                 'vd.fecha',
             ])
-            ->where('vd.proveedor', '=', $provider->ident);
+            ->where($providerColumn, '=', $providerValue);
 
         $rows = $query
             ->whereBetween('vd.fecha', [$fromIso, $toIso])
@@ -1674,14 +1721,14 @@ class ReportController extends Controller
                 $dateBuckets[$dateKey] = 0.0;
             }
 
-            $cantidad = (int) ($row->cant ?? 0);
+            $cantidad = (int) ($row->cantidad ?? 0);
             $bruto = (float) ($row->total ?? 0);
             $descuento = (float) ($row->descuento_producto ?? 0);
             $cargoTarjeta = (float) ($row->cargo_tarjeta_proveedor ?? 0);
             $neto = $bruto - $descuento - $cargoTarjeta;
             $dateBuckets[$dateKey] += $neto;
 
-            $productoKey = (string) ($row->idprod ?? 'sin_ident');
+            $productoKey = (string) ($row->producto_ident ?? 'sin_ident');
             if (!isset($topProducts[$productoKey])) {
                 $topProducts[$productoKey] = [
                     'ident' => $productoKey,

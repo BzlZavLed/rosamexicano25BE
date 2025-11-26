@@ -78,6 +78,7 @@ Route::middleware('auth:sanctum')->group(function () {
         ->parameters(['proveedores' => 'proveedor']);
     Route::post('/proveedores/import', [ProveedoresController::class, 'import']);
     Route::post('/proveedores/bulk-tipo', [ProveedoresController::class, 'bulkUpdateTipo']);
+    Route::put('/provider/profile', [ProveedoresController::class, 'updateSelf']);
     Route::get('/proveedores/{proveedor}/productos', [ProductosController::class, 'byProveedor'])
         ->whereNumber('proveedor');
     Route::get('/proveedores/{proveedor}/inventario', [InventarioController::class, 'byProveedor'])
