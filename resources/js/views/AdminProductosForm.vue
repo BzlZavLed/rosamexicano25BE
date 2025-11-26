@@ -566,7 +566,7 @@ async function downloadProductosPDF() {
             { label: 'Proveedor', width: 35, getter: (p: Producto) => [p.proveedor?.nombre ?? 'No definido'] },
             { label: 'Precio venta', width: 25, getter: (p: Producto) => [displayMoney(p.precio)] },
             {
-                label: 'Precio proveedor',
+                label: 'Precio prov',
                 width: 25,
                 getter: (p: Producto) => [p.precio_proveedor != null ? displayMoney(p.precio_proveedor) : '—'],
             },
