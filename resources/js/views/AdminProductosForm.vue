@@ -455,6 +455,7 @@ async function remove() {
 const csvUploading = ref(false);
 const downloadingTemplate = ref(false);
 const downloadingCSV = ref(false);
+const downloadingPDF = ref(false);
 
 function onCsvFileChange(event: Event) {
     const target = event.target;
@@ -534,6 +535,101 @@ async function downloadProductosCSV() {
         error.value = e?.response?.data?.message || 'No se pudo exportar los productos.';
     } finally {
         downloadingCSV.value = false;
+    }
+}
+
+async function downloadProductosPDF() {
+    downloadingPDF.value = true;
+    try {
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm' });
+        const title = 'Inventario de productos';
+        doc.setFontSize(14);
+        doc.text(title, 14, 15);
+
+        const filterParts: string[] = [];
+        if (q.value) filterParts.push(`Búsqueda: ${q.value}`);
+        if (selectedTableProvider.value) {
+            const prov = proveedores.value.find((p) => p.ident === selectedTableProvider.value);
+            filterParts.push(`Proveedor: ${prov?.nombre ?? selectedTableProvider.value}`);
+        }
+        if (filterParts.length) {
+            doc.setFontSize(10);
+            doc.text(filterParts.join(' | '), 14, 21);
+        }
+
+        type ColumnDef = { label: string; width: number; getter: (p: Producto) => string[] };
+        const columns: ColumnDef[] = [
+            { label: 'ID', width: 12, getter: (p: Producto) => [String(p.id ?? '')] },
+            { label: 'Ident', width: 18, getter: (p: Producto) => [String(p.ident ?? '')] },
+            { label: 'Nombre', width: 45, getter: (p: Producto) => doc.splitTextToSize(p.nombre ?? '', 45) },
+            { label: 'Descripción', width: 70, getter: (p: Producto) => doc.splitTextToSize(p.descripcion ?? '', 70) },
+            { label: 'Proveedor', width: 35, getter: (p: Producto) => [p.proveedor?.nombre ?? 'No definido'] },
+            { label: 'Precio venta', width: 25, getter: (p: Producto) => [displayMoney(p.precio)] },
+            {
+                label: 'Precio proveedor',
+                width: 25,
+                getter: (p: Producto) => [p.precio_proveedor != null ? displayMoney(p.precio_proveedor) : '—'],
+            },
+            {
+                label: 'Creado',
+                width: 25,
+                getter: (p: Producto) => [p.fecha ? new Date(p.fecha).toLocaleDateString('es-MX') : '—'],
+            },
+        ];
+
+        const startX = 14;
+        const baseY = filterParts.length ? 27 : 23;
+        const lineHeight = 5;
+        const pageHeight = doc.internal.pageSize.getHeight();
+
+        const renderHeader = (y: number) => {
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            let x = startX;
+            columns.forEach((col: ColumnDef) => {
+                doc.text(col.label, x, y);
+                x += col.width;
+            });
+            doc.setFont('helvetica', 'normal');
+        };
+
+        let currentY = baseY;
+        renderHeader(currentY);
+        currentY += lineHeight;
+
+        doc.setFontSize(8);
+
+        filteredProductos.value.forEach((producto) => {
+            const columnLines = columns.map((col) => col.getter(producto));
+            const lineCount = Math.max(...columnLines.map((lines) => lines.length));
+            const rowHeight = Math.max(lineHeight, lineCount * lineHeight);
+
+            if (currentY + rowHeight > pageHeight - 15) {
+                doc.addPage('landscape');
+                currentY = 20;
+                renderHeader(currentY);
+                currentY += lineHeight;
+            }
+
+            let x = startX;
+            columnLines.forEach((lines, idx) => {
+                const column = columns[idx];
+                if (!column) return;
+                lines.forEach((line: string, lineIdx: number) => {
+                    doc.text(line || '—', x, currentY + lineIdx * lineHeight);
+                });
+                x += column.width;
+            });
+
+            currentY += rowHeight;
+        });
+
+        const filename = `productos_${new Date().toISOString().slice(0, 10)}.pdf`;
+        doc.save(filename);
+    } catch (e: any) {
+        error.value = e?.message || 'No se pudo generar el PDF.';
+    } finally {
+        downloadingPDF.value = false;
     }
 }
 
@@ -832,6 +928,21 @@ onMounted(async () => {
                                 d="M12 2a1 1 0 0 1 1 1v2.05a1 1 0 0 1-2 0V3a1 1 0 0 1 1-1Zm6.36 3.64a1 1 0 0 1 0 1.41l-1.45 1.45a1 1 0 1 1-1.41-1.41l1.45-1.45a1 1 0 0 1 1.41 0ZM21 11a1 1 0 1 1 0 2h-2.05a1 1 0 0 1 0-2H21ZM8.5 6.09a1 1 0 0 1-1.41 1.41L5.64 6.05A1 1 0 1 1 7.05 4.64L8.5 6.09ZM7 11a1 1 0 0 1 1 1H7Zm1 0a1 1 0 0 1 2 0H8Zm2 0a1 1 0 0 1 2 0h-2Zm2 0a1 1 0 0 1 2 0h-2Zm2 0a1 1 0 0 1 2 0h-2Z" />
                         </svg>
                         <span>{{ downloadingCSV ? 'Generando CSV…' : 'Exportar CSV' }}</span>
+                    </button>
+                    <button type="button" @click="downloadProductosPDF"
+                        :disabled="downloadingPDF || loading"
+                        class="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">
+                        <svg v-if="downloadingPDF" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                            class="h-4 w-4 animate-spin text-gray-500" aria-hidden="true">
+                            <path fill="currentColor"
+                                d="M12 2a1 1 0 0 1 1 1v2.05a1 1 0 0 1-2 0V3a1 1 0 0 1 1-1Zm6.36 3.64a1 1 0 0 1 0 1.41l-1.45 1.45a1 1 0 1 1-1.41-1.41l1.45-1.45a1 1 0 0 1 1.41 0ZM21 11a1 1 0 1 1 0 2h-2.05a1 1 0 0 1 0-2H21ZM8.5 6.09a1 1 0 0 1-1.41 1.41L5.64 6.05A1 1 0 1 1 7.05 4.64L8.5 6.09ZM7 11a1 1 0 0 1 1 1H7Zm1 0a1 1 0 0 1 2 0H8Zm2 0a1 1 0 0 1 2 0h-2Zm2 0a1 1 0 0 1 2 0h-2Zm2 0a1 1 0 0 1 2 0h-2Z" />
+                        </svg>
+                        <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                            class="h-4 w-4 text-gray-700" aria-hidden="true">
+                            <path fill="currentColor"
+                                d="M7 3a2 2 0 0 0-2 2v14l7-3 7 3V5a2 2 0 0 0-2-2H7Z" />
+                        </svg>
+                        <span>{{ downloadingPDF ? 'Generando PDF…' : 'Exportar PDF' }}</span>
                     </button>
                 </div>
 
