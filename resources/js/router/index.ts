@@ -39,7 +39,7 @@ const routes: RouteRecordRaw[] = [
         name: "admin-dashboard",
         component: AdminDashboard,
         alias: "/login",
-        meta: { requiresAuth: true, roles: ["admin"], module: "dashboard" },
+        meta: { requiresAuth: true, roles: ["admin","cashier"], module: "dashboard" },
     },
 
     // Provider-only area
@@ -83,27 +83,27 @@ const routes: RouteRecordRaw[] = [
         path: '/admin/proveedores',
         name: 'admin-proveedores-form',
         component: AdminProveedoresForm,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'proveedores' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'proveedores' }
     },
     //Inventory crear
     {
         path: '/admin/inventario/entrada',
         name: 'admin-inventario-entrada',
         component: AdminInventarioEntrada,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'inventario' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'inventario' }
     },
     {
         path: '/admin/inventario/reporte',
         name: 'admin-inventario-reporte',
         component: AdminInventarioReportView,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'inventario' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'inventario' }
     },
     //Promociones crear
     {
         path: '/admin/promociones',
         name: 'admin-promociones',
         component: AdminPromociones,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'promociones' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'promociones' }
     },
     //Caja view
     {
@@ -117,45 +117,45 @@ const routes: RouteRecordRaw[] = [
         path: '/admin/emails',
         name: 'admin-emails-history',
         component: AdminEmailHistory,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'emails' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'emails' }
     },
     //clientes view
     {
         path: '/admin/clientes',
         name: 'admin-clientes',
         component: AdminClientes,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'clientes' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'clientes' }
     },
     //cobros a marcas
     {
         path: '/admin/cobros',
         name: 'admin-cobros',
         component: AdminCobros,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'cobros' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'cobros' }
     },
     {
         path: '/admin/reportes',
         name: 'admin-reports',
         component: AdminReportsView,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'reportes' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'reportes' }
     },
     {
         path: '/admin/analisis',
         name: 'admin-analysis',
         component: AdminAnalysisView,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'analisis' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'analisis' }
     },
     {
         path: '/admin/usuarios',
         name: 'admin-usuarios',
         component: AdminUsuariosView,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'usuarios' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'usuarios' }
     },
     {
         path: '/admin/roles',
         name: 'admin-roles',
         component: AdminRolesView,
-        meta: { requiresAuth: true, roles: ['admin'], module: 'roles' }
+        meta: { requiresAuth: true, roles: ['admin','cashier'], module: 'roles' }
     }
 ];
 

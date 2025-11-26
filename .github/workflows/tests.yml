@@ -1,0 +1,61 @@
+name: Run PHPUnit Feature Suite
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: laravel
+          MYSQL_USER: laravel
+          MYSQL_PASSWORD: secret
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root --password=root"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+            php-version: '8.2'
+            extensions: mbstring, pdo_mysql
+            coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-progress --no-suggest
+
+      - name: Copy .env
+        run: cp .env.example .env
+
+      - name: Generate app key
+        run: php artisan key:generate
+
+      - name: Configure database
+        run: |
+          php -r "file_put_contents('.env', preg_replace('/DB_HOST=.*/', 'DB_HOST=127.0.0.1', file_get_contents('.env')));"
+          php -r "file_put_contents('.env', preg_replace('/DB_PORT=.*/', 'DB_PORT=3306', file_get_contents('.env')));"
+          php -r "file_put_contents('.env', preg_replace('/DB_DATABASE=.*/', 'DB_DATABASE=laravel', file_get_contents('.env')));"
+          php -r "file_put_contents('.env', preg_replace('/DB_USERNAME=.*/', 'DB_USERNAME=laravel', file_get_contents('.env')));"
+          php -r "file_put_contents('.env', preg_replace('/DB_PASSWORD=.*/', 'DB_PASSWORD=secret', file_get_contents('.env')));"
+
+      - name: Run migrations
+        run: php artisan migrate --force
+
+      - name: Run Feature tests
+        run: php artisan test --testsuite=Feature

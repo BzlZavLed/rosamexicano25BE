@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { getCashierSummary, type CashierSummaryResponse } from '../../api/widgets';
+import type { SoldProduct } from '../../api/widgets';
 
 const loading = ref(false);
 const error = ref('');
 const summary = ref<CashierSummaryResponse | null>(null);
+const soldProducts = ref<SoldProduct[]>([]);
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fechaFiltro = ref<string>(todayISO());
@@ -25,9 +27,11 @@ async function loadSummary() {
     try {
         const data = await getCashierSummary(fechaFiltro.value || undefined);
         summary.value = data;
+        soldProducts.value = data.productos ?? [];
     } catch (err: any) {
         error.value = err?.response?.data?.message || err?.message || 'No se pudo cargar el resumen de caja.';
         summary.value = null;
+        soldProducts.value = [];
     } finally {
         loading.value = false;
     }
@@ -143,6 +147,41 @@ onMounted(loadSummary);
 
             <div v-else class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-5 text-sm text-gray-500">
                 Sin datos para la fecha seleccionada.
+            </div>
+
+            <div v-if="hasData && soldProducts.length" class="rounded-2xl border border-gray-200 bg-white p-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500">Productos vendidos</p>
+                        <p class="text-sm text-gray-600">Detalle del día seleccionado</p>
+                    </div>
+                    <span class="text-xs text-gray-400">{{ soldProducts.length }} registros</span>
+                </div>
+                <div class="mt-3 divide-y divide-gray-100 text-sm">
+                    <div
+                        v-for="prod in soldProducts"
+                        :key="`${prod.producto_id}-${prod.venta_id}-${prod.producto_nombre}`"
+                        class="flex flex-wrap items-center justify-between gap-3 py-2"
+                    >
+                        <div>
+                            <p class="font-semibold text-gray-900">
+                                {{ prod.producto_nombre ?? 'Producto sin nombre' }}
+                            </p>
+                            <p class="text-xs text-gray-500">
+                                Venta #{{ prod.venta_id }} · {{ prod.fecha }}
+                            </p>
+                        </div>
+                        <div class="text-right text-sm text-gray-600">
+                            <p>Cant. <b class="text-gray-900">{{ prod.cantidad }}</b></p>
+                            <p>
+                                {{ formatCurrency(prod.total) }}
+                                <span class="text-xs text-gray-500" v-if="prod.metodo">
+                                    · {{ prod.metodo }}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

@@ -10,6 +10,7 @@ export const ADMIN_DEFAULT_MODULES = [
     'emails',
     'reportes',
     'analisis',
+    'configuracion',
     'roles',
     'usuarios',
     'cancelaciones',

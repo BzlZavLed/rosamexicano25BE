@@ -36,7 +36,7 @@ const form = reactive<{
 const moduleOptions = STAFF_MODULES;
 
 const adminRoles = computed(() => roles.value.filter((role) => role.base_role === 'admin'));
-const cashierRoles = computed(() => roles.value.filter((role) => role.base_role === 'cashier'));
+const employeeRoles = computed(() => roles.value.filter((role) => role.base_role === 'cashier'));
 
 function defaultModules(baseRole: 'admin' | 'cashier'): StaffModuleValue[] {
     if (baseRole === 'admin') {
@@ -143,9 +143,10 @@ onMounted(fetchRoles);
     <AppLayout>
         <div class="space-y-6">
             <header class="space-y-1">
+                <p class="text-xs uppercase tracking-wide text-gray-500">Perfiles disponibles</p>
                 <h1 class="text-xl font-semibold text-gray-900">Perfiles de acceso</h1>
                 <p class="text-sm text-gray-500">
-                    Define paquetes de módulos reutilizables para asignarlos rápidamente a administradores o cajeros.
+                    Agrupa los módulos por perfil (administradores o personal operativo) y reutiliza estas configuraciones al crear nuevos usuarios.
                 </p>
             </header>
 
@@ -154,13 +155,16 @@ onMounted(fetchRoles);
                     <div
                         class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-3"
                         v-for="group in [
-                            { label: 'Administradores', items: adminRoles },
-                            { label: 'Cajeros', items: cashierRoles },
+                            { label: 'Perfiles para administradores', hint: 'Define qué módulos tendrán los usuarios de tipo administrador.', items: adminRoles },
+                            { label: 'Perfiles para personal operativo', hint: 'Controla el acceso de cajeros y personal de piso.', items: employeeRoles },
                         ]"
                         :key="group.label"
                     >
                         <div class="flex items-center justify-between">
-                            <h2 class="text-sm font-semibold text-gray-700">{{ group.label }}</h2>
+                            <div>
+                                <h2 class="text-sm font-semibold text-gray-700">{{ group.label }}</h2>
+                                <p v-if="group.hint" class="text-xs text-gray-500">{{ group.hint }}</p>
+                            </div>
                             <span class="text-xs text-gray-400">{{ group.items.length }} perfiles</span>
                         </div>
                         <div v-if="group.items.length" class="space-y-3">
@@ -203,11 +207,14 @@ onMounted(fetchRoles);
                 <section class="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
                     <header class="space-y-1">
                         <p class="text-xs uppercase tracking-wide text-gray-500">
-                            {{ formMode === 'create' ? 'Nuevo perfil' : 'Editar perfil' }}
+                            {{ formMode === 'create' ? 'Nuevo rol' : 'Editar rol' }}
                         </p>
                         <h2 class="text-lg font-semibold text-gray-900">
-                            {{ formMode === 'create' ? 'Agregar perfil' : 'Actualizar perfil' }}
+                            {{ formMode === 'create' ? 'Configurar rol personalizado' : 'Actualizar rol' }}
                         </h2>
+                        <p class="text-xs text-gray-500">
+                            Define los módulos que incluye este rol y a qué perfil (admin o personal operativo) pertenece.
+                        </p>
                     </header>
                     <form class="space-y-4" @submit.prevent="submitForm">
                         <label class="block text-sm">
@@ -246,7 +253,12 @@ onMounted(fetchRoles);
                                 type="checkbox"
                                 class="rounded border-gray-300 text-gray-900 focus:ring-gray-900"
                             />
-                            <span>Usar como predeterminado para este tipo de usuario</span>
+                            <span>
+                                Usar como predeterminado para este tipo de usuario
+                                <span class="block text-[11px] text-gray-500 font-normal">
+                                    Si está activo, se aplicará este rol automáticamente cuando crees un nuevo usuario de este perfil.
+                                </span>
+                            </span>
                         </label>
                         <div class="space-y-2 text-sm">
                             <p class="font-medium text-gray-700">Módulos incluidos</p>

@@ -16,6 +16,7 @@ class StaffModules
         'emails',
         'reportes',
         'analisis',
+        'configuracion',
         'usuarios',
         'roles',
         'cancelaciones',

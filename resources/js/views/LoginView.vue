@@ -34,11 +34,8 @@ const logoSrc = computed(() => THEME_LOGOS[theme.value]);
 const heroTitle = computed(() => THEME_TITLES[theme.value] ?? 'Portal interno');
 
 async function submit() {
-    console.log('Submitting login form');
     const inputIdentifier = identifier.value.trim();
-    console.log('[login] attempt', { identifier: inputIdentifier });
     const ok = await auth.login(inputIdentifier, password.value);
-    console.log('[login] result', { identifier: inputIdentifier, success: ok });
     if (!ok) {
         console.warn('[login] failed', { identifier: inputIdentifier, error: auth.error });
         return;

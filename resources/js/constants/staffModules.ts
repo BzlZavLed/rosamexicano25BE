@@ -10,6 +10,7 @@ export const STAFF_MODULES = [
     { value: 'emails', label: 'Emails' },
     { value: 'reportes', label: 'Reportes' },
     { value: 'analisis', label: 'Análisis' },
+    { value: 'configuracion', label: 'Configuración' },
     { value: 'usuarios', label: 'Usuarios' },
     { value: 'roles', label: 'Perfiles de acceso' },
     { value: 'cancelaciones', label: 'Cancelar ventas' },

@@ -11,12 +11,16 @@ const isAdmin = computed(() => auth.isAdmin);
 const isCashier = computed(() => auth.isCashier);
 const isStaff = computed(() => auth.isAdmin || auth.isCashier);
 const isProvider = computed(() => auth.isProvider);
+const allowedModuleSet = computed(() => new Set(auth.allowedModules));
+const canOpenConfig = computed(() => isStaff.value && allowedModuleSet.value.has('configuracion'));
+const canOpenCancel = computed(() => isStaff.value && allowedModuleSet.value.has('cancelaciones'));
 const drawerOpen = ref(false);
 const isCompact = ref(false);
 const sidebarCollapsed = ref(false);
 const appName = import.meta.env.VITE_APP_NAME || 'Rosa Mexicano POS';
 const settingsOpen = ref(false);
 const cancelToolOpen = ref(false);
+
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }
 function closeDrawer() { drawerOpen.value = false; }
@@ -68,13 +72,13 @@ onUnmounted(() => {
                 </div>
                 <div class="flex items-center gap-3 text-sm text-gray-600">
                     <button
-                        v-if="isAdmin"
+                        v-if="canOpenConfig"
                         class="hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 text-xs hover:bg-gray-50 transition"
                         @click="settingsOpen = true">
                         Configuración
                     </button>
                     <button
-                        v-if="isAdmin"
+                        v-if="canOpenCancel"
                         class="hidden sm:inline-flex items-center justify-center rounded-lg border px-3 py-2 text-xs hover:bg-gray-50 transition"
                         @click="cancelToolOpen = true">
                         Cancelar ventas

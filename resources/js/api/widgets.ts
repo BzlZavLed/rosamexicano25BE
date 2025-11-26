@@ -7,6 +7,16 @@ export type MetodoResumen = {
     transacciones: number;
 };
 
+export type SoldProduct = {
+    venta_id: number;
+    fecha: string;
+    producto_id: number;
+    producto_nombre: string | null;
+    cantidad: number;
+    total: number;
+    metodo: string | null;
+};
+
 export type CashierSummaryResponse = {
     fecha: string; // e.g., "31/10/25" (dd/mm/yy)
     entradas_total: number;
@@ -19,6 +29,7 @@ export type CashierSummaryResponse = {
     metodos: MetodoResumen[];
     saldo_inicial: number;
     saldo_final: number;
+    productos?: SoldProduct[];
 };
 
 export async function getCashierSummary(fecha?: string) {
