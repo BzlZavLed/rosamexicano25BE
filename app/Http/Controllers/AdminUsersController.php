@@ -4,12 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreAdminUserRequest;
 use App\Http\Requests\UpdateAdminUserRequest;
+use App\Models\StaffRole;
 use App\Models\Usuario;
+use App\Support\StaffModules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\Process\Process;
 
 class AdminUsersController extends Controller
@@ -23,7 +26,7 @@ class AdminUsersController extends Controller
         }
 
         $perPage = (int)$request->get('per_page', 20);
-        $q = Usuario::query();
+        $q = Usuario::with('staffRole');
 
         if ($s = $request->get('search')) {
             $like = '%' . Str::lower($s) . '%';
@@ -45,15 +48,15 @@ class AdminUsersController extends Controller
         }
 
         $data = $request->validated();
+        $role = $data['role'] ?? 'admin';
+        $data['role'] = $role;
+        $staffRole = $this->resolveStaffRole($data['staff_role_id'] ?? null, $role, allowNull: true);
+        $data['staff_role_id'] = $staffRole?->id;
+        $data['modules'] = $staffRole ? null : $this->normalizeModules($data['modules'] ?? null, $role);
         $data['password'] = Hash::make($data['password']);
         $user = Usuario::create($data);
 
-        return response()->json([
-            'id' => $user->id,
-            'email' => $user->email,
-            'nombre' => $user->nombre,
-            'puesto' => $user->puesto,
-        ], 201);
+        return $user->load('staffRole');
     }
 
     // GET /api/admin/users/{usuario}
@@ -62,7 +65,7 @@ class AdminUsersController extends Controller
         if ($request->user() instanceof \App\Models\Proveedor) {
             return response()->json(['message'=>'Solo administrador'], 403);
         }
-        return $usuario;
+        return $usuario->load('staffRole');
     }
 
     // PATCH /api/admin/users/{usuario}
@@ -73,11 +76,25 @@ class AdminUsersController extends Controller
         }
 
         $data = $request->validated();
+        $role = $data['role'] ?? $usuario->role ?? 'admin';
+        $data['role'] = $role;
+
+        $staffRoleId = $data['staff_role_id'] ?? $usuario->staff_role_id;
+        $staffRole = $this->resolveStaffRole($staffRoleId, $role, allowNull: true);
+        $data['staff_role_id'] = $staffRole?->id;
+
+        if ($staffRole) {
+            $data['modules'] = null;
+        } elseif (array_key_exists('modules', $data) || $usuario->modules !== null) {
+            $modulesInput = array_key_exists('modules', $data) ? $data['modules'] : $usuario->modules;
+            $data['modules'] = $this->normalizeModules($modulesInput, $role);
+        }
+
         if (!empty($data['password'])) {
             $data['password'] = Hash::make($data['password']);
         }
         $usuario->update($data);
-        return $usuario;
+        return $usuario->load('staffRole');
     }
 
     // DELETE /api/admin/users/{usuario}
@@ -262,5 +279,47 @@ class AdminUsersController extends Controller
         $isAdminRole = in_array(Str::lower((string) $user->puesto), ['admin', 'superadmin', 'owner'], true);
 
         return $hasPrivileges && $isAdminRole;
+    }
+
+    protected function normalizeModules($modules, string $role): array
+    {
+        $modulesArray = is_array($modules)
+            ? array_values(array_filter(array_map(static fn ($value) => is_string($value) ? $value : (string) $value, $modules)))
+            : [];
+
+        $allowed = array_values(array_intersect($modulesArray, StaffModules::list()));
+
+        if (!empty($allowed)) {
+            return array_values(array_unique($allowed));
+        }
+
+        return $role === 'admin' ? StaffModules::list() : ['caja'];
+    }
+
+    protected function resolveStaffRole($staffRoleId, string $role, bool $allowNull = false): ?StaffRole
+    {
+        if (empty($staffRoleId)) {
+            if ($allowNull) {
+                return null;
+            }
+            throw ValidationException::withMessages([
+                'staff_role_id' => 'Debes seleccionar un perfil válido.',
+            ]);
+        }
+
+        $staffRole = StaffRole::find($staffRoleId);
+        if (!$staffRole) {
+            throw ValidationException::withMessages([
+                'staff_role_id' => 'El perfil seleccionado no existe.',
+            ]);
+        }
+
+        if ($staffRole->base_role !== $role) {
+            throw ValidationException::withMessages([
+                'staff_role_id' => 'El perfil seleccionado no coincide con el tipo de usuario.',
+            ]);
+        }
+
+        return $staffRole;
     }
 }

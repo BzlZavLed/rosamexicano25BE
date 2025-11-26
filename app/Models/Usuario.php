@@ -13,7 +13,7 @@ class Usuario extends Authenticatable
     protected $primaryKey = 'id';
     public $timestamps = false;
 
-    protected $fillable = ['nombre','email','password','puesto','priv1','priv2','priv3','priv4'];
+    protected $fillable = ['nombre','email','password','puesto','priv1','priv2','priv3','priv4','role','modules','staff_role_id'];
 
     protected $hidden = ['password'];
 
@@ -24,5 +24,15 @@ class Usuario extends Authenticatable
         'priv2'  => 1,
         'priv3'  => 1,
         'priv4'  => 1,
+        'role'   => 'admin',
     ];
+
+    protected $casts = [
+        'modules' => 'array',
+    ];
+
+    public function staffRole()
+    {
+        return $this->belongsTo(StaffRole::class, 'staff_role_id');
+    }
 }

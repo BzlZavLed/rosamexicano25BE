@@ -3,6 +3,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { resolveStaffHome } from '../utils/staffRoutes';
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -33,15 +34,22 @@ const logoSrc = computed(() => THEME_LOGOS[theme.value]);
 const heroTitle = computed(() => THEME_TITLES[theme.value] ?? 'Portal interno');
 
 async function submit() {
+    console.log('Submitting login form');
     const inputIdentifier = identifier.value.trim();
-    console.debug('[login] attempt', { identifier: inputIdentifier });
+    console.log('[login] attempt', { identifier: inputIdentifier });
     const ok = await auth.login(inputIdentifier, password.value);
+    console.log('[login] result', { identifier: inputIdentifier, success: ok });
     if (!ok) {
         console.warn('[login] failed', { identifier: inputIdentifier, error: auth.error });
         return;
     }
-    if (auth.isAdmin) router.push({ name: 'admin-dashboard' });
-    else if (auth.isProvider) router.push({ name: 'provider-dashboard' });
+    if (auth.isAdmin || auth.isCashier) {
+        const staffRole: 'admin' | 'cashier' | '' = auth.isAdmin ? 'admin' : auth.isCashier ? 'cashier' : '';
+        const fallback = resolveStaffHome(staffRole, auth.modules) ?? { name: 'admin-dashboard' };
+        router.push(fallback);
+    } else if (auth.isProvider) {
+        router.push({ name: 'provider-dashboard' });
+    }
 }
 
 function onEnter(e: KeyboardEvent) {

@@ -15,6 +15,7 @@ use App\Http\Controllers\PromocionesController;
 use App\Http\Controllers\ProveedoresController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\StaffRoleController;
 use App\Http\Controllers\UnifiedAuthController;
 use App\Http\Controllers\WidgetsController;
 use App\Http\Controllers\AnalysisController;
@@ -152,6 +153,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/users/backup', [AdminUsersController::class, 'backup']);
     Route::apiResource('admin/users', AdminUsersController::class)
         ->parameters(['users' => 'usuario']);
+    Route::apiResource('admin/staff-roles', StaffRoleController::class)
+        ->parameters(['staff-roles' => 'staffRole']);
 
     // Promociones
     Route::apiResource('promociones', PromocionesController::class)

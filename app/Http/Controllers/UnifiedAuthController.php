@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Usuario;
 use App\Models\Proveedor;
+use App\Models\StaffRole;
+use App\Support\StaffModules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -31,13 +33,21 @@ class UnifiedAuthController extends Controller
 
         if (filter_var($id, FILTER_VALIDATE_EMAIL)) {
             // Admin path
-            $admin = Usuario::where('email', $id)->first();
+            $admin = Usuario::where('email', $id)->with('staffRole')->first();
             if ($admin && Hash::check($pw, $admin->password)) {
-                $token = $admin->createToken('pos-admin', ['role:admin'])->plainTextToken;
+                $role = $this->staffRole($admin);
+                $token = $admin->createToken('pos-admin', ['role:' . $role])->plainTextToken;
                 return response()->json([
                     'token' => $token,
-                    'role'  => 'admin',
-                    'user'  => ['id'=>$admin->id,'email'=>$admin->email,'nombre'=>$admin->nombre],
+                    'role'  => $role,
+                    'user'  => [
+                        'id' => $admin->id,
+                        'email' => $admin->email,
+                        'nombre' => $admin->nombre,
+                        'modules' => $this->staffModules($admin),
+                        'staff_role' => $this->formatStaffRole($admin->staffRole),
+                        'role' => $role,
+                    ],
                 ]);
             }
             Log::warning('Admin login failed', [
@@ -126,14 +136,31 @@ class UnifiedAuthController extends Controller
     {
         $u = $request->user();
         $isProvider = $u instanceof Proveedor;
+        if ($isProvider) {
+            return response()->json([
+                'role' => 'provider',
+                'provider' => [
+                    'id'     => $u->id,
+                    'ident'  => $u->ident,
+                    'nombre' => $u->nombre ?? null,
+                    'email'  => $u->email ?? null,
+                    'tel'    => $u->tel ?? null,
+                ],
+            ]);
+        }
+
+        /** @var Usuario $u */
+        $u->loadMissing('staffRole');
+        $role = $this->staffRole($u);
         return response()->json([
-            'role' => $isProvider ? 'provider' : 'admin',
-            $isProvider ? 'provider' : 'user' => [
+            'role' => $role,
+            'user' => [
                 'id'     => $u->id,
-                'ident'  => $isProvider ? $u->ident : null,
                 'nombre' => $u->nombre ?? null,
                 'email'  => $u->email ?? null,
-                'tel'    => $u->tel ?? null,
+                'modules'=> $this->staffModules($u),
+                'staff_role' => $this->formatStaffRole($u->staffRole),
+                'role'   => $role,
             ],
         ]);
     }
@@ -142,5 +169,46 @@ class UnifiedAuthController extends Controller
     {
         $request->user()->currentAccessToken()->delete();
         return response()->json(['message'=>'Logged out']);
+    }
+
+    protected function staffRole(Usuario $user): string
+    {
+        return $user->role === 'cashier' ? 'cashier' : 'admin';
+    }
+
+    protected function staffModules(Usuario $user): array
+    {
+        $user->loadMissing('staffRole');
+        if ($user->staffRole && is_array($user->staffRole->modules)) {
+            return $user->staffRole->modules;
+        }
+
+        $modules = $user->modules ?? [];
+
+        if ($user->role === 'admin') {
+            return empty($modules) ? StaffModules::list() : $modules;
+        }
+
+        if ($user->role === 'cashier') {
+            return empty($modules) ? ['caja'] : $modules;
+        }
+
+        return $modules;
+    }
+
+    protected function formatStaffRole(?StaffRole $role): ?array
+    {
+        if (!$role) {
+            return null;
+        }
+
+        return [
+            'id' => $role->id,
+            'name' => $role->name,
+            'slug' => $role->slug,
+            'base_role' => $role->base_role,
+            'modules' => $role->modules ?? [],
+            'is_default' => (bool) $role->is_default,
+        ];
     }
 }

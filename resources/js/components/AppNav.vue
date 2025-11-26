@@ -8,18 +8,25 @@ const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
 
+const adminNavMap: Array<{ module: string; label: string; to: { name?: string; path?: string } }> = [
+    { module: 'dashboard', label: 'Dashboard', to: { name: 'admin-dashboard' } },
+    { module: 'caja', label: 'Caja / POS', to: { path: '/admin/caja' } },
+    { module: 'inventario', label: 'Inventario', to: { path: '/admin/inventario/entrada' } },
+    { module: 'productos', label: 'Productos', to: { path: '/admin/productos/crear' } },
+    { module: 'proveedores', label: 'Proveedores', to: { path: '/admin/proveedores' } },
+    { module: 'cobros', label: 'Cobros', to: { path: '/admin/cobros' } },
+    { module: 'reportes', label: 'Reportes', to: { path: '/admin/reportes' } },
+    { module: 'analisis', label: 'Análisis', to: { path: '/admin/analisis' } },
+    { module: 'usuarios', label: 'Usuarios', to: { path: '/admin/usuarios' } },
+    { module: 'roles', label: 'Perfiles', to: { path: '/admin/roles' } },
+];
+
 const links = computed(() => {
-    if (auth.isAdmin) {
-        return [
-            { to: { name: 'admin-dashboard' }, label: 'Dashboard' },
-            // add these as you build the views/routes:
-            { to: { path: '/admin/proveedores' }, label: 'Proveedores' },
-            { to: { path: '/admin/productos' }, label: 'Productos' },
-            { to: { path: '/admin/inventario' }, label: 'Inventario' },
-            { to: { path: '/admin/caja' }, label: 'Caja / POS' },
-            { to: { path: '/admin/users' }, label: 'Usuarios' },
-        ];
-    } else if (auth.isProvider) {
+    if (auth.isAdmin || auth.isCashier) {
+        const allowed = new Set(auth.allowedModules);
+        return adminNavMap.filter((item) => allowed.has(item.module));
+    }
+    if (auth.isProvider) {
         return [
             { to: { name: 'provider-dashboard' }, label: 'Inicio' },
             { to: { path: '/provider/catalogo' }, label: 'Productos e inventario' },

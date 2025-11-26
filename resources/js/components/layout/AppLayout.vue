@@ -8,6 +8,8 @@ import AdminCancelSalesModal from '../modals/AdminCancelSalesModal.vue';
 
 const auth = useAuthStore();
 const isAdmin = computed(() => auth.isAdmin);
+const isCashier = computed(() => auth.isCashier);
+const isStaff = computed(() => auth.isAdmin || auth.isCashier);
 const isProvider = computed(() => auth.isProvider);
 const drawerOpen = ref(false);
 const isCompact = ref(false);
@@ -80,6 +82,7 @@ onUnmounted(() => {
                     <div class="leading-tight text-right max-w-[50vw] sm:max-w-xs truncate">
                         <span class="font-medium truncate">{{ auth.displayName }}</span>
                         <div class="text-xs text-gray-400" v-if="isAdmin">Administrador</div>
+                        <div class="text-xs text-gray-400" v-else-if="isCashier">Cajero</div>
                         <div class="text-xs text-gray-400" v-else-if="isProvider">Proveedor</div>
                     </div>
                     <button
@@ -95,7 +98,7 @@ onUnmounted(() => {
                 <!-- Desktop sidebar -->
                 <aside v-show="!sidebarCollapsed" class="hidden md:block shrink-0 w-[250px] xl:w-[280px] pt-5 pr-4">
                     <div class="sticky top-20">
-                        <component :is="isAdmin ? SidebarAdmin : SidebarProvider" />
+                        <component :is="isStaff ? SidebarAdmin : SidebarProvider" />
                     </div>
                 </aside>
 
@@ -116,7 +119,7 @@ onUnmounted(() => {
                                 @click="closeDrawer">✕</button>
                         </div>
                         <div class="flex-1 overflow-y-auto pr-1">
-                            <component :is="isAdmin ? SidebarAdmin : SidebarProvider" @navigate="closeDrawer" />
+                            <component :is="isStaff ? SidebarAdmin : SidebarProvider" @navigate="closeDrawer" />
                         </div>
                     </aside>
                 </transition>

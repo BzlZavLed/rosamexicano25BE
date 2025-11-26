@@ -15,18 +15,28 @@ use Illuminate\Validation\ValidationException;
 
 class AdminSalesToolController extends Controller
 {
-    protected function ensureAdmin(Request $request, string $password): Usuario
+    protected function resolveAdminForAction(Request $request, string $password): Usuario
     {
         $user = $request->user();
         if (!($user instanceof Usuario)) {
-            abort(403, 'Solo administradores.');
+            abort(403, 'Solo personal autorizado.');
         }
-        if (!Hash::check($password, $user->password)) {
-            throw ValidationException::withMessages([
-                'admin_password' => 'Contraseña inválida.',
-            ]);
+
+        if ($user->role === 'admin' && Hash::check($password, $user->password)) {
+            return $user;
         }
-        return $user;
+
+        $admin = Usuario::where('role', 'admin')->get()->first(function (Usuario $adminUser) use ($password) {
+            return Hash::check($password, $adminUser->password);
+        });
+
+        if ($admin) {
+            return $admin;
+        }
+
+        throw ValidationException::withMessages([
+            'admin_password' => 'Contraseña de administrador inválida.',
+        ]);
     }
 
     public function list(Request $request)
@@ -36,7 +46,7 @@ class AdminSalesToolController extends Controller
             'admin_password' => ['required', 'string', 'min:4'],
         ]);
 
-        $this->ensureAdmin($request, $data['admin_password']);
+        $this->resolveAdminForAction($request, $data['admin_password']);
 
         $date = Carbon::parse($data['date'])->toDateString();
         $ventas = Venta::with(['lineas' => fn ($q) => $q->orderBy('id')])
@@ -85,7 +95,7 @@ class AdminSalesToolController extends Controller
             'reason' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $admin = $this->ensureAdmin($request, $data['admin_password']);
+        $admin = $this->resolveAdminForAction($request, $data['admin_password']);
 
         $alreadyLogged = VentaCancelacion::where('venta_id', $venta->id)->exists();
         if ($alreadyLogged) {
