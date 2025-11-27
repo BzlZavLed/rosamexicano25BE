@@ -16,6 +16,43 @@ export type SettingsResponse = {
         recommended_percentage: number;
         recommended_months: number;
     };
+    history?: SettingHistoryEntry[];
+    card_rebalance_history?: CardRebalanceLog[];
+    card_rebalance_changes?: CardRebalanceChange[];
+};
+
+export type SettingHistoryEntry = {
+    key: string;
+    old_value: string | null;
+    new_value: string | null;
+    changed_by: number | null;
+    changed_by_name: string | null;
+    created_at: string;
+};
+
+export type CardRebalanceLog = {
+    date_param: string;
+    venta_id: number | null;
+    sales_processed: number;
+    sales_updated: number;
+    lines_updated: number;
+    sale_ids: string | null;
+    message: string | null;
+    triggered_by: number | null;
+    triggered_by_name: string | null;
+    created_at: string;
+};
+
+export type CardRebalanceChange = {
+    venta_id: number;
+    ventadesg_id: number;
+    fecha_sale: string;
+    public_total: number;
+    total_venta: number;
+    old_credit_card_discount: number;
+    new_credit_card_discount: number;
+    proveedor_id: number | null;
+    created_at: string;
 };
 
 export async function getSystemSettings() {
@@ -47,6 +84,26 @@ export async function runRestockForecastManual(horizon: Array<RestockHorizon>) {
 export async function runCashAutoClose() {
     const { data } = await http.post<{ message: string; dates: string[]; count: number }>(
         '/settings/general/run-cash-autoclose'
+    );
+    return data;
+}
+
+export type CardRebalanceRunResponse = {
+    message: string;
+    log?: string | null;
+    stats?: {
+        sales_processed: number;
+        sales_updated: number;
+        lines_updated: number;
+        venta_id: number | null;
+        date: string | null;
+    } | null;
+};
+
+export async function runCardRebalance(payload: { date?: string; venta_id?: number }) {
+    const { data } = await http.post<CardRebalanceRunResponse>(
+        '/settings/general/run-card-rebalance',
+        payload
     );
     return data;
 }

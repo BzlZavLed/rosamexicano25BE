@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { getSystemSettings, updateSystemSettings, runRestockForecastManual, runCashAutoClose } from '../../api/settings'
+import { getSystemSettings, updateSystemSettings, runRestockForecastManual, runCashAutoClose, runCardRebalance } from '../../api/settings'
 import type { RestockHorizon } from '../../api/reports'
+import type { SettingHistoryEntry, CardRebalanceLog, CardRebalanceChange } from '../../api/settings'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
@@ -25,11 +26,18 @@ const loading = ref(false)
 const saving = ref(false)
 const running = ref(false)
 const runningAutoClose = ref(false)
+const runningRebalance = ref(false)
 const message = ref('')
 const error = ref('')
 const lastRun = ref<string | null>(null)
 const lastClosingBalance = ref<number | null>(null)
 const includeZero = ref(false)
+const rebalanceDate = ref<string | null>(null)
+const rebalanceVentaId = ref<string | null>(null)
+const history = ref<SettingHistoryEntry[]>([])
+const cardRebalanceHistory = ref<CardRebalanceLog[]>([])
+const cardRebalanceChanges = ref<CardRebalanceChange[]>([])
+const rebalanceLogText = ref<string | null>(null)
 
 watch(
     () => props.open,
@@ -59,6 +67,9 @@ async function loadSettings() {
         restockLookback.value = data.restock.lookback_days ?? 90
         recommendedPercent.value = data.analysis?.recommended_percentage ?? 5
         recommendedMonths.value = data.analysis?.recommended_months ?? 12
+        history.value = data.history ?? []
+        cardRebalanceHistory.value = data.card_rebalance_history ?? []
+        cardRebalanceChanges.value = data.card_rebalance_changes ?? []
     } catch (err: any) {
         error.value = err?.response?.data?.message || err?.message || 'No se pudo cargar la configuración.'
     } finally {
@@ -135,6 +146,30 @@ async function runAutoCloseCashbox() {
         runningAutoClose.value = false
     }
 }
+
+async function runCardRebalanceManual() {
+    error.value = ''
+    message.value = ''
+    rebalanceLogText.value = null
+    if (!rebalanceDate.value && !rebalanceVentaId.value) {
+        error.value = 'Ingresa una fecha o un ID de venta para recalcular.'
+        return
+    }
+    runningRebalance.value = true
+    try {
+        const res = await runCardRebalance({
+            date: rebalanceDate.value || undefined,
+            venta_id: rebalanceVentaId.value ? Number(rebalanceVentaId.value) : undefined,
+        })
+        message.value = res?.message ?? 'Rebalanceo de cargos de tarjeta iniciado.'
+        rebalanceLogText.value = res?.log ?? null
+        await loadSettings()
+    } catch (err: any) {
+        error.value = err?.response?.data?.message || err?.message || 'No se pudo ejecutar el rebalanceo.'
+    } finally {
+        runningRebalance.value = false
+    }
+}
 </script>
 
 <template>
@@ -142,7 +177,7 @@ async function runAutoCloseCashbox() {
         <transition name="fade">
             <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center p-4">
                 <div class="absolute inset-0 bg-black/40" @click="emit('close')"></div>
-                <div class="relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-xl">
+                <div class="relative z-10 w-full max-w-6xl rounded-2xl bg-white shadow-xl max-h-[90vh] overflow-y-auto">
                     <header class="flex items-center justify-between border-b border-gray-200 px-5 py-4">
                         <div>
                             <p class="text-sm uppercase tracking-wide text-gray-500">Configuración</p>
@@ -150,9 +185,11 @@ async function runAutoCloseCashbox() {
                         </div>
                         <button class="rounded border border-gray-300 px-3 py-1.5 text-sm" @click="emit('close')">Cerrar</button>
                     </header>
-                    <div class="px-5 py-4 space-y-6 text-sm text-gray-700 divide-y divide-gray-200">
-                        <section class="space-y-2 pt-0">
-                            <div>
+                    <div class="px-5 py-4 text-sm text-gray-700">
+                        <div class="grid gap-6 lg:grid-cols-2">
+                            <div class="space-y-6">
+                                <section class="space-y-2 pt-0">
+                                    <div>
                                 <p class="text-xs uppercase tracking-wide text-gray-500">Pronósticos de restock</p>
                                 <p class="text-[11px] text-gray-500">Define cómo se alimentan el widget de restock y los reportes condensados.</p>
                             </div>
@@ -194,76 +231,200 @@ async function runAutoCloseCashbox() {
                                     Periodo histórico mínimo que se usará para calcular ventas; si las tablas actuales no cubren ese rango, se complementa automáticamente con las tablas históricas.
                                 </p>
                             </div>
-                            <button type="button"
-                                class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
-                                :disabled="running || loading"
-                                @click="runForecast">
-                                <span v-if="running">Ejecutando…</span>
-                                <span v-else>Ejecutar pronóstico ahora</span>
-                            </button>
-                            <button type="button"
-                                class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
-                                :disabled="runningAutoClose || loading"
-                                @click="runAutoCloseCashbox">
-                                <span v-if="runningAutoClose">Cerrando…</span>
-                                <span v-else>Forzar cierre de caja (hoy)</span>
-                            </button>
-                        </section>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button"
+                                    class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
+                                    :disabled="running || loading"
+                                    @click="runForecast">
+                                    <span v-if="running">Ejecutando…</span>
+                                    <span v-else>Ejecutar pronóstico ahora</span>
+                                </button>
+                                <button type="button"
+                                    class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
+                                    :disabled="runningAutoClose || loading"
+                                    @click="runAutoCloseCashbox">
+                                    <span v-if="runningAutoClose">Cerrando…</span>
+                                    <span v-else>Forzar cierre de caja (hoy)</span>
+                                </button>
+                            </div>
+                                </section>
 
-                        <section class="space-y-2 pt-4">
-                            <div>
-                                <p class="text-xs uppercase tracking-wide text-gray-500">Pagos / Caja</p>
-                                <p class="text-[11px] text-gray-500">Aplicado en reportes de caja y cálculo de pagos a proveedores.</p>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <input type="number" step="0.1" min="0" max="100"
-                                    class="w-24 rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                    v-model.number="cardPercent" />
-                                <span class="text-[11px] text-gray-500">Porcentaje descontado cuando una venta se paga con tarjeta.</span>
-                            </div>
-                        </section>
+                                <section class="space-y-2 pt-4">
+                                    <div>
+                                        <p class="text-xs uppercase tracking-wide text-gray-500">Pagos / Caja</p>
+                                        <p class="text-[11px] text-gray-500">Aplicado en reportes de caja y cálculo de pagos a proveedores.</p>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" step="0.1" min="0" max="100"
+                                            class="w-24 rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                            v-model.number="cardPercent" />
+                                        <span class="text-[11px] text-gray-500">Porcentaje descontado cuando una venta se paga con tarjeta.</span>
+                                    </div>
+                                </section>
 
-                        <section class="space-y-2 pt-4">
-                            <div>
-                                <p class="text-xs uppercase tracking-wide text-gray-500">Análisis históricos</p>
-                                <p class="text-[11px] text-gray-500">Usado en la pestaña “Importes recomendados”.</p>
-                            </div>
-                            <div class="grid gap-3 sm:grid-cols-2">
-                                <label class="text-xs text-gray-600">
-                                    <span class="block font-semibold text-gray-700">Porcentaje sobre ventas (%)</span>
-                                    <input type="number" step="0.1" min="0" max="100"
-                                        class="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                        v-model.number="recommendedPercent" />
-                                </label>
-                                <label class="text-xs text-gray-600">
-                                    <span class="block font-semibold text-gray-700">Meses históricos</span>
-                                    <input type="number" min="1" max="60"
-                                        class="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
-                                        v-model.number="recommendedMonths" />
-                                </label>
-                            </div>
+                                <section class="space-y-2 pt-4">
+                                    <div>
+                                        <p class="text-xs uppercase tracking-wide text-gray-500">Análisis históricos</p>
+                                        <p class="text-[11px] text-gray-500">Usado en la pestaña “Importes recomendados”.</p>
+                                    </div>
+                                    <div class="grid gap-3 sm:grid-cols-2">
+                                        <label class="text-xs text-gray-600">
+                                            <span class="block font-semibold text-gray-700">Porcentaje sobre ventas (%)</span>
+                                            <input type="number" step="0.1" min="0" max="100"
+                                                class="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                                v-model.number="recommendedPercent" />
+                                        </label>
+                                        <label class="text-xs text-gray-600">
+                                            <span class="block font-semibold text-gray-700">Meses históricos</span>
+                                            <input type="number" min="1" max="60"
+                                                class="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                                v-model.number="recommendedMonths" />
+                                        </label>
+                                    </div>
+                                    <p class="text-[11px] text-gray-500">
+                                        Controla el porcentaje y ventana de tiempo usados para sugerir nuevos importes en el módulo de Análisis.
+                                    </p>
+                                </section>
+
+                                <section class="flex flex-wrap items-center gap-2 text-xs text-gray-500 pt-4">
+                                    <button type="button"
+                                        class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
+                                        :disabled="saving || loading"
+                                        @click="saveSettings">
+                                        <span v-if="saving">Guardando…</span>
+                                        <span v-else>Guardar configuración</span>
+                                    </button>
+                                    <span class="text-[11px] text-gray-500">Los cambios impactan inmediatamente los módulos mencionados.</span>
+                                </section>
+
+                                <section class="space-y-3 pt-4">
+                                    <div>
+                                        <p class="text-xs uppercase tracking-wide text-gray-500">Recalcular cargos tarjeta</p>
+                                        <p class="text-[11px] text-gray-500">Ejecuta el rebalanceo de cargos de tarjeta para un día completo o una venta específica.</p>
+                                    </div>
+                                    <div class="grid gap-3 sm:grid-cols-2 text-xs text-gray-600">
+                                        <label class="flex flex-col gap-1">
+                                            <span class="font-semibold text-gray-700">Fecha (yyyy-mm-dd)</span>
+                                            <input
+                                                type="date"
+                                                class="rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                                v-model="rebalanceDate"
+                                            />
+                                        </label>
+                                        <label class="flex flex-col gap-1">
+                                            <span class="font-semibold text-gray-700">ID de venta (opcional)</span>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                class="rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                                v-model="rebalanceVentaId"
+                                                placeholder="Ej. 22"
+                                            />
+                                        </label>
+                                    </div>
                             <p class="text-[11px] text-gray-500">
-                                Controla el porcentaje y ventana de tiempo usados para sugerir nuevos importes en el módulo de Análisis.
+                                Ingresa al menos uno de los dos campos. Si solo indicas el ID de venta, se usará la fecha de esa venta.
                             </p>
-                        </section>
-
-                        <section class="flex flex-wrap items-center gap-2 text-xs text-gray-500 pt-4">
-                            <button type="button"
-                                class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
-                                :disabled="saving || loading"
-                                @click="saveSettings">
-                                <span v-if="saving">Guardando…</span>
-                                <span v-else>Guardar configuración</span>
+                            <button
+                                type="button"
+                                        class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium hover:bg-gray-50"
+                                        :disabled="runningRebalance || loading"
+                                        @click="runCardRebalanceManual"
+                            >
+                                <span v-if="runningRebalance">Recalculando…</span>
+                                <span v-else>Recalcular cargos tarjeta</span>
                             </button>
-                            <span class="text-[11px] text-gray-500">Los cambios impactan inmediatamente los módulos mencionados.</span>
+                            <div v-if="rebalanceLogText" class="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-700 whitespace-pre-wrap">
+                                {{ rebalanceLogText }}
+                            </div>
                         </section>
+                            </div>
 
-                        <div v-if="loading" class="text-xs text-gray-500">Cargando ajustes…</div>
-                        <div v-if="error" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                            {{ error }}
-                        </div>
-                        <div v-if="message" class="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-                            {{ message }}
+                            <div class="space-y-6 lg:pl-4">
+                            <!-- <section class="space-y-3">
+                                <div>
+                                    <p class="text-xs uppercase tracking-wide text-gray-500">Historial de rebalanceo</p>
+                                    <p class="text-[11px] text-gray-500">Ejecuciones recientes del rebalanceo de cargos por tarjeta.</p>
+                                </div>
+                                <div class="rounded-lg border border-gray-200 bg-white/80">
+                                    <div v-if="!cardRebalanceHistory.length" class="px-3 py-2 text-[11px] text-gray-500">
+                                        Sin ejecuciones registradas.
+                                    </div>
+                                    <div v-else class="overflow-x-auto">
+                                        <table class="min-w-full text-xs">
+                                            <thead class="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+                                                <tr>
+                                                    <th class="px-3 py-2 text-left">Fecha</th>
+                                                    <th class="px-3 py-2 text-left">Venta</th>
+                                                    <th class="px-3 py-2 text-left">Procesadas</th>
+                                                    <th class="px-3 py-2 text-left">Actualizadas</th>
+                                                    <th class="px-3 py-2 text-left">Renglones</th>
+                                                    <th class="px-3 py-2 text-left">Usuario</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-gray-100 text-gray-700">
+                                                <tr v-for="row in cardRebalanceHistory" :key="row.created_at + (row.venta_id ?? 'all')">
+                                                    <td class="px-3 py-2">{{ new Date(row.created_at).toLocaleString() }}</td>
+                                                    <td class="px-3 py-2 text-gray-900">{{ row.venta_id ?? 'Todas' }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ row.sales_processed }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ row.sales_updated }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ row.lines_updated }}</td>
+                                                    <td class="px-3 py-2 text-gray-600">{{ row.triggered_by_name ?? '—' }}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </section> -->
+
+                            <section class="space-y-3">
+                                <div>
+                                    <p class="text-xs uppercase tracking-wide text-gray-500">Cambios aplicados (últimos 50)</p>
+                                    <p class="text-[11px] text-gray-500">Detalle por línea de venta.</p>
+                                </div>
+                                <div class="rounded-lg border border-gray-200 bg-white/80">
+                                    <div v-if="!cardRebalanceChanges.length" class="px-3 py-2 text-[11px] text-gray-500">
+                                        Sin cambios registrados.
+                                    </div>
+                                    <div v-else class="overflow-x-auto">
+                                        <table class="min-w-full text-xs">
+                                            <thead class="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500">
+                                                <tr>
+                                                    <th class="px-3 py-2 text-left">Venta</th>
+                                                    <th class="px-3 py-2 text-left">Linea</th>
+                                                    <th class="px-3 py-2 text-left">Fecha</th>
+                                                    <th class="px-3 py-2 text-left">Proveedor</th>
+                                                    <th class="px-3 py-2 text-left">Publico</th>
+                                                    <th class="px-3 py-2 text-left">Total venta</th>
+                                                    <th class="px-3 py-2 text-left">Antes</th>
+                                                    <th class="px-3 py-2 text-left">Nuevo</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-gray-100 text-gray-700">
+                                                <tr v-for="row in cardRebalanceChanges" :key="row.created_at + '-' + row.ventadesg_id">
+                                                    <td class="px-3 py-2 text-gray-900">{{ row.venta_id }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ row.ventadesg_id }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ row.fecha_sale }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ row.proveedor_id ?? '—' }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ Number(row.public_total ?? 0).toFixed(2) }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ Number(row.total_venta ?? 0).toFixed(2) }}</td>
+                                                    <td class="px-3 py-2 text-gray-700">{{ Number(row.old_credit_card_discount ?? 0).toFixed(2) }}</td>
+                                                    <td class="px-3 py-2 text-gray-900 font-semibold">{{ Number(row.new_credit_card_discount ?? 0).toFixed(2) }}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <div v-if="loading" class="text-xs text-gray-500">Cargando ajustes…</div>
+                            <div v-if="error" class="rounded border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                                {{ error }}
+                            </div>
+                            <div v-if="message" class="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                                    {{ message }}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

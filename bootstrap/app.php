@@ -21,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         \App\Console\Commands\GenerateRestockForecast::class,
         \App\Console\Commands\AutoCloseCashbox::class,
+        \App\Console\Commands\RebalanceCardFees::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);

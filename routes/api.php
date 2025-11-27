@@ -128,6 +128,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/settings/general', [SettingsController::class, 'updateGeneral']);
     Route::post('/settings/general/run-restock', [SettingsController::class, 'runRestock']);
     Route::post('/settings/general/run-cash-autoclose', [SettingsController::class, 'runCashAutoClose']);
+    Route::post('/settings/general/run-card-rebalance', [SettingsController::class, 'runCardRebalance']);
     Route::get('/analysis/summary', [AnalysisController::class, 'summary']);
     Route::post('/analysis/import', [AnalysisController::class, 'import']);
     Route::get('/analysis/top-sellers', [AnalysisController::class, 'topSellers']);

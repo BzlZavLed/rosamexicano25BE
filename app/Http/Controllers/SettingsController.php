@@ -7,8 +7,13 @@ use App\Models\DailyCashSummary;
 use App\Support\CardCharge;
 use App\Support\CashboxAutoCloser;
 use App\Support\SystemSettings;
+use App\Models\Venta;
+use App\Models\SystemSettingHistory;
+use App\Models\CardRebalanceLog;
+use App\Models\CardRebalanceChange;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Validator;
 
 class SettingsController extends Controller
 {
@@ -36,38 +41,87 @@ class SettingsController extends Controller
             'recommended_months' => ['sometimes', 'integer', 'min:1', 'max:60'],
         ]);
 
+        $changes = [];
+
         if (isset($data['horizon'])) {
             $horizonList = $this->normalizeHorizonArray($data['horizon']);
             if (empty($horizonList)) {
                 $horizonList = ['2w'];
             }
-            SystemSettings::set('restock_cron_horizon', implode(',', $horizonList));
+            $old = SystemSettings::get('restock_cron_horizon', null);
+            $new = implode(',', $horizonList);
+            if ($old !== $new) {
+                $changes[] = ['key' => 'restock_cron_horizon', 'old' => $old, 'new' => $new];
+                SystemSettings::set('restock_cron_horizon', $new);
+            }
         }
 
         if (array_key_exists('card_charge_percent', $data)) {
-            $value = (string) $data['card_charge_percent'];
-            SystemSettings::set('card_charge_percent', $value);
-            CardCharge::refresh();
+            $old = SystemSettings::get('card_charge_percent', null);
+            $new = (string) $data['card_charge_percent'];
+            if ($old !== $new) {
+                $changes[] = ['key' => 'card_charge_percent', 'old' => $old, 'new' => $new];
+                SystemSettings::set('card_charge_percent', $new);
+                CardCharge::refresh();
+            }
         }
 
         if (array_key_exists('restock_include_zero', $data)) {
-            SystemSettings::set('restock_include_zero', $data['restock_include_zero'] ? '1' : '0');
+            $old = SystemSettings::get('restock_include_zero', null);
+            $new = $data['restock_include_zero'] ? '1' : '0';
+            if ($old !== $new) {
+                $changes[] = ['key' => 'restock_include_zero', 'old' => $old, 'new' => $new];
+                SystemSettings::set('restock_include_zero', $new);
+            }
         }
 
         if (array_key_exists('restock_min_days', $data)) {
-            SystemSettings::set('restock_min_days', (string) max(0, (int) $data['restock_min_days']));
+            $old = SystemSettings::get('restock_min_days', null);
+            $new = (string) max(0, (int) $data['restock_min_days']);
+            if ($old !== $new) {
+                $changes[] = ['key' => 'restock_min_days', 'old' => $old, 'new' => $new];
+                SystemSettings::set('restock_min_days', $new);
+            }
         }
 
         if (array_key_exists('restock_lookback_days', $data)) {
-            SystemSettings::set('restock_lookback_days', (string) max(30, min(365, (int) $data['restock_lookback_days'])));
+            $old = SystemSettings::get('restock_lookback_days', null);
+            $new = (string) max(30, min(365, (int) $data['restock_lookback_days']));
+            if ($old !== $new) {
+                $changes[] = ['key' => 'restock_lookback_days', 'old' => $old, 'new' => $new];
+                SystemSettings::set('restock_lookback_days', $new);
+            }
         }
 
         if (array_key_exists('recommended_percentage', $data)) {
-            SystemSettings::set('analysis_recommended_pct', (string) $data['recommended_percentage']);
+            $old = SystemSettings::get('analysis_recommended_pct', null);
+            $new = (string) $data['recommended_percentage'];
+            if ($old !== $new) {
+                $changes[] = ['key' => 'analysis_recommended_pct', 'old' => $old, 'new' => $new];
+                SystemSettings::set('analysis_recommended_pct', $new);
+            }
         }
 
         if (array_key_exists('recommended_months', $data)) {
-            SystemSettings::set('analysis_recommended_months', (string) max(1, (int) $data['recommended_months']));
+            $old = SystemSettings::get('analysis_recommended_months', null);
+            $new = (string) max(1, (int) $data['recommended_months']);
+            if ($old !== $new) {
+                $changes[] = ['key' => 'analysis_recommended_months', 'old' => $old, 'new' => $new];
+                SystemSettings::set('analysis_recommended_months', $new);
+            }
+        }
+
+        if (!empty($changes)) {
+            $user = $request->user();
+            foreach ($changes as $change) {
+                SystemSettingHistory::create([
+                    'key' => $change['key'],
+                    'old_value' => $change['old'],
+                    'new_value' => $change['new'],
+                    'changed_by' => $user?->id,
+                    'changed_by_name' => $user?->nombre ?? $user?->email ?? null,
+                ]);
+            }
         }
 
         return response()->json($this->currentSettings());
@@ -111,6 +165,54 @@ class SettingsController extends Controller
         ]);
     }
 
+    public function runCardRebalance(Request $request)
+    {
+        $this->ensureAdmin($request);
+
+        $validator = Validator::make($request->all(), [
+            'date' => ['required_without:venta_id', 'date_format:Y-m-d'],
+            'venta_id' => ['required_without:date', 'integer', 'min:1'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 422);
+        }
+
+        $date = $request->input('date');
+        $ventaId = $request->input('venta_id');
+
+        if (!$date && $ventaId) {
+            $venta = Venta::where('idventa', (int) $ventaId)->first();
+            if (!$venta || !$venta->fecha) {
+                return response()->json(['message' => 'No se encontró la venta o no tiene fecha.'], 404);
+            }
+            $date = $venta->fecha instanceof \DateTimeInterface
+                ? $venta->fecha->format('Y-m-d')
+                : date('Y-m-d', strtotime((string) $venta->fecha));
+        }
+
+        Artisan::call('card:rebalance', [
+            'date' => $date,
+            '--venta_id' => $ventaId,
+            '--user_id' => $request->user()?->id,
+            '--user_name' => $request->user()?->nombre ?? $request->user()?->email,
+        ]);
+
+        $latestLog = CardRebalanceLog::query()->orderByDesc('id')->first();
+
+        return response()->json([
+            'message' => $latestLog?->message ?? 'Rebalanceo de cargos de tarjeta ejecutado.',
+            'stats' => $latestLog ? [
+                'sales_processed' => $latestLog->sales_processed,
+                'sales_updated' => $latestLog->sales_updated,
+                'lines_updated' => $latestLog->lines_updated,
+                'venta_id' => $latestLog->venta_id,
+                'date' => $latestLog->date_param,
+            ] : null,
+            'log' => $latestLog?->message,
+        ]);
+    }
+
     private function ensureAdmin(Request $request): void
     {
         if (!($request->user() instanceof Usuario)) {
@@ -137,6 +239,46 @@ class SettingsController extends Controller
                 'recommended_percentage' => (float) SystemSettings::get('analysis_recommended_pct', '5'),
                 'recommended_months' => (int) SystemSettings::get('analysis_recommended_months', '12'),
             ],
+            'history' => SystemSettingHistory::query()
+                ->orderByDesc('id')
+                ->limit(20)
+                ->get([
+                    'key',
+                    'old_value',
+                    'new_value',
+                    'changed_by',
+                    'changed_by_name',
+                    'created_at',
+                ]),
+            'card_rebalance_history' => CardRebalanceLog::query()
+                ->orderByDesc('id')
+                ->limit(20)
+                ->get([
+                    'date_param',
+                    'venta_id',
+                    'sales_processed',
+                    'sales_updated',
+                    'lines_updated',
+                    'sale_ids',
+                    'message',
+                    'triggered_by',
+                    'triggered_by_name',
+                    'created_at',
+                ]),
+            'card_rebalance_changes' => CardRebalanceChange::query()
+                ->orderByDesc('id')
+                ->limit(50)
+                ->get([
+                    'venta_id',
+                    'ventadesg_id',
+                    'fecha_sale',
+                    'public_total',
+                    'total_venta',
+                    'old_credit_card_discount',
+                    'new_credit_card_discount',
+                    'proveedor_id',
+                    'created_at',
+                ]),
         ];
     }
 

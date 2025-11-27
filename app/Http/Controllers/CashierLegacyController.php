@@ -273,7 +273,7 @@ class CashierLegacyController extends Controller
                 }
                 unset($line);
 
-                // 2) recargo a proveedores por tarjeta (4.5%), distribuido proporcionalmente
+                // 2) recargo a proveedores por tarjeta (4.5%), distribuido proporcionalmente (no modifica el total cobrado al cliente)
                 $providerChargeTotal = 0.0;
                 $cardRate = CardCharge::rate();
                 if ($method === 'tarjeta' && $cardRate > 0) {
@@ -335,7 +335,8 @@ class CashierLegacyController extends Controller
                     }
                 }
 
-                $total = round(max(0, $afterDiscount - $providerChargeTotal), 2);
+                // El cliente paga el total después de descuentos; el recargo solo se distribuye entre proveedores.
+                $total = round(max(0, $afterDiscount), 2);
 
                 // 5) ticket consecutivo (idventa)
                 $nextIdVenta = (int) DB::table('ventas')->max('idventa') + 1;
@@ -449,7 +450,7 @@ class CashierLegacyController extends Controller
                     'subtotal_after_item_discounts' => $afterDiscount,
                     'discount_percent' => 0,
                     'discount_amount' => 0,
-                    'overall_discount_total' => $itemDiscountTotal + $providerChargeTotal,
+                    'overall_discount_total' => $itemDiscountTotal,
                     'surcharge_percent' => $method === 'tarjeta' ? 4.5 : 0.0,
                     'surcharge_amount' => $providerChargeTotal,
                     'tarjeta_cargo' => round($providerChargeTotal, 2),
