@@ -16,8 +16,9 @@ const report = ref<CajaProveedoresResponse | null>(null);
 const today = new Date();
 const todayIso = formatDate(today);
 const defaultMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-const rangeMode = ref<'month' | 'range'>('month');
+const rangeMode = ref<'month' | 'range' | 'day'>('month');
 const selectedMonth = ref(defaultMonth);
+const selectedDate = ref(todayIso);
 const customRange = reactive({
     from: formatDate(startOfMonth(today)),
     to: todayIso,
@@ -194,6 +195,13 @@ function selectTab(tab: 'summary' | 'trends') {
 }
 
 function computeRange() {
+    if (rangeMode.value === 'day') {
+        const day = selectedDate.value || todayIso;
+        return {
+            fromDate: day,
+            toDate: day,
+        };
+    }
     if (rangeMode.value === 'month') {
         const [yearStr, monthStr] = (selectedMonth.value || defaultMonth).split('-');
         const year = Number(yearStr) || today.getFullYear();
@@ -290,6 +298,15 @@ function startOfMonth(date: Date): Date {
                             />
                             <span>Rango personalizado</span>
                         </label>
+                        <label class="flex items-center gap-2">
+                            <input
+                                type="radio"
+                                value="day"
+                                v-model="rangeMode"
+                                class="text-[#E4007C] focus:ring-[#E4007C]"
+                            />
+                            <span>Fecha específica</span>
+                        </label>
                     </div>
                     <div v-if="rangeMode === 'month'" class="flex flex-wrap items-center gap-3">
                         <label class="text-sm text-gray-700 flex items-center gap-2">
@@ -297,6 +314,16 @@ function startOfMonth(date: Date): Date {
                             <input
                                 type="month"
                                 v-model="selectedMonth"
+                                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]"
+                            />
+                        </label>
+                    </div>
+                    <div v-else-if="rangeMode === 'day'" class="flex flex-wrap items-center gap-3">
+                        <label class="text-sm text-gray-700 flex items-center gap-2">
+                            <span>Fecha</span>
+                            <input
+                                type="date"
+                                v-model="selectedDate"
                                 class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]"
                             />
                         </label>

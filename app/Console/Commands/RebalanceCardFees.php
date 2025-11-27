@@ -90,13 +90,14 @@ class RebalanceCardFees extends Command
                     $unit = (float) ($line->unit_price ?? 0);
                     $qty = (float) ($line->quantity ?? 0);
                     $manualDisc = (float) ($line->manual_discount_amount ?? 0);
-                    $base = max(0, ($unit * $qty) - $manualDisc);
+                    $promoDisc = (float) ($line->promotion_discount_amount ?? 0);
+                    $base = max(0, ($unit * $qty) - $manualDisc - $promoDisc);
                     $new = round($base * $rate, 2);
                     $old = (float) ($line->credit_card_discount ?? 0);
                     $provId = $line->proveedor_id ?? $line->proveedor ?? null;
 
                     $this->info(sprintf(
-                        'Venta %d linea %d prov %s: base=%.2f (unit=%.2f qty=%.2f manual=%.2f), cargo_calculado=%.2f, actual=%.2f',
+                        'Venta %d linea %d prov %s: base=%.2f (unit=%.2f qty=%.2f manual=%.2f promo=%.2f), cargo_calculado=%.2f, actual=%.2f',
                         $venta->idventa,
                         $line->id,
                         $provId ?? '—',
@@ -104,6 +105,7 @@ class RebalanceCardFees extends Command
                         $unit,
                         $qty,
                         $manualDisc,
+                        $promoDisc,
                         $new,
                         $old
                     ));
