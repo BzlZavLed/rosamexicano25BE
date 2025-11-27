@@ -1106,6 +1106,37 @@ function toggleCajaSortDirection() {
     cajaSortDirection.value = cajaSortDirection.value === 'asc' ? 'desc' : 'asc';
 }
 
+function cajaVentaLineTotals(lineas: CajaReportLine[]) {
+    return lineas.reduce(
+        (acc, linea) => {
+            const qty = Number(linea.quantity ?? 0);
+            const unit = Number(linea.unit_price ?? 0);
+            const publicTotal = Number(linea.public_total ?? unit * qty);
+            acc.cantidad += qty;
+            acc.totalProducto += publicTotal;
+            acc.totalProveedor += Number(linea.provider_price ?? 0) * qty;
+            acc.promo += Number(linea.promotion_discount_amount ?? 0);
+            acc.manual += Number(linea.manual_discount_amount ?? 0);
+            acc.tarjeta += Number(linea.credit_card_discount ?? 0);
+            acc.descProveedor += Number(linea.provider_discount_amount ?? 0);
+            acc.pagoProveedor += Number(linea.provider_payment ?? 0);
+            acc.gananciaAdmin += Number(linea.admin_earnings ?? 0);
+            return acc;
+        },
+        {
+            cantidad: 0,
+            totalProducto: 0,
+            totalProveedor: 0,
+            promo: 0,
+            manual: 0,
+            tarjeta: 0,
+            descProveedor: 0,
+            pagoProveedor: 0,
+            gananciaAdmin: 0,
+        }
+    );
+}
+
 function toggleEgresosSort(column: EgresosSortColumn) {
     if (egresosSortColumn.value === column) {
         egresosSortDirection.value = egresosSortDirection.value === 'asc' ? 'desc' : 'asc';
@@ -2088,6 +2119,7 @@ watch(
                                                             <th class="px-2 py-1 text-left">Proveedor</th>
                                                             <th class="px-2 py-1 text-right">Cant.</th>
                                                             <th class="px-2 py-1 text-right">Precio público</th>
+                                                            <th class="px-2 py-1 text-right">Total producto</th>
                                                             <th class="px-2 py-1 text-right">Precio proveedor</th>
                                                             <th class="px-2 py-1 text-right">Promo</th>
                                                             <th class="px-2 py-1 text-right">Descuento manual</th>
@@ -2114,6 +2146,9 @@ watch(
                                                             </td>
                                                             <td class="px-2 py-1 text-right">{{ linea.quantity }}</td>
                                                             <td class="px-2 py-1 text-right">{{ formatCurrency(linea.unit_price) }}</td>
+                                                            <td class="px-2 py-1 text-right font-semibold text-gray-900">
+                                                                {{ formatCurrency(linea.public_total ?? linea.unit_price * linea.quantity) }}
+                                                            </td>
                                                             <td class="px-2 py-1 text-right">{{ formatCurrency(linea.provider_price ?? 0) }}</td>
                                                             <td class="px-2 py-1 text-right">{{ formatCurrency(linea.promotion_discount_amount) }}</td>
                                                             <td class="px-2 py-1 text-right">{{ formatCurrency(linea.manual_discount_amount) }}</td>
@@ -2149,6 +2184,21 @@ watch(
                                                             <td class="px-2 py-1 text-right font-semibold text-emerald-700">{{ formatCurrency(linea.admin_earnings) }}</td>
                                                         </tr>
                                                     </tbody>
+                                                    <tfoot v-if="venta.lineas?.length" class="bg-gray-50 text-[11px] font-semibold text-gray-700">
+                                                        <tr>
+                                                            <td class="px-2 py-1 text-right" colspan="2">Totales</td>
+                                                            <td class="px-2 py-1 text-right">{{ cajaVentaLineTotals(venta.lineas).cantidad }}</td>
+                                                            <td class="px-2 py-1"></td>
+                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).totalProducto) }}</td>
+                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).totalProveedor) }}</td>
+                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).promo) }}</td>
+                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).manual) }}</td>
+                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).tarjeta) }}</td>
+                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).descProveedor) }}</td>
+                                                            <td class="px-2 py-1 text-right text-sky-700">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).pagoProveedor) }}</td>
+                                                            <td class="px-2 py-1 text-right text-emerald-700">{{ formatCurrency(cajaVentaLineTotals(venta.lineas).gananciaAdmin) }}</td>
+                                                        </tr>
+                                                    </tfoot>
                                                 </table>
                                             </div>
                                         </td>
