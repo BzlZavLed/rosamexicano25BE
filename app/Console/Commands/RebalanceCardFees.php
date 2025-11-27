@@ -88,13 +88,14 @@ class RebalanceCardFees extends Command
                 continue;
             }
 
-            $cardFeeTotal = round((float) $venta->totalventa * $rate, 2);
+            // Base para prorratear: total de la venta (ya con descuentos) y total público por proveedor/línea (post descuentos).
             $salePublicTotal = $lineas->sum(fn (VentaDesg $l) => (float) ($l->public_total ?? 0));
+            $cardFeeTotal = round($salePublicTotal * $rate, 2);
 
             $this->info(sprintf(
-                'Venta %d: totalventa=%.2f, cargo 4.5%%=%.2f, public_total=%.2f',
+                'Venta %d: base=%.2f, cargo 4.5%%=%.2f, public_total=%.2f',
                 $venta->idventa,
-                $venta->totalventa,
+                $salePublicTotal,
                 $cardFeeTotal,
                 $salePublicTotal
             ));
