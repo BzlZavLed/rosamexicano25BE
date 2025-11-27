@@ -87,22 +87,23 @@ class RebalanceCardFees extends Command
 
             DB::transaction(function () use ($venta, $lineas, $rate, &$lineUpdates) {
                 foreach ($lineas as $line) {
-                    $base = max(
-                        0,
-                        (float) ($line->public_total ?? 0)
-                        - (float) ($line->promotion_discount_amount ?? 0)
-                        - (float) ($line->manual_discount_amount ?? 0)
-                    );
+                    $unit = (float) ($line->unit_price ?? 0);
+                    $qty = (float) ($line->quantity ?? 0);
+                    $manualDisc = (float) ($line->manual_discount_amount ?? 0);
+                    $base = max(0, ($unit * $qty) - $manualDisc);
                     $new = round($base * $rate, 2);
                     $old = (float) ($line->credit_card_discount ?? 0);
                     $provId = $line->proveedor_id ?? $line->proveedor ?? null;
 
                     $this->info(sprintf(
-                        'Venta %d linea %d prov %s: base=%.2f, cargo_calculado=%.2f, actual=%.2f',
+                        'Venta %d linea %d prov %s: base=%.2f (unit=%.2f qty=%.2f manual=%.2f), cargo_calculado=%.2f, actual=%.2f',
                         $venta->idventa,
                         $line->id,
                         $provId ?? '—',
                         $base,
+                        $unit,
+                        $qty,
+                        $manualDisc,
                         $new,
                         $old
                     ));

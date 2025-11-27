@@ -278,6 +278,7 @@ const providerFinancialSummary = computed(() => {
         proveedor_tipo: 'normal' | 'consigna' | 'porcentaje';
         proveedor_pct: number | null;
         public_total: number;
+        base_total: number;
         proveedor_bruto: number;
         proveedor_descuento: number;
         admin_ganancia: number;
@@ -327,7 +328,12 @@ const providerFinancialSummary = computed(() => {
             proveedor_descuento: 0,
             admin_ganancia: 0,
             cantidad: 0,
-            line_items: [],
+            line_items: [] as Array<{
+                nombre: string;
+                qty: number;
+                precio_publico: number;
+                precio_proveedor: number;
+            }>,
         };
 
         current.public_total = round2(current.public_total + gross);
