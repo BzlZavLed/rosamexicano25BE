@@ -385,6 +385,7 @@ function startOfMonth(date: Date): Date {
                                 <thead class="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
                                     <tr>
                                         <th class="px-4 py-2 text-left">Fecha</th>
+                                        <th class="px-4 py-2 text-left">ID venta</th>
                                         <th class="px-4 py-2 text-left">Producto</th>
                                         <th class="px-4 py-2 text-right">Cantidad</th>
                                         <th class="px-4 py-2 text-right">Precio</th>
@@ -397,13 +398,14 @@ function startOfMonth(date: Date): Date {
                                 </thead>
                                 <tbody class="divide-y divide-gray-100">
                                     <tr v-if="providerGroup.items.length === 0">
-                                        <td colspan="9" class="px-4 py-4 text-center text-gray-500">
+                                        <td colspan="10" class="px-4 py-4 text-center text-gray-500">
                                             No se registraron ventas para la fecha seleccionada.
                                         </td>
                                     </tr>
                                     <tr v-for="item in providerGroup.items" :key="item.ventadesg_id"
                                         class="hover:bg-gray-50">
                                         <td class="px-4 py-2 text-gray-600">{{ item.fecha }}</td>
+                                        <td class="px-4 py-2 text-gray-700">#{{ item.idventa ?? item.venta_id }}</td>
                                         <td class="px-4 py-2 font-medium text-gray-900">{{ item.producto_nombre }}</td>
                                         <td class="px-4 py-2 text-right text-gray-700">{{ item.cantidad }}</td>
                                         <td class="px-4 py-2 text-right text-gray-700">${{
@@ -422,7 +424,7 @@ function startOfMonth(date: Date): Date {
                                 </tbody>
                                 <tfoot v-if="providerTotals">
                                     <tr class="bg-gray-50 text-gray-800 font-semibold">
-                                        <td class="px-4 py-2 text-left" colspan="2">Totales</td>
+                                        <td class="px-4 py-2 text-left" colspan="3">Totales</td>
                                         <td class="px-4 py-2 text-right">
                                             {{ providerTotals.cantidad }}
                                         </td>
