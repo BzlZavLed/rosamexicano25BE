@@ -264,14 +264,16 @@ class CashierLegacyController extends Controller
                 $afterDiscount = max(0, $grossSubtotal - $itemDiscountTotal);
 
                 $providerNetTotals = [];
+                $providerBases = [];
                 foreach ($lines as &$line) {
                     // Base que ya descuenta todas las promociones/desc. de la línea; sobre esto se prorratea el 4.5%
-                    $lineNetAfterOrder = max(0, $line['net_before_order']);
-                    $line['net_after_order'] = $lineNetAfterOrder;
-                    $line['card_base'] = $lineNetAfterOrder;
+                    $lineBase = max(0, $line['net_before_order']);
+                    $line['net_after_order'] = $lineBase;
+                    $line['card_base'] = $lineBase;
 
                     $pid = $line['provider_id'];
-                    $providerNetTotals[$pid] = ($providerNetTotals[$pid] ?? 0) + $line['card_base'];
+                    $providerNetTotals[$pid] = ($providerNetTotals[$pid] ?? 0) + $lineBase;
+                    $providerBases[$pid][] = $lineBase;
                 }
                 unset($line);
 
@@ -311,7 +313,7 @@ class CashierLegacyController extends Controller
                                 continue;
                             }
 
-                            $providerBase = $providerNetTotals[$providerId];
+                            $providerBase = array_sum($providerBases[$providerId] ?? []);
                             $remainingCharge = $charge;
                             $lineCountForProvider = count($indexes);
 

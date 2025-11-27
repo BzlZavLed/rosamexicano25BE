@@ -88,27 +88,40 @@ class RebalanceCardFees extends Command
                 continue;
             }
 
-            // Base para prorratear: total de la venta (ya con descuentos) y total público por proveedor/línea (post descuentos).
-            $salePublicTotal = $lineas->sum(fn (VentaDesg $l) => (float) ($l->public_total ?? 0));
-            $cardFeeTotal = round($salePublicTotal * $rate, 2);
-
-            $this->info(sprintf(
-                'Venta %d: base=%.2f, cargo 4.5%%=%.2f, public_total=%.2f',
-                $venta->idventa,
-                $salePublicTotal,
-                $cardFeeTotal,
-                $salePublicTotal
-            ));
-
-            if ($cardFeeTotal <= 0 || $salePublicTotal <= 0) {
-                $this->info(sprintf('Venta %d sin cargo calculable (totalventa=%.2f, public_total=%.2f).', $venta->idventa, $venta->totalventa, $salePublicTotal));
-                continue;
-            }
-
+            // Base: total público menos descuentos (manual + promoción) por línea.
+            $lineBaseTotals = [];
             $linesByProvider = $lineas->groupBy($provKeyFor)->map->values();
             $providerTotals = [];
+            $saleBaseTotal = 0.0;
+
             foreach ($linesByProvider as $provKey => $provLines) {
-                $providerTotals[$provKey] = $provLines->sum(fn (VentaDesg $l) => (float) ($l->public_total ?? 0));
+                $providerBase = 0.0;
+                foreach ($provLines as $line) {
+                    $lineBase = max(
+                        0,
+                        (float) ($line->public_total ?? 0)
+                        - (float) ($line->promotion_discount_amount ?? 0)
+                        - (float) ($line->manual_discount_amount ?? 0)
+                    );
+                    $lineBaseTotals[$line->id] = $lineBase;
+                    $providerBase += $lineBase;
+                }
+                $providerTotals[$provKey] = $providerBase;
+                $saleBaseTotal += $providerBase;
+            }
+
+            $cardFeeTotal = round($saleBaseTotal * $rate, 2);
+
+            $this->info(sprintf(
+                'Venta %d: base=%.2f, cargo 4.5%%=%.2f',
+                $venta->idventa,
+                $saleBaseTotal,
+                $cardFeeTotal
+            ));
+
+            if ($cardFeeTotal <= 0 || $saleBaseTotal <= 0) {
+                $this->info(sprintf('Venta %d sin cargo calculable (base=%.2f).', $venta->idventa, $saleBaseTotal));
+                continue;
             }
 
             $providerCharges = [];
@@ -126,14 +139,14 @@ class RebalanceCardFees extends Command
                 if ($idx === $lastProviderIdx) {
                     $charge = round($remainingProviderCharge, 2);
                 } else {
-                    $weight = $providerGross / $salePublicTotal;
+                    $weight = $providerGross / $saleBaseTotal;
                     $charge = round($cardFeeTotal * $weight, 2);
                     $remainingProviderCharge -= $charge;
                 }
 
                 $providerCharges[$provKey] = $charge;
                 $this->info(sprintf(
-                    'Venta %d: prov %s total_publico=%.2f -> cargo=%.2f',
+                    'Venta %d: prov %s base=%.2f -> cargo=%.2f',
                     $venta->idventa,
                     $provKey,
                     $providerGross,
@@ -145,7 +158,7 @@ class RebalanceCardFees extends Command
 
             $provKeyHelper = $provKeyFor;
 
-            DB::transaction(function () use ($venta, $linesByProvider, $providerCharges, &$lineUpdates, $provKeyHelper) {
+            DB::transaction(function () use ($venta, $linesByProvider, $providerCharges, &$lineUpdates, $provKeyHelper, $lineBaseTotals) {
                 foreach ($providerCharges as $provKey => $charge) {
                     $provLines = $linesByProvider->get($provKey, collect());
 
@@ -154,17 +167,20 @@ class RebalanceCardFees extends Command
                         continue;
                     }
 
-                    $providerGross = $provLines->sum(fn (VentaDesg $l) => (float) ($l->public_total ?? 0));
+                    $providerGross = $provLines->sum(function (VentaDesg $l) use ($lineBaseTotals) {
+                        return (float) ($lineBaseTotals[$l->id] ?? 0);
+                    });
                     $remaining = $charge;
                     $lastLineIdx = $provLines->count() - 1;
 
                     foreach ($provLines as $idx => $line) {
+                        $lineBase = (float) ($lineBaseTotals[$line->id] ?? 0);
                         if ($providerGross <= 0 || $charge <= 0) {
                             $lineCharge = 0.0;
                         } elseif ($idx === $lastLineIdx) {
                             $lineCharge = round($remaining, 2);
                         } else {
-                            $weight = max(0.0, (float) ($line->public_total ?? 0)) / $providerGross;
+                            $weight = $providerGross > 0 ? $lineBase / $providerGross : 0;
                             $lineCharge = round($charge * $weight, 2);
                             $remaining -= $lineCharge;
                         }
@@ -177,7 +193,7 @@ class RebalanceCardFees extends Command
                             $venta->idventa,
                             $provKey,
                             $line->id,
-                            $line->public_total,
+                            $lineBase,
                             $new,
                             $old
                         ));
