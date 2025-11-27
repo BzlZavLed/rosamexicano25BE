@@ -328,7 +328,8 @@ const providerFinancialSummary = computed(() => {
             precio_proveedor: number;
         }>;
     }>();
-    let grossSubtotal = 0;
+    let baseSubtotal = 0;
+    const providerCardCharges = new Map<number, number>();
 
     for (const row of cart.value) {
         const proveedorId = Number(row.proveedorid ?? 0);
@@ -337,10 +338,7 @@ const providerFinancialSummary = computed(() => {
         if (!qty) continue;
 
         const gross = round2(row.precio * qty);
-        const discount = Math.min(
-            gross,
-            round2(linePromoDiscount(row) + lineManualDiscount(row))
-        );
+        const base = round2(lineNet(row));
         const providerType = row.proveedorTipo ?? 'normal';
         const providerPct = providerType === 'porcentaje' ? row.proveedorPct ?? 0 : null;
         const providerUnitCost = Number(row.precioProveedor ?? row.precio);
@@ -352,10 +350,10 @@ const providerFinancialSummary = computed(() => {
             providerUnitCost,
             providerPct
         );
-        const providerManual = Math.min(providerBruto, discount);
+        const providerManual = Math.min(providerBruto, Math.max(0, gross - base));
         const adminMarkup = Math.max(0, round2(gross - providerBruto));
 
-        grossSubtotal += gross;
+        baseSubtotal = round2(baseSubtotal + base);
 
         const current = providers.get(proveedorId) ?? {
             proveedor_id: proveedorId,
@@ -363,6 +361,7 @@ const providerFinancialSummary = computed(() => {
             proveedor_tipo: providerType,
             proveedor_pct: providerPct,
             public_total: 0,
+            base_total: 0,
             proveedor_bruto: 0,
             proveedor_descuento: 0,
             admin_ganancia: 0,
@@ -371,6 +370,7 @@ const providerFinancialSummary = computed(() => {
         };
 
         current.public_total = round2(current.public_total + gross);
+        current.base_total = round2(current.base_total + base);
         current.proveedor_bruto = round2(current.proveedor_bruto + providerBruto);
         current.proveedor_descuento = round2(current.proveedor_descuento + providerManual);
         current.admin_ganancia = round2(current.admin_ganancia + adminMarkup);
@@ -385,27 +385,29 @@ const providerFinancialSummary = computed(() => {
             current.proveedor_pct = providerPct;
         }
         providers.set(proveedorId, current);
+
+        if (paymentMethod.value === 'tarjeta') {
+            const lineCharge = round2(base * cardChargeRate.value);
+            providerCardCharges.set(
+                proveedorId,
+                round2((providerCardCharges.get(proveedorId) ?? 0) + lineCharge)
+            );
+        }
     }
 
-    grossSubtotal = round2(grossSubtotal);
-    const surchargeTotal =
-        paymentMethod.value === 'tarjeta' ? round2(grossSubtotal * cardChargeRate.value) : 0;
-
-    const publicTotals = new Map<number, number>();
-    providers.forEach((entry, pid) => {
-        publicTotals.set(pid, entry.public_total);
-    });
-    const chargesMap = distributeSurchargeTotals(publicTotals, grossSubtotal, surchargeTotal);
+    const surchargeTotal = round2(
+        Array.from(providerCardCharges.values()).reduce((s, n) => s + n, 0)
+    );
 
     const providerList = Array.from(providers.values())
         .map((entry) => {
-            const cardCharge = round2(chargesMap.get(entry.proveedor_id) ?? 0);
+            const cardCharge = round2(providerCardCharges.get(entry.proveedor_id) ?? 0);
             const providerNet = round2(
                 Math.max(0, entry.proveedor_bruto - entry.proveedor_descuento - cardCharge)
             );
             const percent =
-                grossSubtotal > 0
-                    ? round2((entry.public_total / grossSubtotal) * 100)
+                baseSubtotal > 0
+                    ? round2((entry.base_total / baseSubtotal) * 100)
                     : 0;
             return {
                 ...entry,
@@ -414,10 +416,10 @@ const providerFinancialSummary = computed(() => {
                 percent,
             };
         })
-        .sort((a, b) => b.public_total - a.public_total);
+        .sort((a, b) => b.base_total - a.base_total);
 
     return {
-        grossSubtotal,
+        grossSubtotal: baseSubtotal,
         surchargeTotal,
         providers: providerList,
     };
@@ -1759,20 +1761,9 @@ onUnmounted(() => {
                                 <span>Desc. por producto</span>
                                 <b class="text-emerald-700">- {{ currency(manualItemDiscountAmount) }}</b>
                             </div>
-                            <div class="flex justify-between">
-                                <span>
-                                    Recargo tarjeta
-                                    <template v-if="paymentMethod === 'tarjeta'">
-                                        ({{ surchargePercent }}% sobre {{ currency(subTotal) }})
-                                    </template>
-                                    <template v-else-if="surchargePercent">
-                                        ({{ surchargePercent }}%)
-                                    </template>
-                                </span>
-                                <b>{{ currency(surchargeAmount) }}</b>
-                            </div>
+                            <!-- Recargo tarjeta eliminado del resumen; aplicado por línea -->
                             <div
-                                v-if="providerNetTotalsList.length"
+                                v-if="false"
                                 class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs text-gray-600"
                             >
                                 <div class="flex items-center justify-between">

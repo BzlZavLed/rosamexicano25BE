@@ -15,6 +15,7 @@ use App\Models\Producto;
 use App\Models\Venta;
 use App\Models\VentaDesg;
 use App\Models\Promocion;
+use App\Support\CardCharge;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -386,8 +387,32 @@ class CashierController extends Controller
 
             $payout = ProviderPayout::calculate($lineItems, $payload['metodo']);
             $afterDiscount = $payout['after_discount'];
-            $providerChargeTotal = $payout['provider_charge_total'];
-            $total = $payout['total'];
+            $paymentMethod = strtolower($payload['metodo']);
+            $cardRate = CardCharge::rate();
+            $providerChargeTotal = 0.0;
+
+            foreach ($lines as $idx => &$line) {
+                $linePayout = $payout['lines'][$idx] ?? [];
+
+                $publicTotal = (float) ($line['public_total'] ?? 0);
+                $promoDisc = (float) ($line['promotion_percent_amount'] ?? $line['promotion_discount_total'] ?? 0);
+                $manualDisc = (float) ($line['manual_discount'] ?? 0);
+                $lineBase = max(0, $publicTotal - $promoDisc - $manualDisc);
+                $newCard = $paymentMethod === 'tarjeta' && $cardRate > 0 ? round($lineBase * $cardRate, 2) : 0.0;
+                $oldCard = (float) ($linePayout['credit_card_discount'] ?? 0);
+                $oldProviderPayment = (float) ($linePayout['provider_net'] ?? 0);
+                $delta = $newCard - $oldCard;
+                $newProviderPayment = max(0, round($oldProviderPayment - $delta, 2));
+
+                $linePayout['credit_card_discount'] = $newCard;
+                $linePayout['provider_net'] = $newProviderPayment;
+                $payout['lines'][$idx] = $linePayout;
+                $providerChargeTotal += $newCard;
+            }
+            unset($line);
+
+            $providerChargeTotal = round($providerChargeTotal, 2);
+            $total = round($afterDiscount, 2);
             $paymentMethod = strtolower($payload['metodo']);
             $cashDelta = round(max(0, ($payload['recibo'] ?? 0) - ($payload['cambio'] ?? 0)), 2);
             $ingresoReal = $paymentMethod === 'efectivo' ? $cashDelta : $total;
@@ -462,10 +487,11 @@ class CashierController extends Controller
                 'discount_percent' => 0,
                 'discount_amount' => 0,
                 'overall_discount_total' => round($itemDiscountTotal + $providerChargeTotal, 2),
-                'surcharge_percent' => strtolower($payload['metodo']) === 'tarjeta' ? 4.5 : 0.0,
+                'overall_discount_total' => round($itemDiscountTotal, 2),
+                'surcharge_percent' => $paymentMethod === 'tarjeta' ? 4.5 : 0.0,
                 'surcharge_amount' => $providerChargeTotal,
                 'tarjeta_cargo' => $providerChargeTotal,
-                'ingreso_real' => strtolower($payload['metodo']) === 'efectivo'
+                'ingreso_real' => $paymentMethod === 'efectivo'
                     ? round(max(0, $payload['recibo'] - $payload['cambio']), 2)
                     : $total,
                 'costo_total' => $payout['costo_total'],

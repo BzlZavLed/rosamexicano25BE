@@ -267,8 +267,15 @@ class CashierLegacyController extends Controller
                 $providerChargeTotal = 0.0;
                 if ($method === 'tarjeta' && $cardRate > 0) {
                     foreach ($lines as &$line) {
-                        // Base ya incluye descuentos/promo de la línea; aplicar 4.5% directo por línea
-                        $lineBase = max(0, $line['net_before_order']);
+                        // Base: total público de la línea menos descuentos conocidos (promo y manual)
+                        $publicTotal = (float) ($line['gross'] ?? 0);
+                        $promoDisc = (float) ($line['promotion_discount_amount'] ?? 0);
+                        $manualDisc = (float) ($line['item_discount'] ?? 0);
+                        $lineBase = max(0, $publicTotal - $promoDisc - $manualDisc);
+                        // Fallback a net_before_order si no se detectan descuentos específicos
+                        if ($lineBase === 0 && isset($line['net_before_order'])) {
+                            $lineBase = max(0, (float) $line['net_before_order']);
+                        }
                         $lineCharge = round($lineBase * $cardRate, 2);
                         $line['card_base'] = $lineBase;
                         $line['provider_charge'] = $lineCharge;

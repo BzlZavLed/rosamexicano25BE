@@ -63,7 +63,7 @@ function providerDiscountTooltip(linea: CajaReportLine): string {
 function providerPaymentTooltip(linea: CajaReportLine): string {
     const qty = Number(linea.quantity ?? 0);
     const providerPrice = Number(linea.provider_price ?? 0);
-    const card = Number(linea.credit_card_discount ?? 0);
+    const card = Number(cajaLineCardCharge(linea));
     const manual = Number(linea.manual_discount_amount ?? 0);
     const total = providerPrice * qty;
     const afterManual = total - manual;
@@ -73,6 +73,27 @@ function providerPaymentTooltip(linea: CajaReportLine): string {
         card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
     ].filter(Boolean);
     return `${parts.join(' ')} = ${formatCurrency(afterManual - card)}`;
+}
+
+function cajaLineCardBase(linea: CajaReportLine) {
+    const gross = Number(linea.public_total ?? 0);
+    const promo = Number(linea.promotion_discount_amount ?? 0);
+    const manual = Number(linea.manual_discount_amount ?? 0);
+    return Math.max(0, gross - promo - manual);
+}
+
+function cajaLineCardCharge(linea: CajaReportLine) {
+    const base = cajaLineCardBase(linea);
+    const rate = 0.045;
+    return Math.round(base * rate * 100) / 100;
+}
+
+function cajaLineProviderPayment(linea: CajaReportLine) {
+    const newCard = cajaLineCardCharge(linea);
+    const oldCard = Number(linea.credit_card_discount ?? 0);
+    const delta = oldCard - newCard;
+    const current = Number(linea.provider_payment ?? 0);
+    return Math.max(0, current + delta);
 }
 
 function formatMonthLabel(value?: string | null) {
@@ -2152,7 +2173,7 @@ watch(
                                                             <td class="px-2 py-1 text-right">{{ formatCurrency(linea.provider_price ?? 0) }}</td>
                                                             <td class="px-2 py-1 text-right">{{ formatCurrency(linea.promotion_discount_amount) }}</td>
                                                             <td class="px-2 py-1 text-right">{{ formatCurrency(linea.manual_discount_amount) }}</td>
-                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(linea.credit_card_discount) }}</td>
+                                                            <td class="px-2 py-1 text-right">{{ formatCurrency(cajaLineCardCharge(linea)) }}</td>
                                                             <td class="px-2 py-1 text-right">
                                                                 <div class="flex items-center justify-end gap-1">
                                                                     <span v-if="linea.provider_discount_type !== 'normal'">
@@ -2167,11 +2188,11 @@ watch(
                                                                             {{ providerDiscountTooltip(linea) }}
                                                                     </span>
                                                                 </span>
-                                                            </div>
+                                                                </div>
                                                             </td>
                                                             <td class="px-2 py-1 text-right">
                                                                 <div class="flex items-center justify-end gap-1">
-                                                                    <span class="font-semibold text-sky-700">{{ formatCurrency(linea.provider_payment) }}</span>
+                                                                    <span class="font-semibold text-sky-700">{{ formatCurrency(cajaLineProviderPayment(linea)) }}</span>
                                                                     <span class="relative inline-flex cursor-help text-[10px] text-gray-500 group">
                                                                         Fórmula
                                                                     <span
