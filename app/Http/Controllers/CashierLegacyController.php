@@ -263,80 +263,18 @@ class CashierLegacyController extends Controller
 
                 $afterDiscount = max(0, $grossSubtotal - $itemDiscountTotal);
 
-                $providerNetTotals = [];
-                $providerBases = [];
-                foreach ($lines as &$line) {
-                    // Base que ya descuenta todas las promociones/desc. de la línea; sobre esto se prorratea el 4.5%
-                    $lineBase = max(0, $line['net_before_order']);
-                    $line['net_after_order'] = $lineBase;
-                    $line['card_base'] = $lineBase;
-
-                    $pid = $line['provider_id'];
-                    $providerNetTotals[$pid] = ($providerNetTotals[$pid] ?? 0) + $lineBase;
-                    $providerBases[$pid][] = $lineBase;
-                }
-                unset($line);
-
-                // 2) recargo a proveedores por tarjeta (4.5%), distribuido proporcionalmente (no modifica el total cobrado al cliente)
-                $providerChargeTotal = 0.0;
                 $cardRate = CardCharge::rate();
+                $providerChargeTotal = 0.0;
                 if ($method === 'tarjeta' && $cardRate > 0) {
-                    $totalNetAfterOrder = array_sum($providerNetTotals);
-                    if ($totalNetAfterOrder > 0) {
-                        $providerChargeTotal = round($totalNetAfterOrder * $cardRate, 2);
-
-                        $providerIds = array_keys($providerNetTotals);
-                        $providerCharges = [];
-                        $remainingChargeTotal = $providerChargeTotal;
-                        $providerCount = count($providerIds);
-
-                        foreach ($providerIds as $pIndex => $providerId) {
-                            $base = $providerNetTotals[$providerId];
-                            if ($base <= 0) {
-                                $providerCharges[$providerId] = 0.0;
-                                continue;
-                            }
-
-                            if ($pIndex === $providerCount - 1) {
-                                $providerCharges[$providerId] = round($remainingChargeTotal, 2);
-                            } else {
-                                $share = $base / $totalNetAfterOrder;
-                                $charge = round($providerChargeTotal * $share, 2);
-                                $providerCharges[$providerId] = $charge;
-                                $remainingChargeTotal -= $charge;
-                            }
-                        }
-
-                        foreach ($providerCharges as $providerId => $charge) {
-                            $indexes = $providerLines[$providerId] ?? [];
-                            if (empty($indexes) || $charge <= 0) {
-                                continue;
-                            }
-
-                            $providerBase = array_sum($providerBases[$providerId] ?? []);
-                            $remainingCharge = $charge;
-                            $lineCountForProvider = count($indexes);
-
-                            foreach ($indexes as $pos => $lineIdx) {
-                                $lineNetAfterOrder = $lines[$lineIdx]['card_base'] ?? $lines[$lineIdx]['net_after_order'];
-                                if ($providerBase <= 0 || $remainingCharge <= 0) {
-                                    $lineCharge = 0.0;
-                                } elseif ($pos === $lineCountForProvider - 1) {
-                                    $lineCharge = round($remainingCharge, 2);
-                                } else {
-                                    $weight = $lineNetAfterOrder / $providerBase;
-                                    $lineCharge = round($charge * $weight, 2);
-                                    $remainingCharge -= $lineCharge;
-                                }
-
-                                $lines[$lineIdx]['provider_charge'] = round(($lines[$lineIdx]['provider_charge'] ?? 0) + $lineCharge, 2);
-                            }
-                        }
-
-                        $providerChargeTotal = round(array_reduce($lines, function ($carry, $line) {
-                            return $carry + ($line['provider_charge'] ?? 0);
-                        }, 0.0), 2);
+                    foreach ($lines as &$line) {
+                        // Base ya incluye descuentos/promo de la línea; aplicar 4.5% directo por línea
+                        $lineBase = max(0, $line['net_before_order']);
+                        $lineCharge = round($lineBase * $cardRate, 2);
+                        $line['card_base'] = $lineBase;
+                        $line['provider_charge'] = $lineCharge;
+                        $providerChargeTotal += $lineCharge;
                     }
+                    unset($line);
                 }
 
                 // El cliente paga el total después de descuentos; el recargo solo se distribuye entre proveedores.

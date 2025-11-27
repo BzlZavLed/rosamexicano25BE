@@ -71,11 +71,6 @@ class RebalanceCardFees extends Command
         $updatedSales = 0;
         $updatedLines = 0;
 
-        $provKeyFor = function (VentaDesg $l): string {
-            $pid = $l->proveedor_id ?? $l->proveedor ?? null;
-            return $pid !== null ? (string) $pid : '0';
-        };
-
         foreach ($ventas as $venta) {
             if (strtolower($venta->metodo ?? '') !== 'tarjeta') {
                 $this->info(sprintf('Venta %d saltada: método %s.', $venta->idventa, $venta->metodo));
@@ -88,132 +83,46 @@ class RebalanceCardFees extends Command
                 continue;
             }
 
-            // Base: total público menos descuentos (manual + promoción) por línea.
-            $lineBaseTotals = [];
-            $linesByProvider = $lineas->groupBy($provKeyFor)->map->values();
-            $providerTotals = [];
-            $saleBaseTotal = 0.0;
+            $lineUpdates = 0;
 
-            foreach ($linesByProvider as $provKey => $provLines) {
-                $providerBase = 0.0;
-                foreach ($provLines as $line) {
-                    $lineBase = max(
+            DB::transaction(function () use ($venta, $lineas, $rate, &$lineUpdates) {
+                foreach ($lineas as $line) {
+                    $base = max(
                         0,
                         (float) ($line->public_total ?? 0)
                         - (float) ($line->promotion_discount_amount ?? 0)
                         - (float) ($line->manual_discount_amount ?? 0)
                     );
-                    $lineBaseTotals[$line->id] = $lineBase;
-                    $providerBase += $lineBase;
-                }
-                $providerTotals[$provKey] = $providerBase;
-                $saleBaseTotal += $providerBase;
-            }
+                    $new = round($base * $rate, 2);
+                    $old = (float) ($line->credit_card_discount ?? 0);
+                    $provId = $line->proveedor_id ?? $line->proveedor ?? null;
 
-            $cardFeeTotal = round($saleBaseTotal * $rate, 2);
+                    $this->info(sprintf(
+                        'Venta %d linea %d prov %s: base=%.2f, cargo_calculado=%.2f, actual=%.2f',
+                        $venta->idventa,
+                        $line->id,
+                        $provId ?? '—',
+                        $base,
+                        $new,
+                        $old
+                    ));
 
-            $this->info(sprintf(
-                'Venta %d: base=%.2f, cargo 4.5%%=%.2f',
-                $venta->idventa,
-                $saleBaseTotal,
-                $cardFeeTotal
-            ));
+                    CardRebalanceChange::create([
+                        'venta_id' => (int) $venta->idventa,
+                        'ventadesg_id' => (int) $line->id,
+                        'fecha_sale' => $venta->fecha instanceof \DateTimeInterface ? $venta->fecha->toDateString() : date('Y-m-d', strtotime((string) $venta->fecha)),
+                        'public_total' => (float) ($line->public_total ?? 0),
+                        'total_venta' => (float) ($venta->totalventa ?? 0),
+                        'old_credit_card_discount' => $old,
+                        'new_credit_card_discount' => $new,
+                        'proveedor_id' => $provId,
+                    ]);
 
-            if ($cardFeeTotal <= 0 || $saleBaseTotal <= 0) {
-                $this->info(sprintf('Venta %d sin cargo calculable (base=%.2f).', $venta->idventa, $saleBaseTotal));
-                continue;
-            }
-
-            $providerCharges = [];
-            $remainingProviderCharge = $cardFeeTotal;
-            $providerKeys = array_keys($providerTotals);
-            $lastProviderIdx = count($providerKeys) - 1;
-
-            foreach ($providerKeys as $idx => $provKey) {
-                $providerGross = $providerTotals[$provKey] ?? 0;
-                if ($providerGross <= 0) {
-                    $providerCharges[$provKey] = 0.0;
-                    continue;
-                }
-
-                if ($idx === $lastProviderIdx) {
-                    $charge = round($remainingProviderCharge, 2);
-                } else {
-                    $weight = $providerGross / $saleBaseTotal;
-                    $charge = round($cardFeeTotal * $weight, 2);
-                    $remainingProviderCharge -= $charge;
-                }
-
-                $providerCharges[$provKey] = $charge;
-                $this->info(sprintf(
-                    'Venta %d: prov %s base=%.2f -> cargo=%.2f',
-                    $venta->idventa,
-                    $provKey,
-                    $providerGross,
-                    $charge
-                ));
-            }
-
-            $lineUpdates = 0;
-
-            $provKeyHelper = $provKeyFor;
-
-            DB::transaction(function () use ($venta, $linesByProvider, $providerCharges, &$lineUpdates, $provKeyHelper, $lineBaseTotals) {
-                foreach ($providerCharges as $provKey => $charge) {
-                    $provLines = $linesByProvider->get($provKey, collect());
-
-                    if ($provLines->isEmpty()) {
-                        $this->info(sprintf('Venta %d prov %s sin proveedores', $venta->idventa, $provKey));
-                        continue;
-                    }
-
-                    $providerGross = $provLines->sum(function (VentaDesg $l) use ($lineBaseTotals) {
-                        return (float) ($lineBaseTotals[$l->id] ?? 0);
-                    });
-                    $remaining = $charge;
-                    $lastLineIdx = $provLines->count() - 1;
-
-                    foreach ($provLines as $idx => $line) {
-                        $lineBase = (float) ($lineBaseTotals[$line->id] ?? 0);
-                        if ($providerGross <= 0 || $charge <= 0) {
-                            $lineCharge = 0.0;
-                        } elseif ($idx === $lastLineIdx) {
-                            $lineCharge = round($remaining, 2);
-                        } else {
-                            $weight = $providerGross > 0 ? $lineBase / $providerGross : 0;
-                            $lineCharge = round($charge * $weight, 2);
-                            $remaining -= $lineCharge;
-                        }
-
-                        $old = (float) $line->credit_card_discount;
-                        $new = $lineCharge;
-
-                        $this->info(sprintf(
-                            'Venta %d prov %s linea %d: total_publico=%.2f, cargo_calculado=%.2f, actual=%.2f',
-                            $venta->idventa,
-                            $provKey,
-                            $line->id,
-                            $lineBase,
-                            $new,
-                            $old
-                        ));
-
-                        CardRebalanceChange::create([
-                            'venta_id' => (int) $venta->idventa,
-                            'ventadesg_id' => (int) $line->id,
-                            'fecha_sale' => $venta->fecha instanceof \DateTimeInterface ? $venta->fecha->toDateString() : date('Y-m-d', strtotime((string) $venta->fecha)),
-                            'public_total' => (float) ($line->public_total ?? 0),
-                            'total_venta' => (float) ($venta->totalventa ?? 0),
-                            'old_credit_card_discount' => $old,
-                            'new_credit_card_discount' => $new,
-                            'proveedor_id' => $line->proveedor_id ?? $line->proveedor ?? null,
-                        ]);
-
-                        if ($old !== $new) {
-                            $line->credit_card_discount = $new;
-                            $line->save();
-                            $lineUpdates++;
-                        }
+                    if ($old !== $new) {
+                        $line->credit_card_discount = $new;
+                        $line->provider_payment = round(max(0, (float) ($line->provider_payment ?? 0) - ($new - $old)), 2);
+                        $line->save();
+                        $lineUpdates++;
                     }
                 }
             });
