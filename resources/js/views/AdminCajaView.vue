@@ -271,45 +271,6 @@ function calculateProviderBruto(
     }
 }
 
-function distributeSurchargeTotals(
-    providerTotals: Map<number, number>,
-    base: number,
-    surchargeTotal: number
-) {
-    const charges = new Map<number, number>();
-    if (base <= 0 || surchargeTotal <= 0) {
-        return charges;
-    }
-
-    const entries = Array.from(providerTotals.entries());
-    let remaining = surchargeTotal;
-    entries.forEach(([providerId, total], index) => {
-        if (total <= 0) {
-            charges.set(providerId, 0);
-            return;
-        }
-        if (index === entries.length - 1) {
-            const portion = round2(remaining);
-            charges.set(providerId, portion);
-            remaining -= portion;
-        } else {
-            const portion = round2(surchargeTotal * (total / base));
-            charges.set(providerId, portion);
-            remaining -= portion;
-        }
-    });
-
-    if (Math.abs(remaining) >= 0.01 && entries.length) {
-        const lastEntry = entries[entries.length - 1];
-        if (lastEntry) {
-            const [lastProviderId] = lastEntry;
-            charges.set(lastProviderId, round2((charges.get(lastProviderId) ?? 0) + remaining));
-        }
-    }
-
-    return charges;
-}
-
 const providerFinancialSummary = computed(() => {
     const providers = new Map<number, {
         proveedor_id: number;
@@ -445,6 +406,7 @@ const providerNetTotalsList = computed(() =>
         proveedor_pct: item.proveedor_pct ?? null,
         total: item.provider_net,
         public_total: item.public_total,
+        base_total: (item as any).base_total ?? 0,
         proveedor_bruto: item.proveedor_bruto,
         proveedor_descuento: item.proveedor_descuento,
         provider_card_charge: item.provider_card_charge,
@@ -1442,7 +1404,8 @@ onUnmounted(() => {
                 {{ error }}
             </div>
 
-            <section class="space-y-3 text-[13px] leading-tight">
+                <div class="grid gap-4 lg:grid-cols-[1fr_320px] items-start">
+                <section class="space-y-3 text-[13px] leading-tight">
                 <!-- Search -->
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-1">Buscar / Escanear</label>
@@ -1749,7 +1712,7 @@ onUnmounted(() => {
                 </section>
 
                 <!-- Totals & Payment -->
-                <section class="w-full space-y-3 text-[13px] leading-tight lg:w-80 lg:shrink-0">
+                <section class="w-full space-y-3 text-[13px] leading-tight">
                     <div class="border rounded-md p-3 space-y-3">
                         <div class="text-[13px] space-y-1">
                             <div class="flex justify-between"><span>Subtotal</span><b>{{ currency(subTotal) }}</b></div>
@@ -1918,6 +1881,7 @@ onUnmounted(() => {
                         </div>
                     </div>
                 </section>
+                </div>
             </div>
         </div>
     <div v-if="showExpenseModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
