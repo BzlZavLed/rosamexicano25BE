@@ -215,7 +215,7 @@ const cajaDisplayLimit = ref(200);
 const showCajaWidgets = ref(false);
 const cajaMetodoFilter = ref('');
 const cajaVendedorFilter = ref('');
-const cajaSortColumn = ref<CajaSortColumn>('fecha');
+const cajaSortColumn = ref<CajaSortColumn>('id');
 const cajaSortDirection = ref<SortDirection>('desc');
 
 const entradasLoading = ref(false);
@@ -434,8 +434,8 @@ async function fetchCajaReport(download = false) {
                 cajaSearch.value = '';
                 cajaMetodoFilter.value = '';
                 cajaVendedorFilter.value = '';
-                cajaSortColumn.value = 'fecha';
-                cajaSortDirection.value = 'desc';
+        cajaSortColumn.value = 'id';
+        cajaSortDirection.value = 'desc';
                 expandedVentaIds.value = new Set();
                 showCajaWidgets.value = false;
             }
@@ -1098,7 +1098,7 @@ function resetCajaFilters() {
     cajaSearch.value = '';
     cajaMetodoFilter.value = '';
     cajaVendedorFilter.value = '';
-    cajaSortColumn.value = 'fecha';
+    cajaSortColumn.value = 'id';
     cajaSortDirection.value = 'desc';
 }
 
