@@ -582,7 +582,7 @@ function captureSaleSnapshot(ventaId: number, sourceRows: CartRow[] = cart.value
         amount: item.amount,
         percent: item.percent,
     }));
-const providerNet = providerNetTotalsList.value.map((item) => ({
+    const providerNet = providerNetTotalsList.value.map((item) => ({
         proveedor_id: item.proveedor_id,
         nombre: item.nombre,
         proveedor_tipo: item.proveedor_tipo,
@@ -880,8 +880,8 @@ function handleKeydown(e: KeyboardEvent) {
 /** Resets any ongoing scan capture when the input stream is interrupted. */
 function resetScan() {
     scanActive.value = false;
-   scanBuffer.value = '';
-   if (scanTimer) clearTimeout(scanTimer);
+    scanBuffer.value = '';
+    if (scanTimer) clearTimeout(scanTimer);
 }
 
 /** Finds the first product that matches a scanned barcode and sends it to the cart. */
@@ -1365,10 +1365,8 @@ onUnmounted(() => {
         <div class="space-y-4">
 
             <!-- Caja banner -->
-            <div
-                v-if="caja.open"
-                class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 space-y-3 text-sm text-emerald-800 sm:flex sm:items-center sm:justify-between sm:space-y-0"
-            >
+            <div v-if="caja.open"
+                class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 space-y-3 text-sm text-emerald-800 sm:flex sm:items-center sm:justify-between sm:space-y-0">
                 <div>
                     <b>Caja abierta</b>
                     <span v-if="caja.caja?.saldoinicial"> · Saldo inicial: {{ currency(Number(caja.caja.saldoinicial))
@@ -1377,24 +1375,21 @@ onUnmounted(() => {
                 </div>
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <input v-model.number="closeAmount" type="number" step="0.01" placeholder="Saldo sistema (opcional)"
-                        @input="closeAmountTouched = true"
-                        class="w-full rounded border px-3 py-2 text-sm sm:w-48">
+                        @input="closeAmountTouched = true" class="w-full rounded border px-3 py-2 text-sm sm:w-48">
                     <button :disabled="saving" @click="closeCaja"
                         class="w-full rounded bg-rose-600 text-white text-sm px-3 py-2 transition hover:bg-rose-700 disabled:opacity-60 sm:w-auto">Cerrar
                         caja</button>
                 </div>
             </div>
 
-            <div
-                v-else
-                class="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-3 text-sm text-amber-800 sm:flex sm:items-center sm:justify-between sm:space-y-0"
-            >
+            <div v-else
+                class="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-3 text-sm text-amber-800 sm:flex sm:items-center sm:justify-between sm:space-y-0">
                 <div>
                     <b>Caja cerrada</b> · Abre para poder vender
                 </div>
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <input v-model.number="openAmount" type="number" step="0.01" :placeholder="openAmountPlaceholder" :value="lastClosingBalance ?? ''"
-                        class="w-full rounded border px-3 py-2 text-sm sm:w-48">
+                    <input v-model.number="openAmount" type="number" step="0.01" :placeholder="openAmountPlaceholder"
+                        :value="lastClosingBalance ?? ''" class="w-full rounded border px-3 py-2 text-sm sm:w-48">
                     <button :disabled="saving || openAmount == null" @click="openCaja"
                         class="w-full rounded bg-emerald-600 text-white text-sm px-3 py-2 transition hover:bg-emerald-700 disabled:opacity-60 sm:w-auto">Abrir
                         caja</button>
@@ -1410,493 +1405,464 @@ onUnmounted(() => {
                 {{ error }}
             </div>
 
-                <div class="grid gap-4 lg:grid-cols-[1fr_320px] items-start">
-                <section class="space-y-3 text-[13px] leading-tight">
-                <!-- Search -->
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-1">Buscar / Escanear</label>
-                    <input v-model="query" @input="debouncedSearch" type="text" placeholder="Nombre, ident, proveedor…"
-                        class="w-full rounded-md border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-2.5 py-1.5 text-[13px]" />
-                    <p class="text-[11px] text-gray-500 mt-1">
-                        Escáner USB: apunte al input o presione Enter al final del código.
-                    </p>
-                </div>
-
-                <!-- Results (compact) -->
-                <div v-if="SHOW_RESULTS" class="border rounded-md max-h-60 overflow-y-auto">
-                    <div class="p-3 space-y-3 md:hidden">
-                        <div
-                            v-if="loading"
-                            class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-600"
-                        >
-                            Buscando…
+            <div class="flex flex-col gap-4" id="maindiv">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
+                <section class="space-y-3 text-[13px] leading-tight w-full">
+                        <!-- Search -->
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Buscar / Escanear</label>
+                            <input v-model="query" @input="debouncedSearch" type="text"
+                                placeholder="Nombre, ident, proveedor…"
+                                class="w-full rounded-md border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-2.5 py-1.5 text-[13px]" />
+                            <p class="text-[11px] text-gray-500 mt-1">
+                                Escáner USB: apunte al input o presione Enter al final del código.
+                            </p>
                         </div>
-                        <div
-                            v-else-if="!results.length"
-                            class="rounded-lg border border-gray-200 bg-white px-3 py-3 text-xs text-gray-500"
-                        >
-                            Sin resultados
-                        </div>
-                        <ul v-else class="space-y-3">
-                            <li
-                                v-for="p in results"
-                                :key="p.id"
-                                class="rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-sm"
-                            >
-                                <div class="flex flex-wrap items-start justify-between gap-2">
-                                    <div>
-                                        <p class="font-semibold text-gray-900">{{ p.nombre }}</p>
-                                        <p class="text-[11px] text-gray-500">Identificador: {{ p.ident }}</p>
-                                    </div>
-                                    <div class="text-right">
-                                        <p class="font-semibold text-gray-900">
-                                            {{
-                                                new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(
-                                                    Number(p.precio)
-                                                )
-                                            }}
-                                        </p>
-                                        <p class="text-[11px] text-gray-500">
-                                            Existencia: {{ Number(p?.inventario?.existencia ?? 0) }}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div class="mt-3 flex justify-end">
-                                    <button
-                                        @click="addToCart(p)"
-                                        class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50"
-                                    >
-                                        Agregar
-                                    </button>
-                                </div>
-                            </li>
-                        </ul>
-                    </div>
-                    <div class="hidden md:block">
-                        <table class="min-w-full text-xs">
-                            <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
-                                <tr>
-                                    <th class="text-left font-medium px-2.5 py-1.5">Ident</th>
-                                    <th class="text-left font-medium px-2.5 py-1.5">Producto</th>
-                                    <th class="text-right font-medium px-2.5 py-1.5">Precio</th>
-                                    <th class="text-right font-medium px-2.5 py-1.5">Exist.</th>
-                                    <th class="px-2.5 py-1.5"></th>
-                                </tr>
-                            </thead>
-                            <tbody class="[&>tr:nth-child(even)]:bg-gray-50/60">
-                                <tr v-for="p in results" :key="p.id" class="hover:bg-gray-50">
-                                    <td class="px-2.5 py-1.5 whitespace-nowrap">{{ p.ident }}</td>
-                                    <td class="px-2.5 py-1.5">
-                                        <div class="truncate max-w-[28ch]">{{ p.nombre }}</div>
-                                    </td>
-                                    <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
-                                        {{
-                                            new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(
-                                                Number(p.precio)
-                                            )
-                                        }}
-                                    </td>
-                                    <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
-                                        {{ Number(p?.inventario?.existencia ?? 0) }}
-                                    </td>
-                                    <td class="px-2.5 py-1.5 text-right">
-                                        <button
-                                            @click="addToCart(p)"
-                                            class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100"
-                                        >
-                                            Agregar
-                                        </button>
-                                    </td>
-                                </tr>
-                                <tr v-if="!loading && results.length === 0">
-                                    <td colspan="5" class="px-2.5 py-2.5 text-center text-gray-500">Sin resultados</td>
-                                </tr>
-                                <tr v-if="loading">
-                                    <td colspan="5" class="px-2.5 py-2.5 text-center text-gray-500">Buscando…</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </section>
 
-            <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
-                <!-- Cart -->
-                <section class="flex-1 space-y-3 text-[13px] leading-tight">
-                    <div class="border rounded-md overflow-hidden">
-                        <div class="px-3 py-2 border-b text-xs font-semibold tracking-wide text-gray-700">Carrito</div>
-                        <div class="p-3 space-y-3 md:hidden">
-                            <div
-                                v-if="cart.length === 0"
-                                class="rounded-lg border border-gray-200 bg-white px-3 py-4 text-xs text-gray-500"
-                            >
-                                No hay productos en el carrito
-                            </div>
-                            <template v-else>
-                                <article
-                                    v-for="r in cart"
-                                    :key="`mobile-${r.ident}`"
-                                    class="space-y-3 rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-sm"
-                                >
-                                    <div class="flex flex-wrap items-start justify-between gap-2">
-                                        <div>
-                                            <p class="font-semibold text-gray-900">{{ r.nombre }}</p>
-                                            <p class="text-[11px] text-gray-500">Identificador: {{ r.ident }}</p>
-                                        <p
-                                            v-if="r.proveedorname"
-                                            class="text-[11px] text-gray-500 flex items-center gap-1"
-                                        >
-                                            <span
-                                                class="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px]"
-                                                :class="providerTypeInfo(r.proveedorTipo, r.proveedorPct).className"
-                                            >
-                                                {{ providerTypeInfo(r.proveedorTipo, r.proveedorPct).icon }}
-                                            </span>
-                                            <span>{{ r.proveedorname }}</span>
-                                        </p>
-                                            <p v-if="r.promoNote" class="text-[11px] text-emerald-700">
-                                                {{ r.promoNote }}
-                                            </p>
-                                        </div>
-                                        <div class="text-right">
-                                            <p class="font-semibold text-gray-900">{{ currency(lineNet(r)) }}</p>
-                                            <p class="text-[11px] text-gray-500">Existencia: {{ r.existencia }}</p>
-                                        </div>
-                                    </div>
-                                    <div class="space-y-3 text-[12px] text-gray-600">
-                                        <label class="flex flex-col gap-1">
-                                            <span class="font-medium text-gray-700">Cantidad</span>
-                                            <input
-                                                v-model.number="r.qty"
-                                                @change="onQtyChange(r)"
-                                                type="number"
-                                                min="0"
-                                                :max="r.existencia"
-                                                class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
-                                            />
-                                            <span v-if="(r.promoFreeQty ?? 0) > 0" class="text-[11px] text-gray-500">
-                                                Cobrar: {{ Math.max(0, r.qty - (r.promoFreeQty ?? 0)) }}
-                                            </span>
-                                        </label>
-                                        <div class="grid grid-cols-2 gap-3">
+                        <!-- Results (compact) -->
+                        <div v-if="SHOW_RESULTS" class="border rounded-md max-h-60 overflow-y-auto">
+                            <div class="p-3 space-y-3 md:hidden">
+                                <div v-if="loading"
+                                    class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-600">
+                                    Buscando…
+                                </div>
+                                <div v-else-if="!results.length"
+                                    class="rounded-lg border border-gray-200 bg-white px-3 py-3 text-xs text-gray-500">
+                                    Sin resultados
+                                </div>
+                                <ul v-else class="space-y-3">
+                                    <li v-for="p in results" :key="p.id"
+                                        class="rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-sm">
+                                        <div class="flex flex-wrap items-start justify-between gap-2">
                                             <div>
-                                                <span class="font-medium text-gray-700">P. unitario</span>
-                                                <div class="text-sm text-gray-900">{{ currency(r.precio) }}</div>
+                                                <p class="font-semibold text-gray-900">{{ p.nombre }}</p>
+                                                <p class="text-[11px] text-gray-500">Identificador: {{ p.ident }}</p>
                                             </div>
-                                            <div>
-                                                <span class="font-medium text-gray-700">Desc. aplicado</span>
-                                                <div class="text-sm text-emerald-700">
-                                                    - {{
-                                                        currency(
-                                                            linePromoDiscount(r) + lineManualDiscount(r)
+                                            <div class="text-right">
+                                                <p class="font-semibold text-gray-900">
+                                                    {{
+                                                        new Intl.NumberFormat('es-MX', {
+                                                            style: 'currency', currency: 'MXN'
+                                                        }).format(
+                                                            Number(p.precio)
                                                         )
                                                     }}
-                                                </div>
+                                                </p>
+                                                <p class="text-[11px] text-gray-500">
+                                                    Existencia: {{ Number(p?.inventario?.existencia ?? 0) }}
+                                                </p>
                                             </div>
                                         </div>
-                                        <label class="flex flex-col gap-2">
-                                            <span class="font-medium text-gray-700">Desc. (%)</span>
-                                            <input
-                                                v-model.number="r.manualDiscountPercent"
-                                                type="number"
-                                                min="0"
-                                                step="0.1"
-                                                placeholder="%"
-                                                class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
-                                                @input="onManualPercentInput(r)"
-                                            />
-                                        </label>
-                                        <label class="flex flex-col gap-2">
-                                            <span class="font-medium text-gray-700">Desc. manual ($)</span>
-                                            <input
-                                                :value="(r.manualDiscount ?? 0).toFixed(2)"
-                                                type="number"
-                                                disabled
-                                                class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm bg-gray-100 text-gray-600"
-                                            />
-                                        </label>
-                                    </div>
-                                    <div class="flex flex-wrap justify-end gap-2">
-                                        <button
-                                            @click="removeFromCart(r.ident)"
-                                            class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50"
-                                        >
-                                            Quitar
-                                        </button>
-                                    </div>
-                                </article>
-                            </template>
-                        </div>
-                        <div class="hidden md:block">
-                            <div class="overflow-x-auto">
+                                        <div class="mt-3 flex justify-end">
+                                            <button @click="addToCart(p)"
+                                                class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50">
+                                                Agregar
+                                            </button>
+                                        </div>
+                                    </li>
+                                </ul>
+                            </div>
+                            <div class="hidden md:block">
                                 <table class="min-w-full text-xs">
                                     <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
                                         <tr>
                                             <th class="text-left font-medium px-2.5 py-1.5">Ident</th>
                                             <th class="text-left font-medium px-2.5 py-1.5">Producto</th>
-                                            <th class="text-left font-medium px-2.5 py-1.5">Proveedor</th>
-                                            <th class="text-right font-medium px-2.5 py-1.5">P. Unit.</th>
+                                            <th class="text-right font-medium px-2.5 py-1.5">Precio</th>
                                             <th class="text-right font-medium px-2.5 py-1.5">Exist.</th>
-                                            <th class="text-right font-medium px-2.5 py-1.5">Cantidad</th>
-                                            <th class="text-right font-medium px-2.5 py-1.5">Desc. (%)</th>
-                                            <th class="text-right font-medium px-2.5 py-1.5">Desc. ($)</th>
-                                            <th class="text-right font-medium px-2.5 py-1.5">Importe</th>
                                             <th class="px-2.5 py-1.5"></th>
                                         </tr>
                                     </thead>
                                     <tbody class="[&>tr:nth-child(even)]:bg-gray-50/60">
-                                        <tr v-for="r in cart" :key="r.ident" class="align-middle">
-                                            <td class="px-2.5 py-1.5 whitespace-nowrap">{{ r.ident }}</td>
+                                        <tr v-for="p in results" :key="p.id" class="hover:bg-gray-50">
+                                            <td class="px-2.5 py-1.5 whitespace-nowrap">{{ p.ident }}</td>
                                             <td class="px-2.5 py-1.5">
-                                                <div class="truncate max-w-[28ch]">{{ r.nombre }}</div>
-                                                <div v-if="r.promoNote" class="text-[11px] text-emerald-700">
-                                                    {{ r.promoNote }}
-                                                </div>
-                                            </td>
-                                            <td class="px-2.5 py-1.5 text-right">
-                                                <div class="flex items-center justify-end gap-1">
-                                                    <span
-                                                        v-if="r.proveedorname"
-                                                        class="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px]"
-                                                        :class="providerTypeInfo(r.proveedorTipo, r.proveedorPct).className"
-                                                    >
-                                                        {{ providerTypeInfo(r.proveedorTipo, r.proveedorPct).icon }}
-                                                    </span>
-                                                    <span class="truncate inline-block max-w-[18ch]">
-                                                        {{ r.proveedorname }}
-                                                    </span>
-                                                </div>
-                                            </td>
-                                            <td class="px-2.5 py-1.5 text-right whitespace-nowrap">{{ currency(r.precio) }}</td>
-                                            <td class="px-2.5 py-1.5 text-right">{{ r.existencia }}</td>
-                                            <td class="px-2.5 py-1.5 text-right">
-                                                <input v-model.number="r.qty" @change="onQtyChange(r)" type="number" min="0"
-                                                    :max="r.existencia"
-                                                    class="w-20 rounded border px-2 py-1 text-right text-[12px]" />
-                                                <div v-if="(r.promoFreeQty ?? 0) > 0" class="text-[11px] text-gray-500">
-                                                    Cobrar: {{ Math.max(0, r.qty - (r.promoFreeQty ?? 0)) }}
-                                                </div>
-                                            </td>
-                                            <td class="px-2.5 py-1.5 text-right">
-                                                <input
-                                                    v-model.number="r.manualDiscountPercent"
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.1"
-                                                    placeholder="%"
-                                                    class="w-16 rounded border px-2 py-1 text-right text-[12px]"
-                                                    @input="onManualPercentInput(r)"
-                                                />
-                                            </td>
-                                            <td class="px-2.5 py-1.5 text-right">
-                                                <input
-                                                    :value="(r.manualDiscount ?? 0).toFixed(2)"
-                                                    type="number"
-                                                    disabled
-                                                    class="w-20 rounded border px-2 py-1 text-right text-[12px] bg-gray-100 text-gray-600"
-                                                />
+                                                <div class="truncate max-w-[28ch]">{{ p.nombre }}</div>
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
-                                                {{ currency(lineNet(r)) }}
+                                                {{
+                                                    new Intl.NumberFormat('es-MX', {
+                                                        style: 'currency', currency: 'MXN'
+                                                    }).format(
+                                                        Number(p.precio)
+                                                    )
+                                                }}
+                                            </td>
+                                            <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
+                                                {{ Number(p?.inventario?.existencia ?? 0) }}
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right">
-                                                <button @click="removeFromCart(r.ident)"
+                                                <button @click="addToCart(p)"
                                                     class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100">
-                                                    Quitar
+                                                    Agregar
                                                 </button>
                                             </td>
                                         </tr>
-                                        <tr v-if="cart.length === 0">
-                                            <td colspan="10" class="px-2.5 py-4 text-center text-gray-500">No hay productos en
-                                                el carrito</td>
+                                        <tr v-if="!loading && results.length === 0">
+                                            <td colspan="5" class="px-2.5 py-2.5 text-center text-gray-500">Sin
+                                                resultados
+                                            </td>
+                                        </tr>
+                                        <tr v-if="loading">
+                                            <td colspan="5" class="px-2.5 py-2.5 text-center text-gray-500">Buscando…
+                                            </td>
                                         </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
-                    </div>
-                </section>
+                    </section>
+                </div>
 
-                <!-- Totals & Payment -->
-                <section class="w-full space-y-3 text-[13px] leading-tight">
-                    <div class="border rounded-md p-3 space-y-3">
-                        <div class="text-[13px] space-y-1">
-                            <div class="flex justify-between"><span>Subtotal</span><b>{{ currency(subTotal) }}</b></div>
-                            <div class="flex justify-between" v-if="promoDiscountAmount">
-                                <span>Promociones</span>
-                                <b class="text-emerald-700">- {{ currency(promoDiscountAmount) }}</b>
+
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
+                    <!-- Cart -->
+                    <section class="flex-1 space-y-3 text-[13px] leading-tight">
+                        <div class="border rounded-md overflow-hidden">
+                            <div class="px-3 py-2 border-b text-xs font-semibold tracking-wide text-gray-700">Carrito
                             </div>
-                            <div class="flex justify-between" v-if="manualItemDiscountAmount">
-                                <span>Desc. por producto</span>
-                                <b class="text-emerald-700">- {{ currency(manualItemDiscountAmount) }}</b>
-                            </div>
-                            <!-- Recargo tarjeta eliminado del resumen; aplicado por línea -->
-                            <div
-                                v-if="false"
-                                class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs text-gray-600"
-                            >
-                                <div class="flex items-center justify-between">
-                                    <p class="font-medium text-gray-700">Distribución del recargo</p>
-                                    <label class="inline-flex items-center gap-1 text-[11px] text-gray-600 select-none">
-                                        <input
-                                            type="checkbox"
-                                            v-model="showProviderBreakdown"
-                                            class="rounded border-gray-300 text-[#E4007C] focus:ring-[#E4007C]"
-                                        />
-                                        <span>Mostrar desglose</span>
-                                    </label>
+                            <div class="p-3 space-y-3 md:hidden">
+                                <div v-if="cart.length === 0"
+                                    class="rounded-lg border border-gray-200 bg-white px-3 py-4 text-xs text-gray-500">
+                                    No hay productos en el carrito
                                 </div>
-                                <template v-if="showProviderBreakdown">
-                                    <ul class="mt-1 space-y-1">
-                                        <li
-                                            v-for="item in providerSurchargeList"
-                                            :key="item.proveedor_id"
-                                            class="flex items-center justify-between gap-2"
-                                        >
-                                            <span class="truncate">{{ item.nombre }}</span>
-                                            <span class="text-right text-gray-700">
-                                                <span class="mr-2 text-[11px] text-gray-500">{{ item.percent.toFixed(2) }}%</span>
-                                                <b class="font-semibold text-gray-900">
-                                                    {{ paymentMethod === 'tarjeta' ? '-' : '' }}{{ currency(item.amount) }}
-                                                </b>
-                                            </span>
-                                        </li>
-                                    </ul>
-                                    <div
-                                        class="mt-2 rounded border border-gray-200 bg-white/70 px-2 py-2 text-[11px] text-gray-500"
-                                    >
-                                        <p class="font-medium text-gray-700">Detalle por proveedor:</p>
-                                        <ul class="mt-1 space-y-1">
-                                            <li
-                                                v-for="item in providerNetTotalsList"
-                                                :key="`net-${item.proveedor_id}`"
-                                            class="rounded bg-white px-2 py-1.5 shadow-sm"
-                                        >
-                                            <div class="flex flex-wrap items-center justify-between gap-2 text-gray-800">
-                                                <div class="flex items-center gap-2">
-                                                    <span class="truncate font-semibold">{{ item.nombre }}</span>
+                                <template v-else>
+                                    <article v-for="r in cart" :key="`mobile-${r.ident}`"
+                                        class="space-y-3 rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-sm">
+                                        <div class="flex flex-wrap items-start justify-between gap-2">
+                                            <div>
+                                                <p class="font-semibold text-gray-900">{{ r.nombre }}</p>
+                                                <p class="text-[11px] text-gray-500">Identificador: {{ r.ident }}</p>
+                                                <p v-if="r.proveedorname"
+                                                    class="text-[11px] text-gray-500 flex items-center gap-1">
                                                     <span
-                                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                                                        :class="providerTypeInfo(item.proveedor_tipo, item.proveedor_pct).className"
-                                                    >
-                                                        <span>{{ providerTypeInfo(item.proveedor_tipo, item.proveedor_pct).icon }}</span>
-                                                        <span>{{ providerTypeInfo(item.proveedor_tipo, item.proveedor_pct).label }}</span>
+                                                        class="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px]"
+                                                        :class="providerTypeInfo(r.proveedorTipo, r.proveedorPct).className">
+                                                        {{ providerTypeInfo(r.proveedorTipo, r.proveedorPct).icon }}
                                                     </span>
-                                                </div>
-                                                <span class="font-semibold text-gray-900">{{ currency(item.total) }}</span>
+                                                    <span>{{ r.proveedorname }}</span>
+                                                </p>
+                                                <p v-if="r.promoNote" class="text-[11px] text-emerald-700">
+                                                    {{ r.promoNote }}
+                                                </p>
                                             </div>
-                                            <button
-                                                type="button"
-                                                class="mt-1 text-[11px] font-semibold text-[#E4007C] underline"
-                                                @click="toggleProviderDetail(item.proveedor_id)"
-                                            >
-                                                {{ isProviderExpanded(item.proveedor_id) ? 'Ocultar desglose' : 'Mostrar desglose' }}
+                                            <div class="text-right">
+                                                <p class="font-semibold text-gray-900">{{ currency(lineNet(r)) }}</p>
+                                                <p class="text-[11px] text-gray-500">Existencia: {{ r.existencia }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="space-y-3 text-[12px] text-gray-600">
+                                            <label class="flex flex-col gap-1">
+                                                <span class="font-medium text-gray-700">Cantidad</span>
+                                                <input v-model.number="r.qty" @change="onQtyChange(r)" type="number"
+                                                    min="0" :max="r.existencia"
+                                                    class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm" />
+                                                <span v-if="(r.promoFreeQty ?? 0) > 0"
+                                                    class="text-[11px] text-gray-500">
+                                                    Cobrar: {{ Math.max(0, r.qty - (r.promoFreeQty ?? 0)) }}
+                                                </span>
+                                            </label>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <span class="font-medium text-gray-700">P. unitario</span>
+                                                    <div class="text-sm text-gray-900">{{ currency(r.precio) }}</div>
+                                                </div>
+                                                <div>
+                                                    <span class="font-medium text-gray-700">Desc. aplicado</span>
+                                                    <div class="text-sm text-emerald-700">
+                                                        - {{
+                                                            currency(
+                                                                linePromoDiscount(r) + lineManualDiscount(r)
+                                                            )
+                                                        }}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <label class="flex flex-col gap-2">
+                                                <span class="font-medium text-gray-700">Desc. (%)</span>
+                                                <input v-model.number="r.manualDiscountPercent" type="number" min="0"
+                                                    step="0.1" placeholder="%"
+                                                    class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
+                                                    @input="onManualPercentInput(r)" />
+                                            </label>
+                                            <label class="flex flex-col gap-2">
+                                                <span class="font-medium text-gray-700">Desc. manual ($)</span>
+                                                <input :value="(r.manualDiscount ?? 0).toFixed(2)" type="number"
+                                                    disabled
+                                                    class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm bg-gray-100 text-gray-600" />
+                                            </label>
+                                        </div>
+                                        <div class="flex flex-wrap justify-end gap-2">
+                                            <button @click="removeFromCart(r.ident)"
+                                                class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50">
+                                                Quitar
                                             </button>
-                                            <div
-                                                v-if="isProviderExpanded(item.proveedor_id)"
-                                                class="mt-1 space-y-0.5 text-[10px] text-gray-500"
-                                            >
-                                                <div class="flex justify-between gap-2">
-                                                    <span>Público:</span>
-                                                    <span class="font-medium text-gray-700">{{ currency(item.public_total) }}</span>
-                                                </div>
-                                                <div class="flex justify-between gap-2">
-                                                    <span>Costo proveedor:</span>
-                                                    <span class="font-medium text-gray-700">{{ currency(item.proveedor_bruto) }}</span>
-                                                </div>
-                                                <div class="flex justify-between gap-2">
-                                                    <span>Desc. proveedor:</span>
-                                                    <span class="font-medium text-gray-700">-{{ currency(item.proveedor_descuento) }}</span>
-                                                </div>
-                                                <div class="flex justify-between gap-2">
-                                                    <span>Recargo tarjeta:</span>
-                                                    <span class="font-medium text-gray-700">-{{ currency(item.provider_card_charge) }}</span>
-                                                </div>
-                                                <div class="flex justify-between gap-2">
-                                                    <span>Ganancia admin:</span>
-                                                    <span class="font-medium text-gray-700">+{{ currency(item.admin_ganancia) }}</span>
-                                                </div>
-                                            </div>
-                                            <div
-                                                v-if="item.line_items?.length && isProviderExpanded(item.proveedor_id)"
-                                                class="mt-2 rounded border border-gray-100 bg-gray-50 p-2"
-                                            >
-                                                <table class="w-full text-[10px] text-gray-600">
-                                                    <thead>
-                                                        <tr class="text-[9px] uppercase tracking-wide text-gray-500">
-                                                            <th class="text-left">Producto</th>
-                                                            <th class="text-right">Cant</th>
-                                                            <th class="text-right">Público</th>
-                                                            <th class="text-right">Precio proveedor</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        <tr
-                                                            v-for="line in item.line_items"
-                                                            :key="`${item.proveedor_id}-${line.nombre}`"
-                                                            class="[&:nth-child(even)]:bg-white"
-                                                        >
-                                                            <td class="pr-2 text-left">{{ line.nombre }}</td>
-                                                            <td class="px-1 text-right">{{ line.qty }}</td>
-                                                            <td class="px-1 text-right">{{ currency(line.precio_publico) }}</td>
-                                                            <td class="pl-1 text-right">{{ currency(line.precio_proveedor) }}</td>
-                                                        </tr>
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </li>
-                                    </ul>
-                                    </div>
+                                        </div>
+                                    </article>
                                 </template>
                             </div>
-                            <div class="flex justify-between text-base">
-                                <span>Total</span><b>{{ currency(total) }}</b>
+                            <div class="hidden md:block">
+                                <div class="overflow-x-auto">
+                                    <table class="min-w-full text-xs">
+                                        <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
+                                            <tr>
+                                                <th class="text-left font-medium px-2.5 py-1.5">Ident</th>
+                                                <th class="text-left font-medium px-2.5 py-1.5">Producto</th>
+                                                <th class="text-left font-medium px-2.5 py-1.5">Proveedor</th>
+                                                <th class="text-right font-medium px-2.5 py-1.5">P. Unit.</th>
+                                                <th class="text-right font-medium px-2.5 py-1.5">Exist.</th>
+                                                <th class="text-right font-medium px-2.5 py-1.5">Cantidad</th>
+                                                <th class="text-right font-medium px-2.5 py-1.5">Desc. (%)</th>
+                                                <th class="text-right font-medium px-2.5 py-1.5">Desc. ($)</th>
+                                                <th class="text-right font-medium px-2.5 py-1.5">Importe</th>
+                                                <th class="px-2.5 py-1.5"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="[&>tr:nth-child(even)]:bg-gray-50/60">
+                                            <tr v-for="r in cart" :key="r.ident" class="align-middle">
+                                                <td class="px-2.5 py-1.5 whitespace-nowrap">{{ r.ident }}</td>
+                                                <td class="px-2.5 py-1.5">
+                                                    <div class="truncate max-w-[28ch]">{{ r.nombre }}</div>
+                                                    <div v-if="r.promoNote" class="text-[11px] text-emerald-700">
+                                                        {{ r.promoNote }}
+                                                    </div>
+                                                </td>
+                                                <td class="px-2.5 py-1.5 text-right">
+                                                    <div class="flex items-center justify-end gap-1">
+                                                        <span v-if="r.proveedorname"
+                                                            class="inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px]"
+                                                            :class="providerTypeInfo(r.proveedorTipo, r.proveedorPct).className">
+                                                            {{ providerTypeInfo(r.proveedorTipo, r.proveedorPct).icon }}
+                                                        </span>
+                                                        <span class="truncate inline-block max-w-[18ch]">
+                                                            {{ r.proveedorname }}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                <td class="px-2.5 py-1.5 text-right whitespace-nowrap">{{
+                                                    currency(r.precio) }}</td>
+                                                <td class="px-2.5 py-1.5 text-right">{{ r.existencia }}</td>
+                                                <td class="px-2.5 py-1.5 text-right">
+                                                    <input v-model.number="r.qty" @change="onQtyChange(r)" type="number"
+                                                        min="0" :max="r.existencia"
+                                                        class="w-20 rounded border px-2 py-1 text-right text-[12px]" />
+                                                    <div v-if="(r.promoFreeQty ?? 0) > 0"
+                                                        class="text-[11px] text-gray-500">
+                                                        Cobrar: {{ Math.max(0, r.qty - (r.promoFreeQty ?? 0)) }}
+                                                    </div>
+                                                </td>
+                                                <td class="px-2.5 py-1.5 text-right">
+                                                    <input v-model.number="r.manualDiscountPercent" type="number"
+                                                        min="0" step="0.1" placeholder="%"
+                                                        class="w-16 rounded border px-2 py-1 text-right text-[12px]"
+                                                        @input="onManualPercentInput(r)" />
+                                                </td>
+                                                <td class="px-2.5 py-1.5 text-right">
+                                                    <input :value="(r.manualDiscount ?? 0).toFixed(2)" type="number"
+                                                        disabled
+                                                        class="w-20 rounded border px-2 py-1 text-right text-[12px] bg-gray-100 text-gray-600" />
+                                                </td>
+                                                <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
+                                                    {{ currency(lineNet(r)) }}
+                                                </td>
+                                                <td class="px-2.5 py-1.5 text-right">
+                                                    <button @click="removeFromCart(r.ident)"
+                                                        class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100">
+                                                        Quitar
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            <tr v-if="cart.length === 0">
+                                                <td colspan="10" class="px-2.5 py-4 text-center text-gray-500">No hay
+                                                    productos en
+                                                    el carrito</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
+                    </section>
 
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 mb-1">Método de pago</label>
-                            <div class="flex flex-wrap gap-2">
-                                <button @click="paymentMethod = 'efectivo'"
-                                    :class="['px-2.5 py-1.5 rounded border text-xs', paymentMethod === 'efectivo' ? 'bg-gray-900 text-white' : '']">Efectivo</button>
-                                <button @click="paymentMethod = 'tarjeta'"
-                                    :class="['px-2.5 py-1.5 rounded border text-xs', paymentMethod === 'tarjeta' ? 'bg-gray-900 text-white' : '']">Tarjeta</button>
-                                <button @click="paymentMethod = 'transferencia'"
-                                    :class="['px-2.5 py-1.5 rounded border text-xs', paymentMethod === 'transferencia' ? 'bg-gray-900 text-white' : '']">Transferencia</button>
+                    <!-- Totals & Payment -->
+                    <section class="w-full space-y-3 text-[13px] leading-tight lg:w-80 lg:shrink-0">
+                        <div class="border rounded-md p-3 space-y-3">
+                            <div class="text-[13px] space-y-1">
+                                <div class="flex justify-between"><span>Subtotal</span><b>{{ currency(subTotal) }}</b>
+                                </div>
+                                <div class="flex justify-between" v-if="promoDiscountAmount">
+                                    <span>Promociones</span>
+                                    <b class="text-emerald-700">- {{ currency(promoDiscountAmount) }}</b>
+                                </div>
+                                <div class="flex justify-between" v-if="manualItemDiscountAmount">
+                                    <span>Desc. por producto</span>
+                                    <b class="text-emerald-700">- {{ currency(manualItemDiscountAmount) }}</b>
+                                </div>
+                                <!-- Recargo tarjeta eliminado del resumen; aplicado por línea -->
+                                <div v-if="false"
+                                    class="rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs text-gray-600">
+                                    <div class="flex items-center justify-between">
+                                        <p class="font-medium text-gray-700">Distribución del recargo</p>
+                                        <label
+                                            class="inline-flex items-center gap-1 text-[11px] text-gray-600 select-none">
+                                            <input type="checkbox" v-model="showProviderBreakdown"
+                                                class="rounded border-gray-300 text-[#E4007C] focus:ring-[#E4007C]" />
+                                            <span>Mostrar desglose</span>
+                                        </label>
+                                    </div>
+                                    <template v-if="showProviderBreakdown">
+                                        <ul class="mt-1 space-y-1">
+                                            <li v-for="item in providerSurchargeList" :key="item.proveedor_id"
+                                                class="flex items-center justify-between gap-2">
+                                                <span class="truncate">{{ item.nombre }}</span>
+                                                <span class="text-right text-gray-700">
+                                                    <span class="mr-2 text-[11px] text-gray-500">{{
+                                                        item.percent.toFixed(2) }}%</span>
+                                                    <b class="font-semibold text-gray-900">
+                                                        {{ paymentMethod === 'tarjeta' ? '-' : '' }}{{
+                                                            currency(item.amount) }}
+                                                    </b>
+                                                </span>
+                                            </li>
+                                        </ul>
+                                        <div
+                                            class="mt-2 rounded border border-gray-200 bg-white/70 px-2 py-2 text-[11px] text-gray-500">
+                                            <p class="font-medium text-gray-700">Detalle por proveedor:</p>
+                                            <ul class="mt-1 space-y-1">
+                                                <li v-for="item in providerNetTotalsList"
+                                                    :key="`net-${item.proveedor_id}`"
+                                                    class="rounded bg-white px-2 py-1.5 shadow-sm">
+                                                    <div
+                                                        class="flex flex-wrap items-center justify-between gap-2 text-gray-800">
+                                                        <div class="flex items-center gap-2">
+                                                            <span class="truncate font-semibold">{{ item.nombre
+                                                            }}</span>
+                                                            <span
+                                                                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                                                :class="providerTypeInfo(item.proveedor_tipo, item.proveedor_pct).className">
+                                                                <span>{{ providerTypeInfo(item.proveedor_tipo,
+                                                                    item.proveedor_pct).icon }}</span>
+                                                                <span>{{ providerTypeInfo(item.proveedor_tipo,
+                                                                    item.proveedor_pct).label }}</span>
+                                                            </span>
+                                                        </div>
+                                                        <span class="font-semibold text-gray-900">{{
+                                                            currency(item.total) }}</span>
+                                                    </div>
+                                                    <button type="button"
+                                                        class="mt-1 text-[11px] font-semibold text-[#E4007C] underline"
+                                                        @click="toggleProviderDetail(item.proveedor_id)">
+                                                        {{ isProviderExpanded(item.proveedor_id) ? 'Ocultar desglose' :
+                                                            'Mostrar desglose' }}
+                                                    </button>
+                                                    <div v-if="isProviderExpanded(item.proveedor_id)"
+                                                        class="mt-1 space-y-0.5 text-[10px] text-gray-500">
+                                                        <div class="flex justify-between gap-2">
+                                                            <span>Público:</span>
+                                                            <span class="font-medium text-gray-700">{{
+                                                                currency(item.public_total) }}</span>
+                                                        </div>
+                                                        <div class="flex justify-between gap-2">
+                                                            <span>Costo proveedor:</span>
+                                                            <span class="font-medium text-gray-700">{{
+                                                                currency(item.proveedor_bruto) }}</span>
+                                                        </div>
+                                                        <div class="flex justify-between gap-2">
+                                                            <span>Desc. proveedor:</span>
+                                                            <span class="font-medium text-gray-700">-{{
+                                                                currency(item.proveedor_descuento) }}</span>
+                                                        </div>
+                                                        <div class="flex justify-between gap-2">
+                                                            <span>Recargo tarjeta:</span>
+                                                            <span class="font-medium text-gray-700">-{{
+                                                                currency(item.provider_card_charge) }}</span>
+                                                        </div>
+                                                        <div class="flex justify-between gap-2">
+                                                            <span>Ganancia admin:</span>
+                                                            <span class="font-medium text-gray-700">+{{
+                                                                currency(item.admin_ganancia) }}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div v-if="item.line_items?.length && isProviderExpanded(item.proveedor_id)"
+                                                        class="mt-2 rounded border border-gray-100 bg-gray-50 p-2">
+                                                        <table class="w-full text-[10px] text-gray-600">
+                                                            <thead>
+                                                                <tr
+                                                                    class="text-[9px] uppercase tracking-wide text-gray-500">
+                                                                    <th class="text-left">Producto</th>
+                                                                    <th class="text-right">Cant</th>
+                                                                    <th class="text-right">Público</th>
+                                                                    <th class="text-right">Precio proveedor</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <tr v-for="line in item.line_items"
+                                                                    :key="`${item.proveedor_id}-${line.nombre}`"
+                                                                    class="[&:nth-child(even)]:bg-white">
+                                                                    <td class="pr-2 text-left">{{ line.nombre }}</td>
+                                                                    <td class="px-1 text-right">{{ line.qty }}</td>
+                                                                    <td class="px-1 text-right">{{
+                                                                        currency(line.precio_publico) }}</td>
+                                                                    <td class="pl-1 text-right">{{
+                                                                        currency(line.precio_proveedor) }}</td>
+                                                                </tr>
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </li>
+                                            </ul>
+                                        </div>
+                                    </template>
+                                </div>
+                                <div class="flex justify-between text-base">
+                                    <span>Total</span><b>{{ currency(total) }}</b>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-medium text-gray-600 mb-1">Método de pago</label>
+                                <div class="flex flex-wrap gap-2">
+                                    <button @click="paymentMethod = 'efectivo'"
+                                        :class="['px-2.5 py-1.5 rounded border text-xs', paymentMethod === 'efectivo' ? 'bg-gray-900 text-white' : '']">Efectivo</button>
+                                    <button @click="paymentMethod = 'tarjeta'"
+                                        :class="['px-2.5 py-1.5 rounded border text-xs', paymentMethod === 'tarjeta' ? 'bg-gray-900 text-white' : '']">Tarjeta</button>
+                                    <button @click="paymentMethod = 'transferencia'"
+                                        :class="['px-2.5 py-1.5 rounded border text-xs', paymentMethod === 'transferencia' ? 'bg-gray-900 text-white' : '']">Transferencia</button>
+                                </div>
+                            </div>
+
+                            <div v-if="paymentMethod === 'efectivo'">
+                                <label class="block text-xs font-medium text-gray-600 mb-1">Efectivo recibido</label>
+                                <input v-model.number="cashReceived" type="number" step="0.01" min="0"
+                                    class="w-full rounded-md border px-2.5 py-1.5 text-[13px]" />
+                                <div class="mt-2 text-[13px] text-gray-700 flex justify-between">
+                                    <span>Cambio</span><b>{{ currency(changeDue) }}</b>
+                                </div>
+                            </div>
+
+                            <div class="space-y-2">
+                                <button :disabled="saving || !caja.open || cart.length === 0" @click="onCheckout"
+                                    class="w-full rounded-md bg-[#E4007C] hover:bg-[#cc006f] text-white px-3 py-2 text-[13px] disabled:opacity-60">
+                                    Cobrar
+                                </button>
+                                <button type="button" @click="openExpenseModal"
+                                    class="w-full rounded-md border border-gray-300 px-3 py-2 text-[13px] hover:bg-gray-50">
+                                    Registrar egreso
+                                </button>
                             </div>
                         </div>
-
-                        <div v-if="paymentMethod === 'efectivo'">
-                            <label class="block text-xs font-medium text-gray-600 mb-1">Efectivo recibido</label>
-                            <input v-model.number="cashReceived" type="number" step="0.01" min="0"
-                                class="w-full rounded-md border px-2.5 py-1.5 text-[13px]" />
-                            <div class="mt-2 text-[13px] text-gray-700 flex justify-between">
-                                <span>Cambio</span><b>{{ currency(changeDue) }}</b>
-                            </div>
-                        </div>
-
-                        <div class="space-y-2">
-                            <button :disabled="saving || !caja.open || cart.length === 0" @click="onCheckout"
-                                class="w-full rounded-md bg-[#E4007C] hover:bg-[#cc006f] text-white px-3 py-2 text-[13px] disabled:opacity-60">
-                                Cobrar
-                            </button>
-                            <button type="button" @click="openExpenseModal"
-                                class="w-full rounded-md border border-gray-300 px-3 py-2 text-[13px] hover:bg-gray-50">
-                                Registrar egreso
-                            </button>
-                        </div>
-                    </div>
-                </section>
+                    </section>
                 </div>
             </div>
         </div>
-    <div v-if="showExpenseModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-        @click.self="closeExpenseModal">
-        <div class="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
-            <h2 class="text-lg font-semibold text-gray-900">Registrar egreso</h2>
+        <div v-if="showExpenseModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+            @click.self="closeExpenseModal">
+            <div class="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
+                <h2 class="text-lg font-semibold text-gray-900">Registrar egreso</h2>
                 <p class="mt-1 text-sm text-gray-500">Captura salidas de efectivo para mantener el control de caja.</p>
 
-                <div v-if="expenseError" class="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <div v-if="expenseError"
+                    class="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                     {{ expenseError }}
                 </div>
 
@@ -1931,13 +1897,17 @@ onUnmounted(() => {
                 </div>
             </div>
         </div>
-        <div v-if="showTicketModal && lastSaleSnapshot" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-            @click.self="closeTicketModal">
+        <div v-if="showTicketModal && lastSaleSnapshot"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" @click.self="closeTicketModal">
             <div class="w-full max-w-2xl rounded-lg bg-white p-5 shadow-lg space-y-4">
                 <div class="flex items-start justify-between gap-3">
                     <div>
-                        <h2 class="text-lg font-semibold text-gray-900">Ticket de venta #{{ lastSaleSnapshot?.idventa }}</h2>
-                        <p class="text-xs text-gray-500 mt-1">Elige cómo entregar el comprobante al cliente. Total: <span class="font-semibold text-gray-800">{{ currency(lastSaleSnapshot?.total ?? 0) }}</span></p>
+                        <h2 class="text-lg font-semibold text-gray-900">Ticket de venta #{{ lastSaleSnapshot?.idventa }}
+                        </h2>
+                        <p class="text-xs text-gray-500 mt-1">Elige cómo entregar el comprobante al cliente. Total:
+                            <span class="font-semibold text-gray-800">{{ currency(lastSaleSnapshot?.total ?? 0)
+                            }}</span>
+                        </p>
                     </div>
                     <button type="button" @click="closeTicketModal"
                         class="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">✕</button>
@@ -1962,7 +1932,9 @@ onUnmounted(() => {
                             </button>
                         </div>
                     </div>
-                    <p class="text-xs text-gray-500">Para enviar el ticket completa los datos del cliente o selecciona uno existente.</p>
+                    <p class="text-xs text-gray-500">Para enviar el ticket completa los datos del cliente o selecciona
+                        uno
+                        existente.</p>
                 </div>
 
                 <div class="space-y-3">
@@ -1974,8 +1946,7 @@ onUnmounted(() => {
                         <ul v-else-if="clientSuggestions.length"
                             class="max-h-40 overflow-auto border border-gray-200 rounded-lg divide-y divide-gray-100 text-sm">
                             <li v-for="c in clientSuggestions" :key="c.id"
-                                class="px-3 py-2 cursor-pointer hover:bg-gray-50"
-                                @click="selectClientSuggestion(c)">
+                                class="px-3 py-2 cursor-pointer hover:bg-gray-50" @click="selectClientSuggestion(c)">
                                 <div class="font-medium text-gray-800">{{ c.nombre }}</div>
                                 <div class="text-xs text-gray-500">{{ c.email || 'Sin email' }} · {{ c.telefono || 'Sin teléfono' }}</div>
                             </li>
@@ -2015,8 +1986,12 @@ onUnmounted(() => {
                         </button>
                     </div>
 
-                    <div v-if="clientMessage" class="rounded border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-2 text-sm">{{ clientMessage }}</div>
-                    <div v-if="clientError" class="rounded border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">{{ clientError }}</div>
+                    <div v-if="clientMessage"
+                        class="rounded border border-emerald-200 bg-emerald-50 text-emerald-700 px-3 py-2 text-sm">{{
+                            clientMessage }}</div>
+                    <div v-if="clientError"
+                        class="rounded border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">{{
+                            clientError }}</div>
                 </div>
             </div>
         </div>
