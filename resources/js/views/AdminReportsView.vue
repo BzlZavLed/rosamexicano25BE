@@ -446,7 +446,6 @@ async function fetchCajaReport(download = false) {
             }
         } else {
             const data = await getCajaReport({ from_date: from, to_date: to });
-            console.log('caja report data', data);
             if (data instanceof Blob) {
                 cajaError.value = 'La respuesta del reporte no es válida.';
                 cajaData.value = null;
