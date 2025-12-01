@@ -57,6 +57,7 @@ type CartRow = {
     promoNote?: string;
     manualDiscount?: number;
     manualDiscountPercent?: number;
+    pairDiscountPct?: number;
 };
 
 type SaleSnapshot = {
@@ -117,6 +118,7 @@ const scanBuffer = ref('');
 let scanTimer: number | undefined;
 
 const cart = ref<CartRow[]>([]);
+const showPairHelp = ref(false);
 
 // Expense modal state -------------------------------------------------------
 const showExpenseModal = ref(false);
@@ -177,7 +179,7 @@ function computeManualPercent(row: CartRow) {
     const base = lineGross(row);
     if (base <= 0) return 0;
     const percent = ((Number(row.manualDiscount ?? 0) || 0) / base) * 100;
-    const clamped = Math.min(80, Math.max(0, percent));
+    const clamped = Math.min(100, Math.max(0, percent));
     return Math.round(clamped * 10) / 10;
 }
 
@@ -200,7 +202,7 @@ function applyManualDiscountPercent(row: CartRow, percent: number) {
         onManualDiscountChange(row);
         return;
     }
-    const safePercent = Math.min(Math.max(percent, 0), 80);
+    const safePercent = Math.min(Math.max(percent, 0), 100);
     row.manualDiscountPercent = safePercent;
     const base = lineGross(row);
     if (base <= 0) {
@@ -226,6 +228,14 @@ function onManualPercentInput(row: CartRow) {
 
 const lineNet = (row: CartRow) =>
     Math.max(0, lineGross(row) - linePromoDiscount(row) - lineManualDiscount(row));
+
+function rowHasPairDiscount(row: CartRow) {
+    const pct = Number(row.pairDiscountPct ?? 0);
+    if (pct <= 0) return false;
+    const expected = Math.round(row.precio * (pct / 100) * Math.floor(row.qty / 2) * 100) / 100;
+    const current = Math.round((row.manualDiscount ?? 0) * 100) / 100;
+    return expected > 0 && current === expected;
+}
 
 /** Raw total before discounts or surcharges. */
 const subTotal = computed(() => cart.value.reduce((sum, row) => sum + row.precio * row.qty, 0));
@@ -956,6 +966,11 @@ function clampQty(row: CartRow) {
     if (row.qty < 0) row.qty = 0;
     if (row.qty > row.existencia) row.qty = row.existencia;
     clampManualDiscount(row);
+    if (row.qty < 2) {
+        row.manualDiscount = 0;
+        row.manualDiscountPercent = undefined;
+        row.pairDiscountPct = undefined;
+    }
 }
 
 function onManualDiscountChange(row: CartRow) {
@@ -964,13 +979,43 @@ function onManualDiscountChange(row: CartRow) {
 }
 
 function applyHalfOffPair(row: CartRow) {
-    if (row.qty < 2) return;
-    const pairs = Math.floor(row.qty / 2); // one discounted item per pair
-    const discount = row.precio * 0.5 * pairs;
-    row.manualDiscount = Math.round(discount * 100) / 100;
+    // Toggle behavior: if already applied, clear it.
+    const rawPct = Number(row.pairDiscountPct);
+    const pct = Number.isFinite(rawPct) && rawPct > 0 ? rawPct : 50;
+    const safePct = Math.min(Math.max(pct, 0), 100);
+    row.pairDiscountPct = safePct;
+    const expectedDiscount = () => Math.round(row.precio * (safePct / 100) * Math.floor(row.qty / 2) * 100) / 100;
+    const current = Math.round((row.manualDiscount ?? 0) * 100) / 100;
+    const target = expectedDiscount();
+
+    // If discount already matches the target, clear it.
+    if (current === target && target > 0) {
+        row.manualDiscount = 0;
+        row.manualDiscountPercent = undefined;
+        row.pairDiscountPct = undefined;
+        clampManualDiscount(row);
+        return;
+    }
+
+    if (row.qty < 2) {
+        row.manualDiscount = 0;
+        row.manualDiscountPercent = undefined;
+        row.pairDiscountPct = undefined;
+        clampManualDiscount(row);
+        return;
+    }
+
+    row.manualDiscount = target;
     const percent = computeManualPercent(row);
     row.manualDiscountPercent = percent > 0 ? percent : undefined;
     clampManualDiscount(row);
+}
+
+function onPairDiscountInput(row: CartRow) {
+    console.log('execution');
+    // Keep within 0-100, but do not auto-apply unless button is clicked.
+    const pct = Number.isFinite(row.pairDiscountPct) ? Number(row.pairDiscountPct) : 0;
+    row.pairDiscountPct = Math.min(Math.max(pct, 0), 100);
 }
 
 /** Refreshes the caja status banner (open/closed, current user, balances). */
@@ -1524,12 +1569,61 @@ onUnmounted(() => {
                     </section>
                 </div>
 
+                <!-- Pair discount info modal -->
+                <transition name="fade">
+                    <div v-if="showPairHelp" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center px-4">
+                        <div class="max-w-lg w-full rounded-lg bg-white shadow-lg border border-gray-200">
+                            <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+                                <div class="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                                    <span aria-hidden="true">ℹ️</span>
+                                    <span>Cómo usar el descuento por par</span>
+                                </div>
+                                <button class="text-gray-500 hover:text-gray-700" @click="showPairHelp = false">✕</button>
+                            </div>
+                            <div class="p-4 text-sm text-gray-700 space-y-3">
+                                <p class="font-semibold">Cómo usar la caja</p>
+                                <ul class="list-disc pl-5 space-y-1">
+                                    <li><strong>Buscar y agregar</strong>: usa el buscador o el lector de código de barras; clic en “Agregar” suma 1 unidad al carrito.</li>
+                                    <li><strong>Cantidad y existencia</strong>: edita la cantidad; el sistema la limita al inventario disponible.</li>
+                                    <li><strong>Promos automáticas</strong>: las promos de producto (porcentaje o piezas gratis) se aplican al agregar/editar cantidad y muestran nota en la fila.</li>
+                                    <li><strong>Descuento manual</strong>: escribe % en “Desc. (%)”; el importe en “Desc. ($)” se calcula y bloquea a un máximo razonable.</li>
+                                    <li><strong>Par % (segundo a X%)</strong>: define el % que se descuenta a <em>una</em> pieza por cada par (ej. 50% = segunda a mitad). Con cantidad ≥ 2, clic en el botón:
+                                        <ul class="list-disc pl-5 space-y-1">
+                                            <li>Verde = aplicar; Rojo = activo. Clic de nuevo lo quita.</li>
+                                            <li>Si la cantidad baja de 2, se limpia solo.</li>
+                                            <li>Cambia el % antes de aplicar si la promo no es 50%.</li>
+                                        </ul>
+                                    </li>
+                                    <li><strong>Importe por fila</strong>: muestra el total de la línea después de promos y descuentos.</li>
+                                    <li><strong>Quitar</strong>: elimina la fila completa.</li>
+                                    <li><strong>Totalización</strong>: la derecha de la pantalla resume subtotal, descuentos, recargo por tarjeta (4.5%), total y cambio.</li>
+                                    <li><strong>Método de pago</strong>: selecciona efectivo/tarjeta/transferencia; el recargo solo aplica a tarjeta.</li>
+                                    <li><strong>Clientes</strong>: busca o crea cliente para ticket por email/SMS.</li>
+                                    <li><strong>Cobro</strong>: al “Cobrar”, el sistema valida caja abierta, existencias y guarda la venta; puedes imprimir o enviar ticket.</li>
+                                </ul>
+                                <p class="text-xs text-gray-500">Tip: usa el botón “Par %” para promos de 30/40/50% al segundo artículo, y el campo de % manual para ajustes puntuales.</p>
+                            </div>
+                            <div class="px-4 py-3 border-t border-gray-200 text-right">
+                                <button class="rounded border px-3 py-1.5 text-sm hover:bg-gray-50" @click="showPairHelp = false">Cerrar</button>
+                            </div>
+                        </div>
+                    </div>
+                </transition>
+
 
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
                     <!-- Cart -->
-                    <section class="flex-1 space-y-3 text-[13px] leading-tight">
-                        <div class="border rounded-md overflow-hidden">
-                            <div class="px-3 py-2 border-b text-xs font-semibold tracking-wide text-gray-700">Carrito
+                            <section class="flex-1 space-y-3 text-[13px] leading-tight">
+                                <div class="border rounded-md overflow-hidden">
+                            <div class="px-3 py-2 border-b text-xs font-semibold tracking-wide text-gray-700 flex items-center justify-between">
+                                <span>Carrito</span>
+                                <button
+                                    class="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] text-gray-700 hover:bg-gray-50"
+                                    @click="showPairHelp = true"
+                                    title="Ver cómo funciona el descuento por par">
+                                    <span aria-hidden="true">ℹ️</span>
+                                    <span>Ayuda</span>
+                                </button>
                             </div>
                             <div class="p-3 space-y-3 md:hidden">
                                 <div v-if="cart.length === 0"
@@ -1595,6 +1689,24 @@ onUnmounted(() => {
                                                     class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
                                                     @input="onManualPercentInput(r)" />
                                             </label>
+                                            <div class="flex items-end gap-2">
+                                                <label class="flex flex-col gap-2 flex-1">
+                                                    <span class="font-medium text-gray-700">Par %</span>
+                                                    <input v-model.number="r.pairDiscountPct" type="number" min="0"
+                                                        max="100" step="1" placeholder="50"
+                                                        class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
+                                                        @input="onPairDiscountInput(r)"
+                                                        :disabled="r.qty < 2" />
+                                                </label>
+                                                <button
+                                                    @click="applyHalfOffPair(r)"
+                                                    :disabled="r.qty < 2"
+                                                    class="inline-flex items-center rounded border px-3 py-1.5 text-[12px] font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    :class="rowHasPairDiscount(r) ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'"
+                                                    title="Aplicar descuento a una pieza por cada par">
+                                                    {{ rowHasPairDiscount(r) ? 'Quitar par %' : 'Par %' }}
+                                                </button>
+                                            </div>
                                             <label class="flex flex-col gap-2">
                                                 <span class="font-medium text-gray-700">Desc. manual ($)</span>
                                                 <input :value="(r.manualDiscount ?? 0).toFixed(2)" type="number"
@@ -1683,13 +1795,19 @@ onUnmounted(() => {
                                                     {{ currency(lineNet(r)) }}
                                                 </td>
                                                 <td class="px-2.5 py-1.5 text-right">
-                                                    <button
-                                                        @click="applyHalfOffPair(r)"
-                                                        :disabled="r.qty < 2"
-                                                        class="rounded border border-emerald-200 px-2 py-1 text-[12px] text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                        title="Aplicar 50% a una pieza por cada par">
-                                                        2x1 mitad
-                                                    </button>
+                                                    <div class="flex items-center justify-end gap-2 mb-1">
+                                                        <input v-model.number="r.pairDiscountPct" type="number" min="0" max="100" step="1"
+                                                            class="w-16 rounded border px-2 py-1 text-right text-[12px]"
+                                                            :title="'Porcentaje para descuento por par'" @input="onPairDiscountInput(r)" :disabled="r.qty < 2" />
+                                                        <button
+                                                            @click="applyHalfOffPair(r)"
+                                                            :disabled="r.qty < 2"
+                                                            class="rounded border px-2 py-1 text-[12px] transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            :class="rowHasPairDiscount(r) ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'"
+                                                            title="Aplicar/limpiar descuento a una pieza por cada par">
+                                                            {{ rowHasPairDiscount(r) ? 'Quitar par %' : 'Par %' }}
+                                                        </button>
+                                                    </div>
                                                     <button @click="removeFromCart(r.ident)"
                                                         class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100">
                                                         Quitar

@@ -398,6 +398,7 @@ class CashierController extends Controller
                 $promoDisc = (float) ($line['promotion_percent_amount'] ?? $line['promotion_discount_total'] ?? 0);
                 $manualDisc = (float) ($line['manual_discount'] ?? 0);
                 $lineBase = max(0, $publicTotal - $promoDisc - $manualDisc);
+                $isFree = $lineBase <= 0;
                 $newCard = $paymentMethod === 'tarjeta' && $cardRate > 0 ? round($lineBase * $cardRate, 2) : 0.0;
                 $oldCard = (float) ($linePayout['credit_card_discount'] ?? 0);
                 $oldProviderPayment = (float) ($linePayout['provider_net'] ?? 0);
@@ -406,6 +407,7 @@ class CashierController extends Controller
 
                 $linePayout['credit_card_discount'] = $newCard;
                 $linePayout['provider_net'] = $newProviderPayment;
+                $line['is_free'] = $isFree;
                 $payout['lines'][$idx] = $linePayout;
                 $providerChargeTotal += $newCard;
             }
@@ -452,6 +454,8 @@ class CashierController extends Controller
                 $prod = $line['producto'];
                 $linePayout = $line['payout'] ?? [];
 
+                $lineIsFree = !empty($line['is_free']);
+
                 VentaDesg::create([
                     'idventa' => $ventaId,
                     'fecha' => $fecha,
@@ -467,7 +471,7 @@ class CashierController extends Controller
                     'promotion_discount_percentage' => ($line['promotion_percent'] ?? 0) > 0 ? $line['promotion_percent'] : null,
                     'promotion_discount_amount' => $line['promotion_discount_total'],
                     'manual_discount_amount' => $line['manual_discount'],
-                    'free_product' => $line['free_qty'] > 0,
+                    'free_product' => $line['free_qty'] > 0 || $lineIsFree,
                     'credit_card_discount' => $linePayout['credit_card_discount'] ?? 0.0,
                     'provider_percentage_discount' => $linePayout['provider_percentage_discount'] ?? 0.0,
                     'consigna_discount' => $linePayout['consigna_discount'] ?? 0.0,
