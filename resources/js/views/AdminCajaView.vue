@@ -963,6 +963,16 @@ function onManualDiscountChange(row: CartRow) {
     clampManualDiscount(row);
 }
 
+function applyHalfOffPair(row: CartRow) {
+    if (row.qty < 2) return;
+    const pairs = Math.floor(row.qty / 2); // one discounted item per pair
+    const discount = row.precio * 0.5 * pairs;
+    row.manualDiscount = Math.round(discount * 100) / 100;
+    const percent = computeManualPercent(row);
+    row.manualDiscountPercent = percent > 0 ? percent : undefined;
+    clampManualDiscount(row);
+}
+
 /** Refreshes the caja status banner (open/closed, current user, balances). */
 async function refreshCaja() {
     const data = await cajaStatus();
@@ -1592,7 +1602,14 @@ onUnmounted(() => {
                                                     class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm bg-gray-100 text-gray-600" />
                                             </label>
                                         </div>
-                                        <div class="flex flex-wrap justify-end gap-2">
+                                            <div class="flex flex-wrap justify-end gap-2">
+                                            <button
+                                                @click="applyHalfOffPair(r)"
+                                                :disabled="r.qty < 2"
+                                                class="inline-flex items-center rounded border border-emerald-200 px-3 py-1.5 text-[12px] font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                title="Aplicar 50% a una pieza por cada par">
+                                                2x1 mitad
+                                            </button>
                                             <button @click="removeFromCart(r.ident)"
                                                 class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50">
                                                 Quitar
@@ -1666,6 +1683,13 @@ onUnmounted(() => {
                                                     {{ currency(lineNet(r)) }}
                                                 </td>
                                                 <td class="px-2.5 py-1.5 text-right">
+                                                    <button
+                                                        @click="applyHalfOffPair(r)"
+                                                        :disabled="r.qty < 2"
+                                                        class="rounded border border-emerald-200 px-2 py-1 text-[12px] text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        title="Aplicar 50% a una pieza por cada par">
+                                                        2x1 mitad
+                                                    </button>
                                                     <button @click="removeFromCart(r.ident)"
                                                         class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100">
                                                         Quitar
