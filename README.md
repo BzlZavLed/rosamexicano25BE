@@ -109,3 +109,10 @@ Other backend feature suites you can invoke individually:
 - `php artisan test --filter=CajaExpenseTest`
 - `php artisan test --filter=ProviderSalesFlowTest`
 - `php artisan test --filter=ExampleTest`
+
+## Session timeout & inactivity tracking
+
+- Authenticated pages auto-logout after **10 minutes** of inactivity.
+- Activity that resets the timer: mouse movement, mouse clicks, key presses, touchstart events, scroll, and returning focus to the tab (visibilitychange).
+- When the timer fires, the session is cleared and the user is redirected to the login page.
+- The last identifier (email/phone) used to log in is remembered locally, so after a timeout you only need to re-enter the password.

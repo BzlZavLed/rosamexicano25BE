@@ -5,10 +5,17 @@ namespace App\Models;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use App\Models\BiometricCredential;
+use Laragear\WebAuthn\Contracts\WebAuthnAuthenticatable;
+use Laragear\WebAuthn\WebAuthnAuthentication;
+use Laragear\WebAuthn\WebAuthnData;
+use Ramsey\Uuid\Uuid;
+use Ramsey\Uuid\UuidInterface;
 
-class Proveedor extends Authenticatable
+class Proveedor extends Authenticatable implements WebAuthnAuthenticatable
 {
-    use HasApiTokens;
+    use HasApiTokens, WebAuthnAuthentication;
 
     protected $table = 'proveedores';
     protected $primaryKey = 'id';
@@ -73,5 +80,22 @@ class Proveedor extends Authenticatable
     public function getAuthIdentifierName()
     {
         return 'tel';
+    }
+
+    public function biometricCredentials(): MorphMany
+    {
+        return $this->morphMany(BiometricCredential::class, 'authenticatable');
+    }
+
+    public function webAuthnData(): WebAuthnData
+    {
+        $displayName = $this->nombre ?: 'Proveedor';
+        return WebAuthnData::make($this->tel ?? (string) $this->ident, $displayName);
+    }
+
+    public function webAuthnId(): UuidInterface
+    {
+        $source = 'proveedor-' . $this->getAuthIdentifier();
+        return Uuid::uuid5(Uuid::NAMESPACE_URL, $source);
     }
 }

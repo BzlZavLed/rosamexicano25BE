@@ -5,6 +5,9 @@ use App\Http\Controllers\AdminUsersController;
 use App\Http\Controllers\CashierController;
 use App\Http\Controllers\CashierLegacyController;
 use App\Http\Controllers\ClientesController;
+use App\Http\Controllers\BiometricAuthController;
+use App\Http\Controllers\WebAuthn\WebAuthnLoginController;
+use App\Http\Controllers\WebAuthn\WebAuthnRegisterController;
 use App\Http\Controllers\InventarioController;
 use App\Http\Controllers\InventoryProposalController;
 use App\Http\Controllers\MailerController;
@@ -26,6 +29,9 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/auth/login', [UnifiedAuthController::class, 'login']);
 Route::post('/login', [UnifiedAuthController::class, 'login'])->name('api.login');
+Route::post('/auth/biometric/login', [BiometricAuthController::class, 'login'])->name('api.auth.biometric.login');
+
+
 
 Route::get('/health-check', function () {
     return response()->json([
@@ -63,6 +69,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auth helpers
     Route::get('/auth/me', [UnifiedAuthController::class, 'me']);
     Route::post('/auth/logout', [UnifiedAuthController::class, 'logout']);
+    Route::post('/auth/biometric/register', [BiometricAuthController::class, 'register']);
 
     // Caja lifecycle
     Route::get('/caja/status', [CashierController::class, 'status']);

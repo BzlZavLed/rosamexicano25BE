@@ -19,6 +19,38 @@ export async function login(identifier: string, password: string) {
     return data;
 }
 
+export async function biometricLogin(identifier: string, secret: string) {
+    const { data } = await http.post<LoginResponse>('/auth/biometric/login', { identifier, secret });
+    return data;
+}
+
+export type BiometricRegisterResponse = { credential_id: string; token: string; identifier: string };
+
+export async function registerBiometricCredential(identifier: string) {
+    const { data } = await http.post<BiometricRegisterResponse>('/auth/biometric/register', { identifier });
+    return data;
+}
+
+export async function passkeyRegisterOptions() {
+    const { data } = await http.post('/auth/passkey/options', {}, { withCredentials: true });
+    return data as any;
+}
+
+export async function passkeyRegister(payload: any) {
+    const { data } = await http.post('/auth/passkey/register', payload, { withCredentials: true });
+    return data;
+}
+
+export async function passkeyLoginOptions(identifier: string) {
+    const { data } = await http.post('/auth/passkey/login/options', { identifier }, { withCredentials: true });
+    return data as any;
+}
+
+export async function passkeyLogin(payload: any) {
+    const { data } = await http.post<LoginResponse>('/auth/passkey/login', payload, { withCredentials: true });
+    return data;
+}
+
 export async function me() {
     const { data } = await http.get('/auth/me');
     return data as

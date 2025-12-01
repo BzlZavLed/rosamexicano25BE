@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useAuthStore } from '../../stores/auth';
+import { useInactivityLogout } from '../../composables/useInactivityLogout';
 import SidebarAdmin from './SidebarAdmin.vue';
 import SidebarProvider from './SidebarProvider.vue';
 import SettingsModal from '../modals/SettingsModal.vue';
@@ -20,6 +21,8 @@ const sidebarCollapsed = ref(false);
 const appName = import.meta.env.VITE_APP_NAME || 'Rosa Mexicano POS';
 const settingsOpen = ref(false);
 const cancelToolOpen = ref(false);
+
+useInactivityLogout();
 
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }

@@ -1,6 +1,6 @@
 // src/stores/auth.ts
 import { defineStore } from 'pinia';
-import { login as apiLogin, me as apiMe, logout as apiLogout } from '../api/auth';
+import { login as apiLogin, me as apiMe, logout as apiLogout, biometricLogin as apiBiometricLogin, registerBiometricCredential as apiRegisterBiometricCredential } from '../api/auth';
 import { ADMIN_DEFAULT_MODULES, CASHIER_DEFAULT_MODULES } from '../constants/modules';
 
 type Role = 'admin' | 'cashier' | 'provider';
@@ -34,6 +34,7 @@ export const useAuthStore = defineStore('auth', {
         loading: false as boolean,
         error: '' as string,
         modules: storedModules as string[],
+        lastIdentifier: localStorage.getItem('lastIdentifier') || '',
     }),
     getters: {
         isAuthenticated: (s) => !!s.token && !!s.role,
@@ -66,6 +67,11 @@ export const useAuthStore = defineStore('auth', {
         },
     },
     actions: {
+        rememberIdentifier(identifier: string) {
+            const value = identifier?.trim() || '';
+            this.lastIdentifier = value;
+            localStorage.setItem('lastIdentifier', value);
+        },
         setSession(token: string, role: Role, payload: any) {
             this.token = token;
             this.role = role;
@@ -99,6 +105,7 @@ export const useAuthStore = defineStore('auth', {
                 } else {
                     this.setSession(res.token, res.role, { user: res.user });
                 }
+                this.rememberIdentifier(identifier);
                 return true;
             } catch (e: any) {
                 this.error = e?.response?.data?.message || 'Login failed';
@@ -106,6 +113,35 @@ export const useAuthStore = defineStore('auth', {
                 return false;
             } finally {
                 this.loading = false;
+            }
+        },
+        async biometricLogin(identifier: string, secret: string) {
+            this.loading = true;
+            this.error = '';
+            try {
+                const res = await apiBiometricLogin(identifier, secret);
+                if ('provider' in res) {
+                    this.setSession(res.token, 'provider', { provider: res.provider });
+                } else {
+                    this.setSession(res.token, res.role, { user: res.user });
+                }
+                this.rememberIdentifier(identifier);
+                return true;
+            } catch (e: any) {
+                this.error = e?.response?.data?.message || 'Login biométrico falló';
+                this.clearSession();
+                return false;
+            } finally {
+                this.loading = false;
+            }
+        },
+        async issueBiometricCredential(identifier: string) {
+            try {
+                const res = await apiRegisterBiometricCredential(identifier);
+                return res;
+            } catch (e) {
+                console.warn('[auth] biometric enrollment failed', e);
+                return null;
             }
         },
         async hydrateFromToken() {

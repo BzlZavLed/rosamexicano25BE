@@ -35,20 +35,7 @@ class UnifiedAuthController extends Controller
             // Admin path
             $admin = Usuario::where('email', $id)->with('staffRole')->first();
             if ($admin && Hash::check($pw, $admin->password)) {
-                $role = $this->staffRole($admin);
-                $token = $admin->createToken('pos-admin', ['role:' . $role])->plainTextToken;
-                return response()->json([
-                    'token' => $token,
-                    'role'  => $role,
-                    'user'  => [
-                        'id' => $admin->id,
-                        'email' => $admin->email,
-                        'nombre' => $admin->nombre,
-                        'modules' => $this->staffModules($admin),
-                        'staff_role' => $this->formatStaffRole($admin->staffRole),
-                        'role' => $role,
-                    ],
-                ]);
+                return response()->json($this->issueStaffLoginResponse($admin));
             }
             Log::warning('Admin login failed', [
                 'identifier' => $id,
@@ -119,17 +106,7 @@ class UnifiedAuthController extends Controller
         }
 
         $token = $prov->createToken('pos-provider', ['role:provider'])->plainTextToken;
-        return response()->json([
-            'token'    => $token,
-            'role'     => 'provider',
-            'provider' => [
-                'id'     => $prov->id,
-                'ident'  => $prov->ident,
-                'nombre' => $prov->nombre,
-                'tel'    => $prov->tel,
-                'email'  => $prov->email,
-            ],
-        ]);
+        return response()->json($this->issueProviderLoginResponse($prov, $token));
     }
 
     public function me(Request $request)
@@ -209,6 +186,43 @@ class UnifiedAuthController extends Controller
             'base_role' => $role->base_role,
             'modules' => $role->modules ?? [],
             'is_default' => (bool) $role->is_default,
+        ];
+    }
+
+    protected function issueStaffLoginResponse(Usuario $admin, ?string $token = null): array
+    {
+        $admin->loadMissing('staffRole');
+        $role = $this->staffRole($admin);
+        $issuedToken = $token ?: $admin->createToken('pos-admin', ['role:' . $role])->plainTextToken;
+
+        return [
+            'token' => $issuedToken,
+            'role'  => $role,
+            'user'  => [
+                'id' => $admin->id,
+                'email' => $admin->email,
+                'nombre' => $admin->nombre,
+                'modules' => $this->staffModules($admin),
+                'staff_role' => $this->formatStaffRole($admin->staffRole),
+                'role' => $role,
+            ],
+        ];
+    }
+
+    protected function issueProviderLoginResponse(Proveedor $prov, ?string $token = null): array
+    {
+        $issuedToken = $token ?: $prov->createToken('pos-provider', ['role:provider'])->plainTextToken;
+
+        return [
+            'token'    => $issuedToken,
+            'role'     => 'provider',
+            'provider' => [
+                'id'     => $prov->id,
+                'ident'  => $prov->ident,
+                'nombre' => $prov->nombre,
+                'tel'    => $prov->tel,
+                'email'  => $prov->email,
+            ],
         ];
     }
 }

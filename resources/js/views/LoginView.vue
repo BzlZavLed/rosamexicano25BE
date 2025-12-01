@@ -4,14 +4,20 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { resolveStaffHome } from '../utils/staffRoutes';
+import { passkeyLogin, passkeyLoginOptions, passkeyRegister, passkeyRegisterOptions } from '../api/auth';
 
 const router = useRouter();
 const auth = useAuthStore();
 
-const identifier = ref('');
+const identifier = ref(auth.lastIdentifier || '');
 const password = ref('');
 const showPw = ref(false);
+const biometricError = ref('');
+const biometricLoading = ref(false);
+const passkeyError = ref('');
+const passkeyLoading = ref(false);
 const DEFAULT_THEME = 'rosa-mexicano';
+const LOCAL_BIOMETRIC_KEY = 'pos_biometric_secret';
 
 const THEME_LOGOS: Record<string, string> = {
     'verde-lima': '/images/themes/dpekesypekas.png',
@@ -33,19 +39,242 @@ const theme = ref(readTheme());
 const logoSrc = computed(() => THEME_LOGOS[theme.value]);
 const heroTitle = computed(() => THEME_TITLES[theme.value] ?? 'Portal interno');
 
+const supportsBiometric = computed(() =>
+    typeof navigator !== 'undefined' &&
+    !!navigator.credentials &&
+    typeof navigator.credentials.get === 'function'
+);
+const supportsPasskey = computed(() =>
+    typeof PublicKeyCredential !== 'undefined' && typeof navigator.credentials?.create === 'function'
+);
+
 async function submit() {
+    biometricError.value = '';
+    passkeyError.value = '';
     const inputIdentifier = identifier.value.trim();
     const ok = await auth.login(inputIdentifier, password.value);
     if (!ok) {
         console.warn('[login] failed', { identifier: inputIdentifier, error: auth.error });
         return;
     }
+    await enrollBiometricIfPossible(inputIdentifier);
+    await enrollPasskeyIfPossible();
     if (auth.isAdmin || auth.isCashier) {
         const staffRole: 'admin' | 'cashier' | '' = auth.isAdmin ? 'admin' : auth.isCashier ? 'cashier' : '';
         const fallback = resolveStaffHome(staffRole, auth.modules) ?? { name: 'admin-dashboard' };
         router.push(fallback);
     } else if (auth.isProvider) {
         router.push({ name: 'provider-dashboard' });
+    }
+}
+
+async function enrollBiometricIfPossible(inputIdentifier: string) {
+    if (!supportsBiometric.value) return;
+    try {
+        const res = await auth.issueBiometricCredential(inputIdentifier);
+        if (!res) return;
+        const secret = `${res.credential_id}:${res.token}`;
+        persistLocalBiometricSecret(res.identifier, secret);
+        if (navigator.credentials?.store) {
+            const cred = new (window as any).PasswordCredential({
+                id: res.identifier,
+                name: res.identifier,
+                password: secret,
+            });
+            await navigator.credentials.store(cred);
+        }
+    } catch (err) {
+        console.warn('[biometric enrollment] failed', err);
+    }
+}
+
+function persistLocalBiometricSecret(id: string, secret: string) {
+    try {
+        localStorage.setItem(LOCAL_BIOMETRIC_KEY, JSON.stringify({ id, secret }));
+    } catch (e) {
+        console.warn('[biometric enrollment] could not persist locally', e);
+    }
+}
+
+function readLocalBiometricSecret() {
+    try {
+        const raw = localStorage.getItem(LOCAL_BIOMETRIC_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed?.id && parsed?.secret) return parsed as { id: string; secret: string };
+    } catch (e) {
+        console.warn('[biometric login] failed to read local secret', e);
+    }
+    return null;
+}
+
+function bufferDecode(input: string): ArrayBuffer {
+    const pad = '='.repeat((4 - (input.length % 4)) % 4);
+    const base64 = (input + pad).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const output = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; ++i) {
+        output[i] = raw.charCodeAt(i);
+    }
+    return output.buffer;
+}
+
+function bufferEncode(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i] ?? 0);
+    }
+    const base64 = btoa(binary);
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodePublicKeyCredentialCreateOptions(options: any) {
+    const publicKey = { ...options };
+    publicKey.challenge = bufferDecode(options.challenge);
+    publicKey.user = { ...options.user, id: bufferDecode(options.user.id) };
+    publicKey.excludeCredentials = (options.excludeCredentials || []).map((cred: any) => ({
+        ...cred,
+        id: bufferDecode(cred.id),
+    }));
+    return publicKey;
+}
+
+function decodePublicKeyCredentialRequestOptions(options: any) {
+    const publicKey = { ...options };
+    publicKey.challenge = bufferDecode(options.challenge);
+    publicKey.allowCredentials = (options.allowCredentials || []).map((cred: any) => ({
+        ...cred,
+        id: bufferDecode(cred.id),
+    }));
+    return publicKey;
+}
+
+function buildAttestation(credential: PublicKeyCredential) {
+    const response = credential.response as AuthenticatorAttestationResponse;
+    return {
+        id: credential.id,
+        rawId: bufferEncode(credential.rawId),
+        type: credential.type,
+        response: {
+            clientDataJSON: bufferEncode(response.clientDataJSON),
+            attestationObject: bufferEncode(response.attestationObject),
+        },
+    };
+}
+
+function buildAssertion(credential: PublicKeyCredential) {
+    const response = credential.response as AuthenticatorAssertionResponse;
+    return {
+        id: credential.id,
+        rawId: bufferEncode(credential.rawId),
+        type: credential.type,
+        response: {
+            clientDataJSON: bufferEncode(response.clientDataJSON),
+            authenticatorData: bufferEncode(response.authenticatorData),
+            signature: bufferEncode(response.signature),
+            userHandle: response.userHandle ? bufferEncode(response.userHandle) : null,
+        },
+    };
+}
+
+async function passkeyLoginFlow() {
+    passkeyError.value = '';
+    if (!supportsPasskey.value) {
+        passkeyError.value = 'Este dispositivo no soporta passkeys.';
+        return;
+    }
+
+    passkeyLoading.value = true;
+    try {
+        const inputIdentifier = identifier.value.trim();
+        if (!inputIdentifier) {
+            passkeyError.value = 'Ingresa tu email o teléfono para buscar tu passkey.';
+            return;
+        }
+        const options = await passkeyLoginOptions(inputIdentifier);
+        const publicKey = decodePublicKeyCredentialRequestOptions(options.publicKey ?? options);
+        const credential = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential;
+        const assertion = buildAssertion(credential);
+        const res = await passkeyLogin(assertion);
+        console.log('response', res);
+        if ('provider' in res) {
+            auth.setSession(res.token, 'provider', { provider: res.provider });
+        } else {
+            auth.setSession(res.token, res.role, { user: res.user });
+        }
+        const staffRole: 'admin' | 'cashier' | '' = auth.isAdmin ? 'admin' : auth.isCashier ? 'cashier' : '';
+        const fallback = auth.isProvider ? { name: 'provider-dashboard' } : resolveStaffHome(staffRole, auth.modules) ?? { name: 'admin-dashboard' };
+        router.push(fallback);
+    } catch (err: any) {
+        if (err?.name === 'NotAllowedError') {
+            passkeyError.value = 'Passkey cancelada o no autorizada.';
+        } else {
+            passkeyError.value = 'No se pudo iniciar sesión con passkey.';
+            console.error('[passkey-login] error', err);
+        }
+    } finally {
+        passkeyLoading.value = false;
+    }
+}
+
+async function enrollPasskeyIfPossible() {
+    if (!supportsPasskey.value) return;
+    try {
+        const options = await passkeyRegisterOptions();
+        const publicKey = decodePublicKeyCredentialCreateOptions(options.publicKey ?? options);
+        const credential = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential;
+        const attestation = buildAttestation(credential);
+        await passkeyRegister(attestation);
+    } catch (err) {
+        console.warn('[passkey enrollment] skipped', err);
+    }
+}
+
+async function biometricLogin() {
+    biometricError.value = '';
+    if (!supportsBiometric.value || !navigator.credentials?.get) {
+        biometricError.value = 'Este dispositivo no soporta biometría para autocompletar.';
+        return;
+    }
+
+    biometricLoading.value = true;
+    try {
+        const credential = (await navigator.credentials.get({
+            password: true,
+            mediation: 'optional',
+        } as any)) as any;
+        let id = (credential?.id as string | undefined) ?? (credential?.name as string | undefined);
+        let secret = credential?.password as string | undefined;
+
+        if (!id || !secret) {
+            const fallback = readLocalBiometricSecret();
+            if (!fallback) {
+                biometricError.value = 'No encontramos credenciales guardadas para esta app.';
+                return;
+            }
+            id = fallback.id;
+            secret = fallback.secret;
+        }
+
+        identifier.value = id;
+        const ok = await auth.biometricLogin(id, secret);
+        if (!ok) {
+            biometricError.value = auth.error || 'No se pudo iniciar sesión con biometría.';
+            return;
+        }
+        const staffRole: 'admin' | 'cashier' | '' = auth.isAdmin ? 'admin' : auth.isCashier ? 'cashier' : '';
+        const fallback = auth.isProvider ? { name: 'provider-dashboard' } : resolveStaffHome(staffRole, auth.modules) ?? { name: 'admin-dashboard' };
+        router.push(fallback);
+    } catch (err: any) {
+        if (err?.name === 'NotAllowedError') {
+            biometricError.value = 'Biometría cancelada o no autorizada.';
+        } else {
+            biometricError.value = 'No se pudo usar la biometría en este dispositivo.';
+            console.error('[biometric-login] error', err);
+        }
+    } finally {
+        biometricLoading.value = false;
     }
 }
 
@@ -123,8 +352,35 @@ onUnmounted(() => {
                         <span v-else>Entrar</span>
                     </button>
 
+                    <div class="alt-login-row" v-if="supportsBiometric || supportsPasskey">
+                        <button
+                            v-if="supportsBiometric"
+                            :disabled="auth.loading || biometricLoading"
+                            @click="biometricLogin"
+                            class="pill-icon-btn"
+                            :title="biometricLoading ? 'Verificando biometría…' : 'Entrar con la credencial guardada en el navegador'">
+                            <span class="pill-icon">🔒</span>
+                            <span v-if="biometricLoading" class="animate-pulse">Verificando…</span>
+                        </button>
+                        <button
+                            v-if="supportsPasskey"
+                        :disabled="auth.loading || passkeyLoading"
+                        @click="passkeyLoginFlow"
+                        class="pill-icon-btn"
+                        :title="passkeyLoading ? 'Verificando passkey…' : 'Entrar con Passkey (Face ID / Touch ID)'">
+                            <span class="faceid-icon" aria-hidden="true"></span>
+                            <span v-if="passkeyLoading" class="animate-pulse">Passkey…</span>
+                        </button>
+                    </div>
+
                     <p v-if="auth.error" class="login-error">
                         {{ auth.error }}
+                    </p>
+                    <p v-else-if="biometricError" class="login-error login-error--soft">
+                        {{ biometricError }}
+                    </p>
+                    <p v-else-if="passkeyError" class="login-error login-error--soft">
+                        {{ passkeyError }}
                     </p>
 
                     <p class="helper-text">
@@ -384,6 +640,14 @@ onUnmounted(() => {
     transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
+.login-submit--ghost {
+    margin-top: 0.6rem;
+    background: #ffffff;
+    color: var(--brand-primary, #e4007c);
+    border: 1px solid var(--brand-secondary, #fdd8e9);
+    box-shadow: none;
+}
+
 .login-submit:disabled {
     opacity: 0.65;
     cursor: not-allowed;
@@ -403,6 +667,57 @@ onUnmounted(() => {
     background: var(--brand-surface-subtle, #fff5f9);
     color: var(--brand-primary, #e4007c);
     border: 1px solid var(--brand-primary, #e4007c);
+}
+
+.login-error--soft {
+    background: #fff;
+    color: #92400e;
+    border-color: var(--brand-secondary, #fdd8e9);
+}
+
+.alt-login-row {
+    margin-top: 0.75rem;
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+.pill-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.65rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--brand-secondary, #fdd8e9);
+    background: #ffffff;
+    color: var(--brand-primary, #e4007c);
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.pill-icon-btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.pill-icon-btn:hover:not(:disabled) {
+    border-color: var(--brand-primary, #e4007c);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+}
+
+.pill-icon {
+    font-size: 1.1rem;
+}
+
+.faceid-icon {
+    width: 1.15rem;
+    height: 1.15rem;
+    display: inline-block;
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg width='64' height='64' viewBox='0 0 64 64' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect x='9' y='6' width='46' height='52' rx='10' stroke='%23e4007c' stroke-width='4'/%3E%3Crect x='18' y='20' width='6' height='8' rx='3' fill='%23e4007c'/%3E%3Crect x='40' y='20' width='6' height='8' rx='3' fill='%23e4007c'/%3E%3Cpath d='M22 42c2.2 3 6 5 10 5s7.8-2 10-5' stroke='%23e4007c' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 
 .helper-text {
