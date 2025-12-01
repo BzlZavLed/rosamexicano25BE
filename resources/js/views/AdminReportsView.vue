@@ -70,7 +70,7 @@ function providerPaymentTooltip(linea: CajaReportLine): string {
     const parts = [
         `(${formatCurrency(providerPrice)} × ${qty})`,
         manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
-        card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
+        card > 0 ? `− ${formatCurrency(linea.credit_card_discount)} (tarjeta)` : null,
     ].filter(Boolean);
     return `${parts.join(' ')} = ${formatCurrency(afterManual - card)}`;
 }
