@@ -18,12 +18,10 @@ return new class extends Migration
             $table->string('token_hash', 128);
             $table->string('device_label')->nullable();
             $table->string('user_agent')->nullable();
-            $table->nullableMorphs('authenticatable');
+            // Use a short index name to avoid MySQL identifier length issues
+            $table->nullableMorphs('authenticatable', 'biometric_auth_idx');
             $table->timestamp('last_used_at')->nullable();
             $table->timestamps();
-
-            // Custom index name to avoid collisions in Postgres where index names are schema-global
-            $table->index(['authenticatable_type', 'authenticatable_id'], 'biometric_credentials_auth_idx');
         });
     }
 
