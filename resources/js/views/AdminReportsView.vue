@@ -85,11 +85,13 @@ function cajaLineCardBase(linea: CajaReportLine) {
 function cajaLineCardCharge(linea: CajaReportLine) {
     const base = cajaLineCardBase(linea);
     const rate = 0.045;
+    console.log(Math.round(base * rate * 100) / 100);
     return Math.round(base * rate * 100) / 100;
 }
 
 function cajaLineProviderPayment(linea: CajaReportLine) {
     const newCard = cajaLineCardCharge(linea);
+    console.log('newCard', newCard);
     const oldCard = Number(linea.credit_card_discount ?? 0);
     const delta = oldCard - newCard;
     const current = Number(linea.provider_payment ?? 0);
