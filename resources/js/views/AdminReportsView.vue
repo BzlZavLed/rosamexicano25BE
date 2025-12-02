@@ -77,17 +77,12 @@ function providerPaymentTooltip(linea: CajaReportLine): string {
 }
 
 function cajaLineProviderPayment(linea: CajaReportLine) {
-    const newCard = cajaLineCardCharge(linea);
+    //const newCard = cajaLineCardCharge(linea);
     const oldCard = Number(linea.credit_card_discount ?? 0);
-    const delta = oldCard - newCard;
-    const current = Number(linea.provider_payment ?? 0);
-    console.log(Math.max(0, current + delta));
-    console.log(current);
-    console.log(delta);
-    console.log(newCard);
-    console.log(oldCard);
-
-    return Math.max(0, current + delta);
+    //const delta = oldCard - newCard;
+    //const current = Number(linea.provider_payment ?? 0);
+    //return Math.max(0, current + delta);
+    return oldCard;
 }
 
 function cajaLineCardBase(linea: CajaReportLine) {
