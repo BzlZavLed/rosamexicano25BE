@@ -64,12 +64,26 @@ function providerDiscountTooltip(linea: CajaReportLine): string {
 
 function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string {
     const qty = Number(linea.quantity ?? 0);
+    const publicTotal = Number(linea.public_total ?? 0);
     const providerPrice = Number(linea.provider_price ?? 0);
     const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
     const manual = Number(linea.manual_discount_amount ?? 0);
-    const totalGeneral = (providerPrice * qty) - manual - card;
+    const promo = Number(linea.promotion_discount_amount ?? 0);
+
+    if (linea.provider_discount_type === 'consigna' || linea.provider_discount_type === 'porcentaje') {
+        const totalGeneral = Math.max(0, (providerPrice * qty) - promo - manual - card);
+        const parts = [
+            `(${formatCurrency(providerPrice)} precio proveedor × ${qty}) `,
+            promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
+            manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
+            card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
+        ].filter(Boolean);
+        return `${parts.join(' ')} = ${formatCurrency(totalGeneral)}`;
+    }
+
+    const totalGeneral = Math.max(0, publicTotal - manual - card);
     const parts = [
-        `(${formatCurrency(providerPrice)} × ${qty})`,
+        `${formatCurrency(publicTotal)} total venta`,
         manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
         card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
     ].filter(Boolean);
@@ -77,20 +91,16 @@ function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string 
 }
 
 function cajaLineProviderPayment(linea: CajaReportLine, metodo?: string) {
-    // Provider payment comes net from backend; only surface card fee if method is tarjeta.
-    /* if (metodo !== 'tarjeta') {
-        return Number(linea.provider_payment ?? 0);
-    }
-    return Math.max(0, Number(linea.provider_payment ?? 0)); */
-
-
     const qty = Number(linea.quantity ?? 0);
+    const publicTotal = Number(linea.public_total ?? 0);
+    const promo = Number(linea.promotion_discount_amount ?? 0);
     const providerPrice = Number(linea.provider_price ?? 0);
     const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
     const manual = Number(linea.manual_discount_amount ?? 0);
-    const totalGeneral = (providerPrice * qty) - manual - card;
-
-    return totalGeneral;
+    if (linea.provider_discount_type === 'consigna' || linea.provider_discount_type === 'porcentaje') {
+        return Math.max(0, (providerPrice * qty) - promo - manual - card);
+    }
+    return Math.max(0, publicTotal - manual - card);
 }
 
 
@@ -2193,7 +2203,10 @@ watch(
                                                             </td>
                                                             <td class="px-2 py-1 text-right">
                                                                 <div class="flex items-center justify-end gap-1">
-                                                                    <span class="font-semibold text-sky-700">{{ formatCurrency(cajaLineProviderPayment(linea, venta.metodo)) }}</span>
+                                                                    <div class="flex flex-col items-end leading-tight">
+                                                                        <span class="font-semibold text-sky-700">{{ formatCurrency(cajaLineProviderPayment(linea, venta.metodo)) }}</span>
+                                                                        
+                                                                    </div>
                                                                     <span class="relative inline-flex cursor-help text-[10px] text-gray-500 group">
                                                                         Fórmula
                                                                     <span
