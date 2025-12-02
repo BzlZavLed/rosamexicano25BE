@@ -84,6 +84,8 @@ function cajaLineProviderPayment(linea: CajaReportLine) {
     console.log(Math.max(0, current + delta));
     console.log(current);
     console.log(delta);
+    console.log(newCard);
+    console.log(oldCard);
 
     return Math.max(0, current + delta);
 }
