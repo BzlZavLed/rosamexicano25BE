@@ -78,10 +78,19 @@ function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string 
 
 function cajaLineProviderPayment(linea: CajaReportLine, metodo?: string) {
     // Provider payment comes net from backend; only surface card fee if method is tarjeta.
-    if (metodo !== 'tarjeta') {
+    /* if (metodo !== 'tarjeta') {
         return Number(linea.provider_payment ?? 0);
     }
-    return Math.max(0, Number(linea.provider_payment ?? 0));
+    return Math.max(0, Number(linea.provider_payment ?? 0)); */
+
+
+    const qty = Number(linea.quantity ?? 0);
+    const providerPrice = Number(linea.provider_price ?? 0);
+    const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
+    const manual = Number(linea.manual_discount_amount ?? 0);
+    const totalGeneral = (providerPrice * qty) - manual - card;
+
+    return totalGeneral;
 }
 
 
