@@ -54,6 +54,7 @@ function providerDiscountTooltip(linea: CajaReportLine): string {
         const qty = Number(linea.quantity ?? 0);
         const unit = Number(linea.unit_price ?? 0);
         const provider = Number(linea.provider_price ?? 0);
+        console.log('provider consigna', { qty, unit, provider });
         const amount = unit * qty - provider * qty;
         return `(${formatCurrency(unit)} × ${qty}) − (${formatCurrency(provider)} × ${qty}) = ${formatCurrency(amount)}`;
     }
