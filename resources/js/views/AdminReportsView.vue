@@ -84,19 +84,7 @@ function cajaLineProviderPayment(linea: CajaReportLine, metodo?: string) {
     return Math.max(0, Number(linea.provider_payment ?? 0));
 }
 
-function cajaLineCardBase(linea: CajaReportLine) {
-    const gross = Number(linea.public_total ?? 0);
-    const promo = Number(linea.promotion_discount_amount ?? 0);
-    const manual = Number(linea.manual_discount_amount ?? 0);
-    return Math.max(0, gross - promo - manual);
-}
 
-function cajaLineCardCharge(linea: CajaReportLine, metodo?: string) {
-    if (metodo !== 'tarjeta') return 0;
-    const base = cajaLineCardBase(linea);
-    const rate = 0.045;
-    return Math.round(base * rate * 100) / 100;
-}
 
 
 
