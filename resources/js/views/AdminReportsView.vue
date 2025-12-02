@@ -62,27 +62,26 @@ function providerDiscountTooltip(linea: CajaReportLine): string {
     return 'Sin descuento proveedor';
 }
 
-function providerPaymentTooltip(linea: CajaReportLine): string {
+function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string {
     const qty = Number(linea.quantity ?? 0);
     const providerPrice = Number(linea.provider_price ?? 0);
-    const card = Number(cajaLineCardCharge(linea));
+    const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
     const manual = Number(linea.manual_discount_amount ?? 0);
-    const totalGeneral = (providerPrice * qty) - manual - (linea.credit_card_discount ?? 0);
+    const totalGeneral = (providerPrice * qty) - manual - card;
     const parts = [
         `(${formatCurrency(providerPrice)} × ${qty})`,
         manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
-        card > 0 ? `− ${formatCurrency(linea.credit_card_discount)} (tarjeta)` : null,
+        card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
     ].filter(Boolean);
     return `${parts.join(' ')} = ${formatCurrency(totalGeneral)}`;
 }
 
-function cajaLineProviderPayment(linea: CajaReportLine) {
-    //const newCard = cajaLineCardCharge(linea);
-    const oldCard = Number(linea.credit_card_discount ?? 0);
-    //const delta = oldCard - newCard;
-    //const current = Number(linea.provider_payment ?? 0);
-    //return Math.max(0, current + delta);
-    return oldCard;
+function cajaLineProviderPayment(linea: CajaReportLine, metodo?: string) {
+    // Provider payment comes net from backend; only surface card fee if method is tarjeta.
+    if (metodo !== 'tarjeta') {
+        return Number(linea.provider_payment ?? 0);
+    }
+    return Math.max(0, Number(linea.provider_payment ?? 0));
 }
 
 function cajaLineCardBase(linea: CajaReportLine) {
@@ -92,7 +91,8 @@ function cajaLineCardBase(linea: CajaReportLine) {
     return Math.max(0, gross - promo - manual);
 }
 
-function cajaLineCardCharge(linea: CajaReportLine) {
+function cajaLineCardCharge(linea: CajaReportLine, metodo?: string) {
+    if (metodo !== 'tarjeta') return 0;
     const base = cajaLineCardBase(linea);
     const rate = 0.045;
     return Math.round(base * rate * 100) / 100;
@@ -2196,12 +2196,12 @@ watch(
                                                             </td>
                                                             <td class="px-2 py-1 text-right">
                                                                 <div class="flex items-center justify-end gap-1">
-                                                                    <span class="font-semibold text-sky-700">{{ formatCurrency(cajaLineProviderPayment(linea)) }}</span>
+                                                                    <span class="font-semibold text-sky-700">{{ formatCurrency(cajaLineProviderPayment(linea, venta.metodo)) }}</span>
                                                                     <span class="relative inline-flex cursor-help text-[10px] text-gray-500 group">
                                                                         Fórmula
                                                                     <span
                                                                         class="pointer-events-none absolute bottom-full right-0 z-10 mb-1 hidden whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[10px] text-white group-hover:block">
-                                                                            {{ providerPaymentTooltip(linea) }}
+                                                                            {{ providerPaymentTooltip(linea, venta.metodo) }}
                                                                     </span>
                                                                 </span>
                                                                 </div>
