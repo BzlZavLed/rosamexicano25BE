@@ -44,10 +44,13 @@ function formatCajaFecha(value?: string | null): string {
 }
 
 function providerDiscountTooltip(linea: CajaReportLine): string {
+     console.log('Linea', linea);
     if (linea.provider_discount_type === 'porcentaje') {
         const qty = Number(linea.quantity ?? 0);
         const unit = Number(linea.unit_price ?? 0);
         const amount = unit * qty * 0.2;
+        console.log('provider porcentaje', { qty, unit, amount });
+
         return `${formatCurrency(unit)} × ${qty} × 0.20 = ${formatCurrency(amount)}`;
     }
     if (linea.provider_discount_type === 'consigna') {
@@ -58,6 +61,7 @@ function providerDiscountTooltip(linea: CajaReportLine): string {
         const amount = unit * qty - provider * qty;
         return `(${formatCurrency(unit)} × ${qty}) − (${formatCurrency(provider)} × ${qty}) = ${formatCurrency(amount)}`;
     }
+  
     return 'Sin descuento proveedor';
 }
 
@@ -73,6 +77,7 @@ function providerPaymentTooltip(linea: CajaReportLine): string {
         manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
         card > 0 ? `− ${formatCurrency(linea.credit_card_discount)} (tarjeta)` : null,
     ].filter(Boolean);
+    console.log(total,manual,afterManual,linea.credit_card_discount);
     return `${parts.join(' ')} = ${formatCurrency(afterManual - (linea.credit_card_discount ?? 0))}`;
 }
 

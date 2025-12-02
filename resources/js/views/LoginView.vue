@@ -197,7 +197,6 @@ async function passkeyLoginFlow() {
         const credential = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential;
         const assertion = buildAssertion(credential);
         const res = await passkeyLogin(assertion);
-        console.log('response', res);
         if ('provider' in res) {
             auth.setSession(res.token, 'provider', { provider: res.provider });
         } else {
