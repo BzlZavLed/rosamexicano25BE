@@ -67,8 +67,6 @@ function providerPaymentTooltip(linea: CajaReportLine): string {
     const providerPrice = Number(linea.provider_price ?? 0);
     const card = Number(cajaLineCardCharge(linea));
     const manual = Number(linea.manual_discount_amount ?? 0);
-    const total = providerPrice * qty;
-    const afterManual = total - manual;
     const totalGeneral = (providerPrice * qty) - manual - (linea.credit_card_discount ?? 0);
     const parts = [
         `(${formatCurrency(providerPrice)} × ${qty})`,
