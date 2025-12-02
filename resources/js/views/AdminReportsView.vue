@@ -44,12 +44,10 @@ function formatCajaFecha(value?: string | null): string {
 }
 
 function providerDiscountTooltip(linea: CajaReportLine): string {
-     console.log('Linea', linea);
     if (linea.provider_discount_type === 'porcentaje') {
         const qty = Number(linea.quantity ?? 0);
         const unit = Number(linea.unit_price ?? 0);
         const amount = unit * qty * 0.2;
-        console.log('provider porcentaje', { qty, unit, amount });
 
         return `${formatCurrency(unit)} × ${qty} × 0.20 = ${formatCurrency(amount)}`;
     }
@@ -57,7 +55,6 @@ function providerDiscountTooltip(linea: CajaReportLine): string {
         const qty = Number(linea.quantity ?? 0);
         const unit = Number(linea.unit_price ?? 0);
         const provider = Number(linea.provider_price ?? 0);
-        console.log('provider consigna', { qty, unit, provider });
         const amount = unit * qty - provider * qty;
         return `(${formatCurrency(unit)} × ${qty}) − (${formatCurrency(provider)} × ${qty}) = ${formatCurrency(amount)}`;
     }
@@ -72,13 +69,25 @@ function providerPaymentTooltip(linea: CajaReportLine): string {
     const manual = Number(linea.manual_discount_amount ?? 0);
     const total = providerPrice * qty;
     const afterManual = total - manual;
+    const totalGeneral = (providerPrice * qty) - manual - (linea.credit_card_discount ?? 0);
     const parts = [
         `(${formatCurrency(providerPrice)} × ${qty})`,
         manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
         card > 0 ? `− ${formatCurrency(linea.credit_card_discount)} (tarjeta)` : null,
     ].filter(Boolean);
-    console.log(total,manual,afterManual,linea.credit_card_discount);
-    return `${parts.join(' ')} = ${formatCurrency(afterManual - (linea.credit_card_discount ?? 0))}`;
+    return `${parts.join(' ')} = ${formatCurrency(totalGeneral)}`;
+}
+
+function cajaLineProviderPayment(linea: CajaReportLine) {
+    const newCard = cajaLineCardCharge(linea);
+    const oldCard = Number(linea.credit_card_discount ?? 0);
+    const delta = oldCard - newCard;
+    const current = Number(linea.provider_payment ?? 0);
+    console.log(Math.max(0, current + delta));
+    console.log(current);
+    console.log(delta);
+
+    return Math.max(0, current + delta);
 }
 
 function cajaLineCardBase(linea: CajaReportLine) {
@@ -94,13 +103,7 @@ function cajaLineCardCharge(linea: CajaReportLine) {
     return Math.round(base * rate * 100) / 100;
 }
 
-function cajaLineProviderPayment(linea: CajaReportLine) {
-    const newCard = cajaLineCardCharge(linea);
-    const oldCard = Number(linea.credit_card_discount ?? 0);
-    const delta = oldCard - newCard;
-    const current = Number(linea.provider_payment ?? 0);
-    return Math.max(0, current + delta);
-}
+
 
 function formatMonthLabel(value?: string | null) {
     if (!value) return '--';
