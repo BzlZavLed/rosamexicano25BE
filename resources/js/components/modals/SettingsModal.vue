@@ -38,6 +38,16 @@ const history = ref<SettingHistoryEntry[]>([])
 const cardRebalanceHistory = ref<CardRebalanceLog[]>([])
 const cardRebalanceChanges = ref<CardRebalanceChange[]>([])
 const rebalanceLogText = ref<string | null>(null)
+const inactivityEnabled = ref(readInactivityFlag())
+
+function readInactivityFlag() {
+    try {
+        const val = localStorage.getItem('inactivityLogoutEnabled')
+        return val === null ? true : val !== 'false'
+    } catch {
+        return true
+    }
+}
 
 watch(
     () => props.open,
@@ -61,20 +71,22 @@ async function loadSettings() {
             : ['2w'])
         cardPercent.value = data.card_charge_percent ?? 4.5
         lastRun.value = data.restock.last_run ?? null
-        lastClosingBalance.value = data.last_closing_balance ?? null
-        includeZero.value = Boolean(data.restock.include_zero)
-        minDays.value = data.restock.min_days ?? 14
-        restockLookback.value = data.restock.lookback_days ?? 90
-        recommendedPercent.value = data.analysis?.recommended_percentage ?? 5
-        recommendedMonths.value = data.analysis?.recommended_months ?? 12
-        history.value = data.history ?? []
-        cardRebalanceHistory.value = data.card_rebalance_history ?? []
-        cardRebalanceChanges.value = data.card_rebalance_changes ?? []
-    } catch (err: any) {
-        error.value = err?.response?.data?.message || err?.message || 'No se pudo cargar la configuración.'
-    } finally {
-        loading.value = false
-    }
+            lastClosingBalance.value = data.last_closing_balance ?? null
+            includeZero.value = Boolean(data.restock.include_zero)
+            minDays.value = data.restock.min_days ?? 14
+            restockLookback.value = data.restock.lookback_days ?? 90
+            recommendedPercent.value = data.analysis?.recommended_percentage ?? 5
+            recommendedMonths.value = data.analysis?.recommended_months ?? 12
+            history.value = data.history ?? []
+            cardRebalanceHistory.value = data.card_rebalance_history ?? []
+            cardRebalanceChanges.value = data.card_rebalance_changes ?? []
+            inactivityEnabled.value = data.inactivity_logout_enabled ?? readInactivityFlag()
+            localStorage.setItem('inactivityLogoutEnabled', inactivityEnabled.value ? 'true' : 'false')
+        } catch (err: any) {
+            error.value = err?.response?.data?.message || err?.message || 'No se pudo cargar la configuración.'
+        } finally {
+            loading.value = false
+        }
 }
 
 function toggle(value: Horizon) {
@@ -103,6 +115,7 @@ async function saveSettings() {
             restock_lookback_days: restockLookback.value,
             recommended_percentage: recommendedPercent.value,
             recommended_months: recommendedMonths.value,
+            inactivity_logout_enabled: inactivityEnabled.value,
         })
         selected.value = (data.restock.horizon && data.restock.horizon.length
             ? (data.restock.horizon as Horizon[])
@@ -110,6 +123,8 @@ async function saveSettings() {
         cardPercent.value = data.card_charge_percent ?? 4.5
         recommendedPercent.value = data.analysis?.recommended_percentage ?? recommendedPercent.value
         recommendedMonths.value = data.analysis?.recommended_months ?? recommendedMonths.value
+        inactivityEnabled.value = data.inactivity_logout_enabled ?? inactivityEnabled.value
+        localStorage.setItem('inactivityLogoutEnabled', inactivityEnabled.value ? 'true' : 'false')
         message.value = 'Configuración guardada. Recargando…'
         setTimeout(() => window.location.reload(), 800)
     } catch (err: any) {
@@ -254,6 +269,20 @@ async function runCardRebalanceManual() {
                                             <span v-else>Forzar cierre de caja (hoy)</span>
                                         </button>
                                     </div>
+                                </section>
+
+                                <section class="space-y-2 pt-4">
+                                    <div>
+        <p class="text-xs uppercase tracking-wide text-gray-500">Sesión</p>
+        <p class="text-[11px] text-gray-500">Controla el cierre automático por inactividad en punto de venta.</p>
+                                    </div>
+                                    <label class="flex items-center gap-3 rounded-lg border px-3 py-2">
+                                        <input type="checkbox" v-model="inactivityEnabled" class="h-4 w-4">
+                                        <div>
+                                            <p class="font-semibold text-gray-800">Logout por inactividad</p>
+                                            <p class="text-[11px] text-gray-500">Si está activo, se cierra sesión tras 10 minutos sin uso.</p>
+                                        </div>
+                                    </label>
                                 </section>
 
                                 <section class="space-y-2 pt-4">

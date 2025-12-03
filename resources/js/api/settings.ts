@@ -16,6 +16,7 @@ export type SettingsResponse = {
         recommended_percentage: number;
         recommended_months: number;
     };
+    inactivity_logout_enabled?: boolean;
     history?: SettingHistoryEntry[];
     card_rebalance_history?: CardRebalanceLog[];
     card_rebalance_changes?: CardRebalanceChange[];
@@ -68,6 +69,7 @@ export async function updateSystemSettings(payload: {
     restock_lookback_days?: number;
     recommended_percentage?: number;
     recommended_months?: number;
+    inactivity_logout_enabled?: boolean;
 }) {
     const { data } = await http.post<SettingsResponse>('/settings/general', payload);
     return data;

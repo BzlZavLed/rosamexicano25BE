@@ -21,8 +21,18 @@ const sidebarCollapsed = ref(false);
 const appName = import.meta.env.VITE_APP_NAME || 'Rosa Mexicano POS';
 const settingsOpen = ref(false);
 const cancelToolOpen = ref(false);
+const inactivityEnabled = ref(readInactivityFlag());
 
-useInactivityLogout();
+function readInactivityFlag() {
+    try {
+        const val = localStorage.getItem('inactivityLogoutEnabled');
+        return val === null ? true : val !== 'false';
+    } catch {
+        return true;
+    }
+}
+
+useInactivityLogout(undefined, inactivityEnabled);
 
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }
@@ -39,6 +49,11 @@ function handleResize() {
 onMounted(() => {
     handleResize();
     window.addEventListener('resize', handleResize);
+    window.addEventListener('storage', (e) => {
+        if (e.key === 'inactivityLogoutEnabled') {
+            inactivityEnabled.value = readInactivityFlag();
+        }
+    });
 });
 
 onUnmounted(() => {

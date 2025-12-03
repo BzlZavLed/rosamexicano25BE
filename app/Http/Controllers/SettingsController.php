@@ -39,6 +39,7 @@ class SettingsController extends Controller
             'restock_lookback_days' => ['sometimes', 'integer', 'min:30', 'max:365'],
             'recommended_percentage' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'recommended_months' => ['sometimes', 'integer', 'min:1', 'max:60'],
+            'inactivity_logout_enabled' => ['sometimes', 'boolean'],
         ]);
 
         $changes = [];
@@ -108,6 +109,15 @@ class SettingsController extends Controller
             if ($old !== $new) {
                 $changes[] = ['key' => 'analysis_recommended_months', 'old' => $old, 'new' => $new];
                 SystemSettings::set('analysis_recommended_months', $new);
+            }
+        }
+
+        if (array_key_exists('inactivity_logout_enabled', $data)) {
+            $old = SystemSettings::get('inactivity_logout_enabled', null);
+            $new = $data['inactivity_logout_enabled'] ? '1' : '0';
+            if ($old !== $new) {
+                $changes[] = ['key' => 'inactivity_logout_enabled', 'old' => $old, 'new' => $new];
+                SystemSettings::set('inactivity_logout_enabled', $new);
             }
         }
 
@@ -239,6 +249,7 @@ class SettingsController extends Controller
                 'recommended_percentage' => (float) SystemSettings::get('analysis_recommended_pct', '5'),
                 'recommended_months' => (int) SystemSettings::get('analysis_recommended_months', '12'),
             ],
+            'inactivity_logout_enabled' => filter_var(SystemSettings::get('inactivity_logout_enabled', '1'), FILTER_VALIDATE_BOOL),
             'history' => SystemSettingHistory::query()
                 ->orderByDesc('id')
                 ->limit(20)
