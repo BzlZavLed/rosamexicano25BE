@@ -12,6 +12,7 @@ const showCaja = computed(() => canUse('caja'));
 const showInventario = computed(() => canUse('inventario'));
 const showProductos = computed(() => canUse('productos') || canUse('promociones'));
 const showProveedores = computed(() => canUse('proveedores') || canUse('cobros'));
+const showClientes = computed(() => canUse('clientes'));
 const showEmails = computed(() => canUse('emails'));
 const showReports = computed(() => canUse('reportes') || canUse('analisis'));
 const showUsuarios = computed(() => canUse('usuarios'));
@@ -97,6 +98,18 @@ const showAdminTools = computed(() => showUsuarios.value || showRoles.value);
             </svg>
         </SidebarItem>
             </div>
+        </section>
+
+        <section v-if="showClientes">
+            <p class="px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">Clientes</p>
+            <SidebarItem :to="{ path: '/admin/clientes' }" label="Clientes">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 11a4 4 0 100-8 4 4 0 000 8z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 11a4 4 0 100-8 4 4 0 000 8z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 20a6 6 0 0112 0" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 20a6 6 0 0112 0" />
+                </svg>
+            </SidebarItem>
         </section>
 
         <section v-if="showEmails">
