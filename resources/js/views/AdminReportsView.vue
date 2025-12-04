@@ -1096,6 +1096,19 @@ const filteredCajaVentas = computed<CajaReportVenta[]>(() => {
     return result;
 });
 
+const cajaTableTotals = computed(() => {
+    const totals = filteredCajaVentas.value.reduce(
+        (acc, venta) => {
+            acc.total += Number(venta.totalventa ?? 0);
+            acc.recibido += Number(venta.total_recibido ?? 0);
+            acc.cambio += Number(venta.cambio ?? 0);
+            return acc;
+        },
+        { total: 0, recibido: 0, cambio: 0 }
+    );
+    return { ...totals, count: filteredCajaVentas.value.length };
+});
+
 const expandedVentaIds = ref<Set<number>>(new Set());
 
 function toggleVenta(ventaId: number) {
@@ -2240,6 +2253,15 @@ watch(
                                     </tr>
                                 </template>
                             </tbody>
+                            <tfoot v-if="filteredCajaVentas.length" class="bg-gray-50 text-[11px] font-semibold text-gray-700">
+                                <tr>
+                                    <td class="px-3 py-2 text-right" colspan="4">Totales (ventas filtradas)</td>
+                                    <td class="px-3 py-2 text-right">{{ formatCurrency(cajaTableTotals.total) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatCurrency(cajaTableTotals.recibido) }}</td>
+                                    <td class="px-3 py-2 text-right">{{ formatCurrency(cajaTableTotals.cambio) }}</td>
+                                    <td class="px-3 py-2 text-right text-gray-500">{{ cajaTableTotals.count }} ventas</td>
+                                </tr>
+                            </tfoot>
                         </table>
                     </div>
 
