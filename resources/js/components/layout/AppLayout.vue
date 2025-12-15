@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useAuthStore } from '../../stores/auth';
-import { useInactivityLogout } from '../../composables/useInactivityLogout';
 import SidebarAdmin from './SidebarAdmin.vue';
 import SidebarProvider from './SidebarProvider.vue';
 import SettingsModal from '../modals/SettingsModal.vue';
@@ -21,18 +20,6 @@ const sidebarCollapsed = ref(false);
 const appName = import.meta.env.VITE_APP_NAME || 'Rosa Mexicano POS';
 const settingsOpen = ref(false);
 const cancelToolOpen = ref(false);
-const inactivityEnabled = ref(readInactivityFlag());
-
-function readInactivityFlag() {
-    try {
-        const val = localStorage.getItem('inactivityLogoutEnabled');
-        return val === null ? true : val !== 'false';
-    } catch {
-        return true;
-    }
-}
-
-useInactivityLogout(undefined, inactivityEnabled);
 
 
 function toggle() { drawerOpen.value = !drawerOpen.value; }
@@ -49,11 +36,6 @@ function handleResize() {
 onMounted(() => {
     handleResize();
     window.addEventListener('resize', handleResize);
-    window.addEventListener('storage', (e) => {
-        if (e.key === 'inactivityLogoutEnabled') {
-            inactivityEnabled.value = readInactivityFlag();
-        }
-    });
 });
 
 onUnmounted(() => {
