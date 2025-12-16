@@ -44,30 +44,40 @@ function formatCajaFecha(value?: string | null): string {
 }
 
 function providerDiscountTooltip(linea: CajaReportLine): string {
-    if (linea.provider_discount_type === 'porcentaje') {
-        const qty = Number(linea.quantity ?? 0);
-        const unit = Number(linea.unit_price ?? 0);
-        const amount = unit * qty * 0.2;
+    const qty = Number(linea.quantity ?? 0);
+    const providerPrice = Number(linea.provider_price ?? 0);
+    const publicTotal = Number(linea.public_total ?? 0);
+    const manual = Number(linea.manual_discount_amount ?? 0);
+    const promo = Number(linea.promotion_discount_amount ?? 0);
+    const card = Number(linea.credit_card_discount ?? 0);
+    const providerBase = providerPrice * qty;
 
-        return `${formatCurrency(unit)} × ${qty} × 0.20 = ${formatCurrency(amount)}`;
+    if (linea.provider_discount_type === 'porcentaje') {
+        const pct = providerPercentageRate(linea);
+        const adjustedBase = Math.max(0, providerBase - promo - manual - card);
+        const pctAmount = adjustedBase * pct;
+        const parts = [
+            `(${formatCurrency(providerPrice)} × ${qty})`,
+            promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
+            manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
+            card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
+        ].filter(Boolean);
+        return `${parts.join(' ')} = ${formatCurrency(adjustedBase)} → × ${(pct * 100).toFixed(0)}% = ${formatCurrency(pctAmount)}`;
     }
     if (linea.provider_discount_type === 'consigna') {
-        const qty = Number(linea.quantity ?? 0);
         const unit = Number(linea.unit_price ?? 0);
-        const provider = Number(linea.provider_price ?? 0);
-        const manual = Number(linea.manual_discount_amount ?? 0);
-        const promo = Number(linea.promotion_discount_amount ?? 0);
-        const baseDiff = (unit - provider) * qty;
-        const amount = Math.max(0, baseDiff + manual + promo);
-        const parts = [
-            `(${formatCurrency(unit)} − ${formatCurrency(provider)}) × ${qty}`,
-            promo > 0 ? `+ ${formatCurrency(promo)} (promo)` : null,
-            manual > 0 ? `+ ${formatCurrency(manual)} (manual)` : null,
-        ].filter(Boolean);
-        return `${parts.join(' ')} = ${formatCurrency(amount)}`;
+        const baseDiff = Math.max(0, (unit - providerPrice) * qty);
+        return `(${formatCurrency(unit)} − ${formatCurrency(providerPrice)}) × ${qty} = ${formatCurrency(baseDiff)}`;
     }
   
     return 'Sin descuento proveedor';
+}
+
+function providerPercentageRate(linea: CajaReportLine): number {
+    const rawPct = linea.provider?.porcentaje ?? 20;
+    const pct = Number(rawPct);
+    if (!Number.isFinite(pct) || pct <= 0) return 0.2;
+    return Math.min(pct, 100) / 100;
 }
 
 function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string {
@@ -77,14 +87,27 @@ function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string 
     const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
     const manual = Number(linea.manual_discount_amount ?? 0);
     const promo = Number(linea.promotion_discount_amount ?? 0);
-    const providerDiscount = Number(linea.provider_discount_amount ?? 0);
+    const providerBase = providerPrice * qty;
 
     if (linea.provider_discount_type === 'consigna' || linea.provider_discount_type === 'porcentaje') {
-        const baseProveedor = providerPrice * qty;
-        const totalGeneral = Math.max(0, baseProveedor - providerDiscount - promo - manual - card);
+        const adjustedBase = Math.max(0, providerBase - promo - manual - card);
+        if (linea.provider_discount_type === 'porcentaje') {
+            const pct = providerPercentageRate(linea);
+            const pctAmount = adjustedBase * pct;
+            const totalGeneral = Math.max(0, adjustedBase - pctAmount);
+            const parts = [
+                `(${formatCurrency(providerPrice)} precio proveedor × ${qty})`,
+                promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
+                manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
+                card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
+                pctAmount > 0 ? `− ${formatCurrency(pctAmount)} (${(pct * 100).toFixed(0)}% proveedor)` : null,
+            ].filter(Boolean);
+            return `${parts.join(' ')} = ${formatCurrency(totalGeneral)}`;
+        }
+
+        const totalGeneral = Math.max(0, adjustedBase);
         const parts = [
             `(${formatCurrency(providerPrice)} precio proveedor × ${qty})`,
-            providerDiscount > 0 ? `− ${formatCurrency(providerDiscount)} (desc. proveedor)` : null,
             promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
             manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
             card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
@@ -109,10 +132,16 @@ function cajaLineProviderPayment(linea: CajaReportLine, metodo?: string) {
     const providerPrice = Number(linea.provider_price ?? 0);
     const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
     const manual = Number(linea.manual_discount_amount ?? 0);
-    const providerDiscount = Number(linea.provider_discount_amount ?? 0);
+    const providerBase = providerPrice * qty;
+    const adjustedBase = Math.max(0, providerBase - promo - manual - card);
 
-    if (linea.provider_discount_type === 'consigna' || linea.provider_discount_type === 'porcentaje') {
-        return Math.max(0, (providerPrice * qty) - providerDiscount - promo - manual - card);
+    if (linea.provider_discount_type === 'porcentaje') {
+        const pct = providerPercentageRate(linea);
+        const pctAmount = adjustedBase * pct;
+        return Math.max(0, adjustedBase - pctAmount);
+    }
+    if (linea.provider_discount_type === 'consigna') {
+        return adjustedBase;
     }
     return Math.max(0, publicTotal - manual - card);
 }
@@ -1831,6 +1860,171 @@ function downloadProveedorModalCsv() {
     URL.revokeObjectURL(link.href);
 }
 
+function downloadProveedorModalPdf() {
+    if (!proveedorModalData.value) return;
+    const items = proveedorModalSortedItems.value;
+    if (items.length === 0) return;
+
+    const provider = proveedorModalData.value;
+    const totals = proveedorModalTotals.value;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'legal' });
+    const marginX = 36;
+    const marginY = 36;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    let currentY = marginY;
+    let page = 1;
+
+    const summaryItems = [
+        { label: 'Unidades', value: String(totals.cantidad ?? 0) },
+        { label: 'Ventas', value: formatCurrency(totals.total ?? 0) },
+        { label: 'Desc. proveedor', value: formatCurrency(totals.tipoDescuento ?? 0) },
+        { label: 'Desc. manual', value: formatCurrency(totals.manual ?? 0) },
+        { label: 'Cargo tarjeta', value: formatCurrency(totals.cardFee ?? 0) },
+        { label: 'Ganancia real', value: formatCurrency(totals.real ?? 0) },
+    ];
+
+    const availableWidth = pageWidth - marginX * 2;
+    const baseColumns: Array<{ key: string; title: string; width: number; align?: 'left' | 'right' }> = [
+        { key: 'fecha', title: 'Fecha', width: 65 },
+        { key: 'producto', title: 'Producto', width: 130 },
+        { key: 'ident', title: 'Ident', width: 60 },
+        { key: 'venta', title: '#', width: 50 },
+        { key: 'cantidad', title: 'Cant.', width: 40, align: 'right' },
+        { key: 'precio', title: 'Precio unit.', width: 65, align: 'right' },
+        { key: 'provider_price', title: 'Precio prov.', width: 65, align: 'right' },
+        { key: 'total', title: 'Total', width: 65, align: 'right' },
+        { key: 'provider_discount', title: 'Desc. prov.', width: 70, align: 'right' },
+        { key: 'manual', title: 'Desc. manual', width: 70, align: 'right' },
+        { key: 'card_fee', title: 'Cargo tarjeta', width: 70, align: 'right' },
+        { key: 'real', title: 'Ganancia', width: 70, align: 'right' },
+        { key: 'metodo', title: 'Método', width: 60 },
+        { key: 'vendedor', title: 'Vendedor', width: 80 },
+        { key: 'promocion', title: 'Promoción', width: 60 },
+    ];
+    const totalBaseWidth = baseColumns.reduce((sum, col) => sum + col.width, 0);
+    const scale = totalBaseWidth > availableWidth ? availableWidth / totalBaseWidth : 1;
+    const columns = baseColumns.map((col) => ({
+        ...col,
+        width: Math.max(col.width * scale, 40),
+    }));
+    const columnPositions: number[] = [];
+    let offset = marginX;
+    columns.forEach((col) => {
+        columnPositions.push(offset);
+        offset += col.width;
+    });
+
+    const drawHeader = () => {
+        doc.setFontSize(16);
+        doc.text('Movimientos por proveedor', marginX, currentY);
+        doc.setFontSize(11);
+        doc.text(`Proveedor: ${provider.proveedor_nombre ?? 'Sin proveedor'}`, marginX, currentY + 18);
+        doc.text(`Identificador: ${provider.proveedor_ident ?? 'N/D'}`, marginX, currentY + 32);
+        doc.text(`Generado: ${new Date().toLocaleString('es-MX')}`, marginX, currentY + 46);
+        doc.text(`Página ${page}`, pageWidth - marginX, currentY + 46, { align: 'right' });
+        currentY += 62;
+
+        doc.setFontSize(10);
+        const summaryCols = 3;
+        const summaryColWidth = (pageWidth - marginX * 2) / summaryCols;
+        summaryItems.forEach((item, idx) => {
+            const col = idx % summaryCols;
+            const row = Math.floor(idx / summaryCols);
+            const x = marginX + col * summaryColWidth;
+            const y = currentY + row * 28;
+            doc.setFont('', 'bold');
+            doc.text(item.value, x, y);
+            doc.setFont('', 'normal');
+            doc.text(item.label, x, y + 12);
+        });
+        currentY += Math.ceil(summaryItems.length / summaryCols) * 28 + 18;
+    };
+
+    const drawTableHeader = () => {
+        doc.setFontSize(9);
+        doc.setFillColor(243, 244, 246);
+        const totalWidth = columns.reduce((sum, col) => sum + col.width, 0);
+        doc.rect(marginX, currentY, totalWidth, 20, 'F');
+        columns.forEach((col, idx) => {
+            const align = col.align ?? 'left';
+            const textX = align === 'right'
+                ? columnPositions[idx]! + col.width - 4
+                : columnPositions[idx]! + 4;
+            doc.text(col.title, textX, currentY + 13, { align: align as 'left' | 'right' });
+        });
+        currentY += 24;
+    };
+
+    const ensureSpace = (height: number) => {
+        if (currentY + height > pageHeight - marginY) {
+            doc.addPage();
+            page += 1;
+            currentY = marginY;
+            drawHeader();
+            drawTableHeader();
+        }
+    };
+
+    const valueForColumn = (item: CajaProveedorItem, key: string) => {
+        switch (key) {
+            case 'fecha':
+                return item.fecha ?? '';
+            case 'producto':
+                return item.producto_nombre ?? '';
+            case 'ident':
+                return item.producto_ident ?? '';
+            case 'venta':
+                return String(item.idventa ?? item.venta_id ?? '');
+            case 'cantidad':
+                return item.cantidad !== undefined ? String(item.cantidad) : '';
+            case 'precio':
+                return formatCurrency(item.precio_unitario ?? 0);
+            case 'provider_price':
+                return formatCurrency(item.provider_price ?? 0);
+            case 'total':
+                return formatCurrency(item.total ?? 0);
+            case 'provider_discount':
+                return formatCurrency(item.provider_discount ?? 0);
+            case 'manual':
+                return formatCurrency(item.manual_discount ?? 0);
+            case 'card_fee':
+                return formatCurrency(item.card_fee ?? 0);
+            case 'real':
+                return formatCurrency(item.real_earning ?? item.expected_earning ?? 0);
+            case 'metodo':
+                return item.metodo ?? '';
+            case 'vendedor':
+                return item.vendedor ?? '';
+            case 'promocion':
+                return item.promotion ?? 'normal';
+            default:
+                return '';
+        }
+    };
+
+    drawHeader();
+    drawTableHeader();
+    doc.setFontSize(8.5);
+
+    const rowHeight = 16;
+    items.forEach((item) => {
+        ensureSpace(rowHeight);
+        columns.forEach((col, idx) => {
+            const align = col.align ?? 'left';
+            const textX = align === 'right'
+                ? columnPositions[idx]! + col.width - 4
+                : columnPositions[idx]! + 4;
+            const text = valueForColumn(item, col.key);
+            doc.text(String(text ?? ''), textX, currentY + 11, { align: align as 'left' | 'right' });
+        });
+        currentY += rowHeight;
+    });
+
+    const filename = `caja-condensado-${provider.proveedor_ident ?? 'proveedor'}-movimientos.pdf`;
+    doc.save(filename);
+}
+
 watch(
     () => selected.value,
     (val) => {
@@ -3521,6 +3715,11 @@ watch(
                                 class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
                                 @click="downloadProveedorModalCsv">
                                 Descargar CSV
+                            </button>
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                @click="downloadProveedorModalPdf">
+                                Descargar PDF
                             </button>
                             <button type="button"
                                 class="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
