@@ -272,6 +272,7 @@ const cajaCondensadoLoading = ref(false);
 const cajaCondensadoError = ref('');
 const cajaCondensadoData = ref<CajaProveedoresResponse | null>(null);
 const cajaCondensadoView = ref<'cards' | 'table'>('table');
+const cajaCondensadoProveedorSearch = ref('');
 const cajaCondensadoTipoFilter = ref<ProveedorTipoFilter>('todos');
 const cajaCondensadoTipoOptions: Array<{ value: ProveedorTipoFilter; label: string }> = [
     { value: 'todos', label: 'Todos los tipos' },
@@ -528,10 +529,15 @@ async function fetchCajaCondensadoReport() {
 
     const from = normalizeDateParam(rangeStart.value);
     const to = rangeEnd.value ? normalizeDateParam(rangeEnd.value) : undefined;
+    const search = cajaCondensadoProveedorSearch.value.trim();
 
     cajaCondensadoLoading.value = true;
     try {
-        const response = await getCajaProveedoresReport({ from_date: from, to_date: to });
+        const response = await getCajaProveedoresReport({
+            from_date: from,
+            to_date: to,
+            q: search || undefined,
+        });
         if (response instanceof Blob) {
             cajaCondensadoError.value = 'La respuesta del reporte no es válida.';
             cajaCondensadoData.value = null;
@@ -558,9 +564,15 @@ async function downloadCajaCondensado() {
 
     const from = normalizeDateParam(rangeStart.value);
     const to = rangeEnd.value ? normalizeDateParam(rangeEnd.value) : undefined;
+    const search = cajaCondensadoProveedorSearch.value.trim();
 
     try {
-        const blob = await getCajaProveedoresReport({ from_date: from, to_date: to, download: true });
+        const blob = await getCajaProveedoresReport({
+            from_date: from,
+            to_date: to,
+            download: true,
+            q: search || undefined,
+        });
         if (!(blob instanceof Blob)) {
             cajaCondensadoError.value = 'La respuesta del reporte no es válida para descarga.';
             return;
@@ -1267,10 +1279,28 @@ const entradasSummary = computed(() => {
 
 const filteredCajaCondensadoProviders = computed(() => {
     if (!cajaCondensadoData.value) return [] as CajaProveedorGroup[];
-    const providers = cajaCondensadoData.value.proveedores ?? [];
     const filter = cajaCondensadoTipoFilter.value;
-    if (filter === 'todos') return providers;
-    return providers.filter((prov) => normalizeProveedorTipo(prov.proveedor_tipo) === filter);
+    const search = cajaCondensadoProveedorSearch.value.trim().toLowerCase();
+    let providers = cajaCondensadoData.value.proveedores ?? [];
+
+    if (filter !== 'todos') {
+        providers = providers.filter((prov) => normalizeProveedorTipo(prov.proveedor_tipo) === filter);
+    }
+
+    if (search) {
+        providers = providers.filter((prov) => {
+            const haystack = [
+                prov.proveedor_nombre ?? '',
+                prov.proveedor_ident ?? '',
+                prov.proveedor_id ? String(prov.proveedor_id) : '',
+            ]
+                .filter(Boolean)
+                .map((value) => value.toLowerCase());
+            return haystack.some((value) => value.includes(search));
+        });
+    }
+
+    return providers;
 });
 
 const sortedCajaCondensadoProviders = computed(() => {
@@ -1310,7 +1340,9 @@ const sortedCajaCondensadoProviders = computed(() => {
 
 const cajaCondensadoResumen = computed(() => {
     if (!cajaCondensadoData.value) return null;
-    if (cajaCondensadoTipoFilter.value === 'todos') {
+    const search = cajaCondensadoProveedorSearch.value.trim();
+    const useGlobalSummary = cajaCondensadoTipoFilter.value === 'todos' && !search;
+    if (useGlobalSummary) {
         const res = cajaCondensadoData.value.resumen;
         const ventas = Number(res.ventas_brutas ?? 0);
         const descuentos = Number(res.descuentos ?? 0);
@@ -3150,6 +3182,16 @@ watch(
                                             {{ option.label }}
                                         </option>
                                     </select>
+                                </div>
+                                <div class="flex flex-1 items-center gap-1 text-xs text-gray-500">
+                                    <label for="caja-condensado-search" class="font-medium text-gray-600 whitespace-nowrap">Proveedor:</label>
+                                    <input
+                                        id="caja-condensado-search"
+                                        v-model="cajaCondensadoProveedorSearch"
+                                        type="text"
+                                        placeholder="Buscar por nombre o ident"
+                                        class="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-gray-900 focus:ring-gray-900"
+                                    />
                                 </div>
                                 <span class="text-xs text-gray-500">Resumen por proveedor de ventas en el periodo seleccionado.</span>
                             </div>

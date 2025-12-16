@@ -1208,6 +1208,8 @@ class ReportController extends Controller
         $fechaInicio = $request->input('from_date');
         $fechaFin = $request->input('to_date');
         $provider = $this->currentProvider($request);
+        $searchTerm = trim((string) $request->input('q', ''));
+        $searchLower = $searchTerm !== '' ? mb_strtolower($searchTerm) : '';
 
         if (!$fechaInicio) {
             return response()->json(['message' => 'Debe proporcionar al menos from_date.'], 422);
@@ -1279,6 +1281,28 @@ class ReportController extends Controller
             }
             return 'sin_proveedor';
         });
+
+        if ($searchLower !== '') {
+            $grouped = $grouped->filter(function ($group) use ($searchLower) {
+                $first = $group->first();
+                $candidates = [
+                    $first->proveedor_nombre,
+                    $first->proveedor_ident,
+                    $first->proveedor_id,
+                ];
+
+                foreach ($candidates as $candidate) {
+                    if ($candidate === null) {
+                        continue;
+                    }
+                    if (str_contains(mb_strtolower((string) $candidate), $searchLower)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+        }
 
         $providers = $grouped->map(function ($group) {
             $first = $group->first();

@@ -577,10 +577,16 @@ export async function getEntradasReport(params: { from_date: string; to_date: st
     return data;
 }
 
-export async function getCajaProveedoresReport(params: { from_date: string; to_date?: string; download?: boolean }) {
+export async function getCajaProveedoresReport(params: {
+    from_date: string;
+    to_date?: string;
+    download?: boolean;
+    q?: string;
+}) {
     const query: Record<string, string | number> = { from_date: params.from_date };
     if (params.to_date) query.to_date = params.to_date;
     if (params.download) query.download = 1;
+    if (params.q) query.q = params.q;
     if (params.download) {
         const { data } = await http.get('/reports/caja-proveedores', {
             params: query,
