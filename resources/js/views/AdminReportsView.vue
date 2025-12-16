@@ -46,7 +46,6 @@ function formatCajaFecha(value?: string | null): string {
 function providerDiscountTooltip(linea: CajaReportLine): string {
     const qty = Number(linea.quantity ?? 0);
     const providerPrice = Number(linea.provider_price ?? 0);
-    const publicTotal = Number(linea.public_total ?? 0);
     const manual = Number(linea.manual_discount_amount ?? 0);
     const promo = Number(linea.promotion_discount_amount ?? 0);
     const card = Number(linea.credit_card_discount ?? 0);
