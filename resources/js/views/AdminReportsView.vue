@@ -87,31 +87,39 @@ function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string 
     const manual = Number(linea.manual_discount_amount ?? 0);
     const promo = Number(linea.promotion_discount_amount ?? 0);
     const providerBase = providerPrice * qty;
+    const tooltipBase = linea.provider_discount_type === 'consigna' ? publicTotal : providerBase;
+    const baseLabel =
+        linea.provider_discount_type === 'consigna'
+            ? `${formatCurrency(publicTotal)} total venta`
+            : `(${formatCurrency(providerPrice)} × ${qty}) = ${formatCurrency(providerBase)}`;
+    const discountParts = [
+        baseLabel,
+        promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
+        manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
+        card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
+    ].filter(Boolean);
+    const tooltipNet = Math.max(0, tooltipBase - promo - manual - card);
 
     if (linea.provider_discount_type === 'consigna' || linea.provider_discount_type === 'porcentaje') {
-        const adjustedBase = Math.max(0, providerBase - promo - manual - card);
         if (linea.provider_discount_type === 'porcentaje') {
             const pct = providerPercentageRate(linea);
-            const pctAmount = adjustedBase * pct;
-            const totalGeneral = Math.max(0, adjustedBase - pctAmount);
-            const parts = [
-                `(${formatCurrency(providerPrice)} precio proveedor × ${qty})`,
-                promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
-                manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
-                card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
-                pctAmount > 0 ? `− ${formatCurrency(pctAmount)} (${(pct * 100).toFixed(0)}% proveedor)` : null,
-            ].filter(Boolean);
-            return `${parts.join(' ')} = ${formatCurrency(totalGeneral)}`;
+            const pctAmount = tooltipNet * pct;
+            const totalGeneral = Math.max(0, tooltipNet - pctAmount);
+            const firstStage = `${discountParts.join(' ')} = ${formatCurrency(tooltipNet)}`;
+            const secondStage =
+                pctAmount > 0
+                    ? `− ${formatCurrency(pctAmount)} (${(pct * 100).toFixed(0)}% proveedor) = ${formatCurrency(totalGeneral)}`
+                    : `= ${formatCurrency(totalGeneral)}`;
+            return `${firstStage} → ${secondStage}`;
         }
 
-        const totalGeneral = Math.max(0, adjustedBase);
-        const parts = [
-            `(${formatCurrency(providerPrice)} precio proveedor × ${qty})`,
-            promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
-            manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
-            card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
-        ].filter(Boolean);
-        return `${parts.join(' ')} = ${formatCurrency(totalGeneral)}`;
+        const consignaDiscount = Math.max(0, publicTotal - providerBase);
+        const tooltipPayment = Math.max(0, tooltipNet - consignaDiscount);
+        const firstStage = `${discountParts.join(' ')} = ${formatCurrency(tooltipNet)}`;
+        const secondStage = consignaDiscount > 0
+            ? `− ${formatCurrency(consignaDiscount)} (desc. proveedor) = ${formatCurrency(tooltipPayment)}`
+            : `= ${formatCurrency(tooltipPayment)}`;
+        return `${firstStage} → ${secondStage}`;
     }
 
     const totalGeneral = Math.max(0, publicTotal - manual - card);
