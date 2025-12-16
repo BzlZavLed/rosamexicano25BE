@@ -55,8 +55,16 @@ function providerDiscountTooltip(linea: CajaReportLine): string {
         const qty = Number(linea.quantity ?? 0);
         const unit = Number(linea.unit_price ?? 0);
         const provider = Number(linea.provider_price ?? 0);
-        const amount = unit * qty - provider * qty;
-        return `(${formatCurrency(unit)} × ${qty}) − (${formatCurrency(provider)} × ${qty}) = ${formatCurrency(amount)}`;
+        const manual = Number(linea.manual_discount_amount ?? 0);
+        const promo = Number(linea.promotion_discount_amount ?? 0);
+        const baseDiff = (unit - provider) * qty;
+        const amount = Math.max(0, baseDiff + manual + promo);
+        const parts = [
+            `(${formatCurrency(unit)} − ${formatCurrency(provider)}) × ${qty}`,
+            promo > 0 ? `+ ${formatCurrency(promo)} (promo)` : null,
+            manual > 0 ? `+ ${formatCurrency(manual)} (manual)` : null,
+        ].filter(Boolean);
+        return `${parts.join(' ')} = ${formatCurrency(amount)}`;
     }
   
     return 'Sin descuento proveedor';
@@ -69,11 +77,14 @@ function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string 
     const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
     const manual = Number(linea.manual_discount_amount ?? 0);
     const promo = Number(linea.promotion_discount_amount ?? 0);
+    const providerDiscount = Number(linea.provider_discount_amount ?? 0);
 
     if (linea.provider_discount_type === 'consigna' || linea.provider_discount_type === 'porcentaje') {
-        const totalGeneral = Math.max(0, (providerPrice * qty) - promo - manual - card);
+        const baseProveedor = providerPrice * qty;
+        const totalGeneral = Math.max(0, baseProveedor - providerDiscount - promo - manual - card);
         const parts = [
-            `(${formatCurrency(providerPrice)} precio proveedor × ${qty}) `,
+            `(${formatCurrency(providerPrice)} precio proveedor × ${qty})`,
+            providerDiscount > 0 ? `− ${formatCurrency(providerDiscount)} (desc. proveedor)` : null,
             promo > 0 ? `− ${formatCurrency(promo)} (promo)` : null,
             manual > 0 ? `− ${formatCurrency(manual)} (manual)` : null,
             card > 0 ? `− ${formatCurrency(card)} (tarjeta)` : null,
@@ -91,14 +102,17 @@ function providerPaymentTooltip(linea: CajaReportLine, metodo?: string): string 
 }
 
 function cajaLineProviderPayment(linea: CajaReportLine, metodo?: string) {
+
     const qty = Number(linea.quantity ?? 0);
     const publicTotal = Number(linea.public_total ?? 0);
     const promo = Number(linea.promotion_discount_amount ?? 0);
     const providerPrice = Number(linea.provider_price ?? 0);
     const card = metodo === 'tarjeta' ? (linea.credit_card_discount ?? 0) : 0;
     const manual = Number(linea.manual_discount_amount ?? 0);
+    const providerDiscount = Number(linea.provider_discount_amount ?? 0);
+
     if (linea.provider_discount_type === 'consigna' || linea.provider_discount_type === 'porcentaje') {
-        return Math.max(0, (providerPrice * qty) - promo - manual - card);
+        return Math.max(0, (providerPrice * qty) - providerDiscount - promo - manual - card);
     }
     return Math.max(0, publicTotal - manual - card);
 }
