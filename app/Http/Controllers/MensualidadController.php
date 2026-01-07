@@ -164,18 +164,26 @@ class MensualidadController extends Controller
             'mail_status' => $mensualidad->mail_status,
         ]);
 
-        $mensualidad->refresh()->load('proveedor');
-        Log::info('Mensualidad refreshed', [
-            'mensualidad_id' => $mensualidad->id,
-        ]);
+        try {
+            $mensualidad->refresh()->load('proveedor');
+            Log::info('Mensualidad refreshed', [
+                'mensualidad_id' => $mensualidad->id,
+            ]);
 
-        return response()->json([
-            'data' => new MensualidadResource($mensualidad),
-            'mail' => [
-                'sent' => $mailStatus === 1,
-                'status' => $mailStatus ?? 'not-sent',
-            ],
-        ], 201);
+            return response()->json([
+                'data' => new MensualidadResource($mensualidad),
+                'mail' => [
+                    'sent' => $mailStatus === 1,
+                    'status' => $mailStatus ?? 'not-sent',
+                ],
+            ], 201);
+        } catch (Throwable $e) {
+            Log::error('Mensualidad store failed after create', [
+                'mensualidad_id' => $mensualidad->id ?? null,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
     }
 
     public function show(Mensualidad $mensualidad)
