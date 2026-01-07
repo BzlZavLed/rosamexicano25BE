@@ -1014,9 +1014,9 @@ async function submitSingleCobro() {
             status: 'pending',
             receipt_pdf_base64: base64,
         });
-
+        console.log(createCobro);
         openPdfInNewTab(base64);
-
+        console.log('createCobro');
         singleMessage.value = 'Cobro enviado al backend.';
         singleForm.nota = '';
         await loadCobros();
