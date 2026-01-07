@@ -65,6 +65,13 @@ class MensualidadController extends Controller
 
     public function store(StoreMensualidadRequest $request)
     {
+        Log::info('MensualidadController@store reached', [
+            'ip' => $request->ip(),
+            'proveedor_id' => $request->input('proveedor_id'),
+            'mes_cobro' => $request->input('mes_cobro'),
+            'fecha_cobro' => $request->input('fecha_cobro'),
+        ]);
+
         $data = $request->validated();
 
         [$receiptBinary, $cobroLink] = $this->storeReceipt(
@@ -102,6 +109,10 @@ class MensualidadController extends Controller
 
         $mensualidad = Mensualidad::create($mensualidadData);
         $mensualidad->load('proveedor');
+        Log::info('Mensualidad created', [
+            'mensualidad_id' => $mensualidad->id,
+            'proveedor_id' => $mensualidad->proveedor_id,
+        ]);
 
         $mailStatus = null;
         if ($proveedor && $proveedor->tipo === 'normal' && filled($proveedor->email)) {
