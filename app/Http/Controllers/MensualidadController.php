@@ -165,10 +165,22 @@ class MensualidadController extends Controller
         ]);
 
         try {
-            $mensualidad->refresh()->load('proveedor');
-            Log::info('Mensualidad refreshed', [
-                'mensualidad_id' => $mensualidad->id,
-            ]);
+            $fresh = Mensualidad::query()
+                ->with('proveedor')
+                ->useWritePdo()
+                ->find($mensualidad->id);
+
+            if ($fresh) {
+                $mensualidad = $fresh;
+                Log::info('Mensualidad refreshed via write connection', [
+                    'mensualidad_id' => $mensualidad->id,
+                ]);
+            } else {
+                $mensualidad->load('proveedor');
+                Log::warning('Mensualidad not found on refresh; using existing model', [
+                    'mensualidad_id' => $mensualidad->id,
+                ]);
+            }
 
             return response()->json([
                 'data' => new MensualidadResource($mensualidad),

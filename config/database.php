@@ -96,6 +96,13 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => 'prefer',
+            'read' => [
+                'host' => explode(',', env('DB_READ_HOST', env('DB_HOST', '127.0.0.1'))),
+            ],
+            'write' => [
+                'host' => explode(',', env('DB_WRITE_HOST', env('DB_HOST', '127.0.0.1'))),
+            ],
+            'sticky' => env('DB_STICKY', true),
         ],
 
         'sqlsrv' => [
