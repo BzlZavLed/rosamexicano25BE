@@ -65,17 +65,11 @@ class MensualidadController extends Controller
 
     public function store(StoreMensualidadRequest $request)
     {
-        Log::info('MensualidadController@store reached', [
-            'ip' => $request->ip(),
-            'proveedor_id' => $request->input('proveedor_id'),
-            'mes_cobro' => $request->input('mes_cobro'),
-            'fecha_cobro' => $request->input('fecha_cobro'),
-        ]);
-
         $data = $request->validated();
 
+        $receiptBase64 = $data['receipt_pdf_base64'] ?? $data['cobro_pdf_base64'] ?? null;
         [$receiptBinary, $cobroLink] = $this->storeReceipt(
-            $data['cobro_pdf_base64'] ?? null,
+            $receiptBase64,
             'cobros',
             sprintf('mensualidad_%s', $data['proveedor_id'])
         );
@@ -109,46 +103,24 @@ class MensualidadController extends Controller
 
         $mensualidad = Mensualidad::create($mensualidadData);
         $mensualidad->load('proveedor');
-        Log::info('Mensualidad created', [
-            'mensualidad_id' => $mensualidad->id,
-            'proveedor_id' => $mensualidad->proveedor_id,
-        ]);
 
         $mailStatus = null;
         if ($proveedor && $proveedor->tipo === 'normal' && filled($proveedor->email)) {
-            Log::info('Attempting to send mensualidad charge email', [
-                'mensualidad_id' => $mensualidad->id,
-                'proveedor_id' => $proveedor->id,
-                'email' => $proveedor->email,
-            ]);
             $mailStatus = $this->sendChargeEmail($proveedor, $mensualidad, $receiptBinary);
-            Log::info('Mensualidad charge email result', [
-                'mensualidad_id' => $mensualidad->id,
-                'mail_status' => $mailStatus,
-            ]);
         }
 
         if ($mailStatus !== null) {
-            try {
-                Mailer::create([
-                    'mail' => $mensualidad->cobro_path ?? 'cobro-sin-comprobante',
-                    'asunto' => 'Cobro creado a proveedor ' . $proveedor?->nombre,
-                    'mensaje' => $mensualidad->concepto,
-                    'status' => $mailStatus,
-                    'fecha' => now()->toDateString(),
-                    'email' => $proveedor->email ?? 'no-email',
-                ]);
-                Log::info('Mailer record created for mensualidad', [
-                    'mensualidad_id' => $mensualidad->id,
-                    'mail_status' => $mailStatus,
-                ]);
-            } catch (Throwable $e) {
-                Log::error('Failed to create mailer record for mensualidad', [
-                    'mensualidad_id' => $mensualidad->id,
-                    'error' => $e->getMessage(),
-                ]);
-                throw $e;
-            }
+            $mailerMail = filled($mensualidad->cobro_path)
+                ? $mensualidad->cobro_path
+                : 'cobro-sin-comprobante';
+            Mailer::create([
+                'mail' => $mailerMail,
+                'asunto' => 'Cobro creado a proveedor ' . $proveedor?->nombre,
+                'mensaje' => $mensualidad->concepto,
+                'status' => $mailStatus,
+                'fecha' => now()->toDateString(),
+                'email' => $proveedor->email ?? 'no-email',
+            ]);
 
             if ($mailStatus === 1) {
                 $mensualidad->mail_status = 1;
@@ -159,11 +131,6 @@ class MensualidadController extends Controller
             $mensualidad->save();
         }
 
-        Log::info('Mensualidad mail_status updated', [
-            'mensualidad_id' => $mensualidad->id,
-            'mail_status' => $mensualidad->mail_status,
-        ]);
-
         try {
             $fresh = Mensualidad::query()
                 ->with('proveedor')
@@ -172,14 +139,8 @@ class MensualidadController extends Controller
 
             if ($fresh) {
                 $mensualidad = $fresh;
-                Log::info('Mensualidad refreshed via write connection', [
-                    'mensualidad_id' => $mensualidad->id,
-                ]);
             } else {
                 $mensualidad->load('proveedor');
-                Log::warning('Mensualidad not found on refresh; using existing model', [
-                    'mensualidad_id' => $mensualidad->id,
-                ]);
             }
 
             return response()->json([
@@ -190,10 +151,6 @@ class MensualidadController extends Controller
                 ],
             ], 201);
         } catch (Throwable $e) {
-            Log::error('Mensualidad store failed after create', [
-                'mensualidad_id' => $mensualidad->id ?? null,
-                'error' => $e->getMessage(),
-            ]);
             throw $e;
         }
     }

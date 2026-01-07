@@ -1014,12 +1014,17 @@ async function submitSingleCobro() {
             status: 'pending',
             receipt_pdf_base64: base64,
         });
-        console.log(createCobro);
         openPdfInNewTab(base64);
-        console.log('createCobro');
         singleMessage.value = 'Cobro enviado al backend.';
         singleForm.nota = '';
         await loadCobros();
+        if (typeof window !== 'undefined') {
+            window.setTimeout(() => {
+                singleModalOpen.value = false;
+            }, 600);
+        } else {
+            singleModalOpen.value = false;
+        }
     } catch (err: any) {
         singleError.value = parseErrorMessage(err);
     } finally {
