@@ -1267,7 +1267,8 @@ class ReportController extends Controller
             $rows->where('vd.proveedor_id', '=', $provider->ident);
         }
 
-        $rows->whereBetween('vd.fecha', [$inicioIso, $finIso]);
+        $rows->where('vd.fecha', '>=', $inicioIso)
+            ->where('vd.fecha', '<=', $finIso);
         $rows->orderBy('vd.fecha')->orderBy('vd.id');
 
         $collection = collect($rows->get());
