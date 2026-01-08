@@ -456,22 +456,22 @@ function startOfMonth(date: Date): Date {
                                             {{ providerTotals.cantidad }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            ${{ providerTotals.precioPromedio.toFixed(2) }}
+                                            {{ formatCurrency(providerTotals.precioPromedio) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            ${{ providerTotals.total.toFixed(2) }}
+                                            {{ formatCurrency(providerTotals.total) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            ${{ providerTotals.providerDiscount.toFixed(2) }}
+                                            {{ formatCurrency(providerTotals.providerDiscount) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            ${{ providerTotals.manualDiscount.toFixed(2) }}
+                                            {{ formatCurrency(providerTotals.manualDiscount) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            ${{ providerTotals.cardFee.toFixed(2) }}
+                                            {{ formatCurrency(providerTotals.cardFee) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            ${{ providerTotals.ganancia.toFixed(2) }}
+                                            {{ formatCurrency(providerTotals.ganancia) }}
                                         </td>
                                     </tr>
                                 </tfoot>
