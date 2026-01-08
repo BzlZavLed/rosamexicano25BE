@@ -213,8 +213,8 @@ function computeRange() {
             toDate: formatDate(lastDay),
         };
     }
-    const from = customRange.from ? new Date(customRange.from) : startOfMonth(today);
-    const to = customRange.to ? new Date(customRange.to) : today;
+    const from = customRange.from ? parseLocalDate(customRange.from) : startOfMonth(today);
+    const to = customRange.to ? parseLocalDate(customRange.to) : today;
     const fromTime = from.getTime();
     const toTime = to.getTime();
     if (fromTime > toTime) {
@@ -231,6 +231,20 @@ function computeRange() {
 
 function formatDate(date: Date): string {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function parseLocalDate(value: string): Date {
+    const trimmed = value.trim();
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (match) {
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+            return new Date(year, month - 1, day);
+        }
+    }
+    return new Date(value);
 }
 
 function startOfMonth(date: Date): Date {
