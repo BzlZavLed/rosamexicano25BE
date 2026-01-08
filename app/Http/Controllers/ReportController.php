@@ -1412,21 +1412,21 @@ class ReportController extends Controller
         if ($applyPagination && $provider) {
             $providerPayload = $providers->first();
             $items = collect($providerPayload['items'] ?? []);
-            $itemsTotals = [
-                'cantidad' => (int) $items->sum(fn ($item) => $item['cantidad']),
-                'precio_promedio' => $items->sum(fn ($item) => $item['cantidad']) > 0
-                    ? round($items->sum(fn ($item) => $item['precio_unitario'] * $item['cantidad']) / $items->sum(fn ($item) => $item['cantidad']), 2)
-                    : 0.0,
-                'total' => round($items->sum(fn ($item) => $item['total']), 2),
-                'provider_discount' => round($items->sum(fn ($item) => $item['provider_discount']), 2),
-                'manual_discount' => round($items->sum(fn ($item) => $item['manual_discount']), 2),
-                'card_fee' => round($items->sum(fn ($item) => $item['card_fee']), 2),
-                'ganancia' => round($items->sum(fn ($item) => $item['real_earning']), 2),
-            ];
             $totalItems = $items->count();
             $lastPage = max(1, (int) ceil($totalItems / $perPage));
             $page = min($page, $lastPage);
             $pagedItems = $items->forPage($page, $perPage)->values();
+            $itemsTotals = [
+                'cantidad' => (int) $pagedItems->sum(fn ($item) => $item['cantidad']),
+                'precio_promedio' => $pagedItems->sum(fn ($item) => $item['cantidad']) > 0
+                    ? round($pagedItems->sum(fn ($item) => $item['precio_unitario'] * $item['cantidad']) / $pagedItems->sum(fn ($item) => $item['cantidad']), 2)
+                    : 0.0,
+                'total' => round($pagedItems->sum(fn ($item) => $item['total']), 2),
+                'provider_discount' => round($pagedItems->sum(fn ($item) => $item['provider_discount']), 2),
+                'manual_discount' => round($pagedItems->sum(fn ($item) => $item['manual_discount']), 2),
+                'card_fee' => round($pagedItems->sum(fn ($item) => $item['card_fee']), 2),
+                'ganancia' => round($pagedItems->sum(fn ($item) => $item['real_earning']), 2),
+            ];
             if ($providerPayload) {
                 $providerPayload['items'] = $pagedItems;
                 $providers = collect([$providerPayload])->values();

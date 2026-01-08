@@ -554,32 +554,43 @@ function startOfMonth(date: Date): Date {
                                             {{ formatCurrency(pageTotals.ganancia) }}
                                         </td>
                                     </tr>
-                                    <tr class="bg-gray-100 text-gray-800 font-semibold">
-                                        <td class="px-4 py-2 text-left" colspan="3">Totales generales</td>
-                                        <td class="px-4 py-2 text-right">
-                                            {{ providerTotals.cantidad }}
-                                        </td>
-                                        <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(providerTotals.precioPromedio) }}
-                                        </td>
-                                        <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(providerTotals.total) }}
-                                        </td>
-                                        <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(providerTotals.providerDiscount) }}
-                                        </td>
-                                        <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(providerTotals.manualDiscount) }}
-                                        </td>
-                                        <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(providerTotals.cardFee) }}
-                                        </td>
-                                        <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(providerTotals.ganancia) }}
-                                        </td>
-                                    </tr>
                                 </tfoot>
                             </table>
+                        </div>
+                        <div v-if="providerTotals" class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+                            <div class="flex flex-wrap items-center gap-3 font-semibold text-gray-800">
+                                <span>Totales generales</span>
+                            </div>
+                            <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-gray-500">Cantidad</span>
+                                    <span>{{ providerTotals.cantidad }}</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-gray-500">Precio promedio</span>
+                                    <span>{{ formatCurrency(providerTotals.precioPromedio) }}</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-gray-500">Total</span>
+                                    <span>{{ formatCurrency(providerTotals.total) }}</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-gray-500">Desc. proveedor</span>
+                                    <span>{{ formatCurrency(providerTotals.providerDiscount) }}</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-gray-500">Desc. manual</span>
+                                    <span>{{ formatCurrency(providerTotals.manualDiscount) }}</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-gray-500">Cargo tarjeta</span>
+                                    <span>{{ formatCurrency(providerTotals.cardFee) }}</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-gray-500">Ganancia</span>
+                                    <span>{{ formatCurrency(providerTotals.ganancia) }}</span>
+                                </div>
+                            </div>
                         </div>
                         <div v-if="totalPages > 1" class="flex items-center justify-end gap-2">
                             <button
