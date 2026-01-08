@@ -65,19 +65,6 @@ const providerTotals = computed(() => {
         ganancia: Number(totals.ganancia ?? 0),
     };
 });
-const pageTotals = computed(() => {
-    const totals = report.value?.items_totals ?? null;
-    if (!totals) return null;
-    return {
-        cantidad: Number(totals.cantidad ?? 0),
-        precioPromedio: Number(totals.precio_promedio ?? 0),
-        total: Number(totals.total ?? 0),
-        providerDiscount: Number(totals.provider_discount ?? 0),
-        manualDiscount: Number(totals.manual_discount ?? 0),
-        cardFee: Number(totals.card_fee ?? 0),
-        ganancia: Number(totals.ganancia ?? 0),
-    };
-});
 
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -530,67 +517,32 @@ function startOfMonth(date: Date): Date {
                                     </tr>
                                 </tbody>
                                 <tfoot v-if="providerTotals">
-                                    <tr v-if="pageTotals" class="bg-gray-50 text-gray-800 font-semibold">
-                                        <td class="px-4 py-2 text-left" colspan="3">Totales pagina</td>
+                                    <tr class="bg-gray-50 text-gray-800 font-semibold">
+                                        <td class="px-4 py-2 text-left" colspan="3">Totales generales</td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ pageTotals.cantidad }}
+                                            {{ providerTotals.cantidad }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(pageTotals.precioPromedio) }}
+                                            {{ formatCurrency(providerTotals.precioPromedio) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(pageTotals.total) }}
+                                            {{ formatCurrency(providerTotals.total) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(pageTotals.providerDiscount) }}
+                                            {{ formatCurrency(providerTotals.providerDiscount) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(pageTotals.manualDiscount) }}
+                                            {{ formatCurrency(providerTotals.manualDiscount) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(pageTotals.cardFee) }}
+                                            {{ formatCurrency(providerTotals.cardFee) }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(pageTotals.ganancia) }}
+                                            {{ formatCurrency(providerTotals.ganancia) }}
                                         </td>
                                     </tr>
                                 </tfoot>
                             </table>
-                        </div>
-                        <div v-if="providerTotals" class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                            <div class="flex flex-wrap items-center gap-3 font-semibold text-gray-800">
-                                <span>Totales generales</span>
-                            </div>
-                            <div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                                <div class="flex items-center justify-between">
-                                    <span class="text-gray-500">Cantidad</span>
-                                    <span>{{ providerTotals.cantidad }}</span>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-gray-500">Precio promedio</span>
-                                    <span>{{ formatCurrency(providerTotals.precioPromedio) }}</span>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-gray-500">Total</span>
-                                    <span>{{ formatCurrency(providerTotals.total) }}</span>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-gray-500">Desc. proveedor</span>
-                                    <span>{{ formatCurrency(providerTotals.providerDiscount) }}</span>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-gray-500">Desc. manual</span>
-                                    <span>{{ formatCurrency(providerTotals.manualDiscount) }}</span>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-gray-500">Cargo tarjeta</span>
-                                    <span>{{ formatCurrency(providerTotals.cardFee) }}</span>
-                                </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-gray-500">Ganancia</span>
-                                    <span>{{ formatCurrency(providerTotals.ganancia) }}</span>
-                                </div>
-                            </div>
                         </div>
                         <div v-if="totalPages > 1" class="flex items-center justify-end gap-2">
                             <button
