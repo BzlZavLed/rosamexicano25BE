@@ -444,25 +444,25 @@ function startOfMonth(date: Date): Date {
                     <div v-if="resumen" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Ventas brutas</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.ventas_brutas) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(resumen.ventas_brutas) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Desc. proveedor</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.descuentos) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(resumen.descuentos) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Desc. manual</p>
                             <p class="text-lg font-semibold text-gray-900">
-                                ${{ formatCurrency(resumen.manual_descuentos ?? report.manual_descuentos_total ?? 0) }}
+                                {{ formatCurrency(resumen.manual_descuentos ?? report.manual_descuentos_total ?? 0) }}
                             </p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Cargos tarjeta</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.cargos_tarjeta) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(resumen.cargos_tarjeta) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Ganancia real</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.ganancias) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">{{ formatCurrency(resumen.ganancias) }}</p>
                         </div>
                     </div>
 
