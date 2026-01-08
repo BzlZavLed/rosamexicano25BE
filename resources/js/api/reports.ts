@@ -471,6 +471,15 @@ export interface CajaProveedorGroup {
     tipo_descuento_total: number;
     real_earning: number;
     expected_earning?: number;
+    totals?: {
+        cantidad: number;
+        precio_promedio: number;
+        total: number;
+        provider_discount: number;
+        manual_discount: number;
+        card_fee: number;
+        ganancia: number;
+    };
     items: CajaProveedorItem[];
 }
 
@@ -491,6 +500,21 @@ export interface CajaProveedoresResponse {
     cargos_tarjeta_total: number;
     manual_descuentos_total: number;
     proveedores: CajaProveedorGroup[];
+    items_meta?: {
+        current_page: number;
+        per_page: number;
+        total: number;
+        last_page: number;
+    };
+    items_totals?: {
+        cantidad: number;
+        precio_promedio: number;
+        total: number;
+        provider_discount: number;
+        manual_discount: number;
+        card_fee: number;
+        ganancia: number;
+    };
 }
 
 export interface ProviderTrendProduct {
@@ -582,11 +606,15 @@ export async function getCajaProveedoresReport(params: {
     to_date?: string;
     download?: boolean;
     q?: string;
+    page?: number;
+    per_page?: number;
 }) {
     const query: Record<string, string | number> = { from_date: params.from_date };
     if (params.to_date) query.to_date = params.to_date;
     if (params.download) query.download = 1;
     if (params.q) query.q = params.q;
+    if (params.page) query.page = params.page;
+    if (params.per_page) query.per_page = params.per_page;
     if (params.download) {
         const { data } = await http.get('/reports/caja-proveedores', {
             params: query,

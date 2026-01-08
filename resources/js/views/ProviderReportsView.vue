@@ -24,6 +24,9 @@ const customRange = reactive({
     to: todayIso,
 });
 const activeTab = ref<'summary' | 'trends'>('summary');
+const page = ref(1);
+const perPage = ref(10);
+const perPageOptions = [10, 20, 40];
 
 const trends = ref<ProviderTrendsResponse | null>(null);
 const trendsLoading = ref(false);
@@ -36,23 +39,44 @@ const providerGroup = computed<CajaProveedorGroup | null>(() => {
     const firstGroup: CajaProveedorGroup | undefined = groups[0];
     return firstGroup ?? null;
 });
+const itemsMeta = computed(() => report.value?.items_meta ?? null);
+const totalItems = computed(() => itemsMeta.value?.total ?? providerGroup.value?.items.length ?? 0);
+const totalPages = computed(() => itemsMeta.value?.last_page ?? 1);
+const pageStart = computed(() => {
+    if (!totalItems.value) return 0;
+    return (page.value - 1) * perPage.value + 1;
+});
+const pageEnd = computed(() => {
+    if (!totalItems.value) return 0;
+    return Math.min(page.value * perPage.value, totalItems.value);
+});
 
 const resumen = computed(() => report.value?.resumen ?? null);
 const providerTotals = computed(() => {
-    const items = providerGroup.value?.items ?? [];
-    if (!items.length) return null;
-    const cantidad = items.reduce((sum, item) => sum + Number(item.cantidad ?? 0), 0);
-    const total = items.reduce((sum, item) => sum + Number(item.total ?? 0), 0);
-    const providerDiscount = items.reduce((sum, item) => sum + Number(item.provider_discount ?? 0), 0);
-    const manualDiscount = items.reduce((sum, item) => sum + Number(item.manual_discount ?? 0), 0);
-    const cardFee = items.reduce((sum, item) => sum + Number(item.card_fee ?? 0), 0);
-    const ganancia = items.reduce(
-        (sum, item) => sum + Number(item.real_earning ?? item.expected_earning ?? 0),
-        0
-    );
-    const precioPromedio =
-        cantidad > 0 ? items.reduce((sum, item) => sum + Number(item.precio_unitario ?? 0) * Number(item.cantidad ?? 0), 0) / cantidad : 0;
-    return { cantidad, precioPromedio, total, providerDiscount, manualDiscount, cardFee, ganancia };
+    const totals = providerGroup.value?.totals ?? null;
+    if (!totals) return null;
+    return {
+        cantidad: Number(totals.cantidad ?? 0),
+        precioPromedio: Number(totals.precio_promedio ?? 0),
+        total: Number(totals.total ?? 0),
+        providerDiscount: Number(totals.provider_discount ?? 0),
+        manualDiscount: Number(totals.manual_discount ?? 0),
+        cardFee: Number(totals.card_fee ?? 0),
+        ganancia: Number(totals.ganancia ?? 0),
+    };
+});
+const pageTotals = computed(() => {
+    const totals = report.value?.items_totals ?? null;
+    if (!totals) return null;
+    return {
+        cantidad: Number(totals.cantidad ?? 0),
+        precioPromedio: Number(totals.precio_promedio ?? 0),
+        total: Number(totals.total ?? 0),
+        providerDiscount: Number(totals.provider_discount ?? 0),
+        manualDiscount: Number(totals.manual_discount ?? 0),
+        cardFee: Number(totals.card_fee ?? 0),
+        ganancia: Number(totals.ganancia ?? 0),
+    };
 });
 
 
@@ -127,6 +151,8 @@ async function fetchReport() {
         const data = await getCajaProveedoresReport({
             from_date: fromDate,
             to_date: toDate,
+            page: page.value,
+            per_page: perPage.value,
         });
         if (data instanceof Blob) {
             success.value = 'El reporte se generó correctamente. Revisa tu carpeta de descargas.';
@@ -139,6 +165,11 @@ async function fetchReport() {
     } finally {
         loading.value = false;
     }
+}
+
+async function generateReport() {
+    page.value = 1;
+    await fetchReport();
 }
 
 async function downloadReport() {
@@ -192,6 +223,24 @@ function selectTab(tab: 'summary' | 'trends') {
     if (tab === 'trends' && !trendsLoaded.value) {
         fetchTrends();
     }
+}
+
+function goPrevPage() {
+    if (page.value <= 1) return;
+    page.value -= 1;
+    fetchReport();
+}
+
+function goNextPage() {
+    if (page.value >= totalPages.value) return;
+    page.value += 1;
+    fetchReport();
+}
+
+function updatePerPage(value: number) {
+    perPage.value = value;
+    page.value = 1;
+    fetchReport();
 }
 
 function computeRange() {
@@ -365,7 +414,7 @@ function startOfMonth(date: Date): Date {
                             type="button"
                             class="rounded-lg bg-[#E4007C] px-4 py-2 text-sm font-medium text-white hover:bg-[#cc006f] disabled:opacity-60 disabled:cursor-not-allowed"
                             :disabled="loading"
-                            @click="fetchReport"
+                            @click="generateReport"
                         >
                         {{ loading ? 'Generando…' : 'Generar resumen' }}
                         </button>
@@ -395,25 +444,25 @@ function startOfMonth(date: Date): Date {
                     <div v-if="resumen" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Ventas brutas</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ resumen.ventas_brutas.toFixed(2) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.ventas_brutas) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Desc. proveedor</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ resumen.descuentos.toFixed(2) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.descuentos) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Desc. manual</p>
                             <p class="text-lg font-semibold text-gray-900">
-                                ${{ (resumen.manual_descuentos ?? report.manual_descuentos_total ?? 0).toFixed(2) }}
+                                ${{ formatCurrency(resumen.manual_descuentos ?? report.manual_descuentos_total ?? 0) }}
                             </p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Cargos tarjeta</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ resumen.cargos_tarjeta.toFixed(2) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.cargos_tarjeta) }}</p>
                         </div>
                         <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
                             <p class="text-xs uppercase tracking-wide text-gray-500">Ganancia real</p>
-                            <p class="text-lg font-semibold text-gray-900">${{ resumen.ganancias.toFixed(2) }}</p>
+                            <p class="text-lg font-semibold text-gray-900">${{ formatCurrency(resumen.ganancias) }}</p>
                         </div>
                     </div>
 
@@ -421,6 +470,23 @@ function startOfMonth(date: Date): Date {
                         <h3 class="text-sm font-semibold text-gray-800">
                             Detalle de {{ providerGroup.proveedor_nombre }}
                         </h3>
+                        <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+                            <div class="flex items-center gap-2">
+                                <span>Filas por pagina</span>
+                                <select
+                                    :value="perPage"
+                                    class="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:border-[#E4007C] focus:ring-[#E4007C]"
+                                    @change="updatePerPage(Number(($event.target as HTMLSelectElement).value))"
+                                >
+                                    <option v-for="option in perPageOptions" :key="option" :value="option">
+                                        {{ option }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div v-if="totalItems" class="text-gray-500">
+                                Mostrando {{ pageStart }}-{{ pageEnd }} de {{ totalItems }}
+                            </div>
+                        </div>
                         <div class="overflow-x-auto rounded-xl border border-gray-200">
                             <table class="min-w-full divide-y divide-gray-200 text-sm">
                                 <thead class="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
@@ -464,8 +530,32 @@ function startOfMonth(date: Date): Date {
                                     </tr>
                                 </tbody>
                                 <tfoot v-if="providerTotals">
-                                    <tr class="bg-gray-50 text-gray-800 font-semibold">
-                                        <td class="px-4 py-2 text-left" colspan="3">Totales</td>
+                                    <tr v-if="pageTotals" class="bg-gray-50 text-gray-800 font-semibold">
+                                        <td class="px-4 py-2 text-left" colspan="3">Totales pagina</td>
+                                        <td class="px-4 py-2 text-right">
+                                            {{ pageTotals.cantidad }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            {{ formatCurrency(pageTotals.precioPromedio) }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            {{ formatCurrency(pageTotals.total) }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            {{ formatCurrency(pageTotals.providerDiscount) }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            {{ formatCurrency(pageTotals.manualDiscount) }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            {{ formatCurrency(pageTotals.cardFee) }}
+                                        </td>
+                                        <td class="px-4 py-2 text-right">
+                                            {{ formatCurrency(pageTotals.ganancia) }}
+                                        </td>
+                                    </tr>
+                                    <tr class="bg-gray-100 text-gray-800 font-semibold">
+                                        <td class="px-4 py-2 text-left" colspan="3">Totales generales</td>
                                         <td class="px-4 py-2 text-right">
                                             {{ providerTotals.cantidad }}
                                         </td>
@@ -490,6 +580,25 @@ function startOfMonth(date: Date): Date {
                                     </tr>
                                 </tfoot>
                             </table>
+                        </div>
+                        <div v-if="totalPages > 1" class="flex items-center justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                                :disabled="page <= 1"
+                                @click="goPrevPage"
+                            >
+                                Anterior
+                            </button>
+                            <span class="text-sm text-gray-500">Página {{ page }} de {{ totalPages }}</span>
+                            <button
+                                type="button"
+                                class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                                :disabled="page >= totalPages"
+                                @click="goNextPage"
+                            >
+                                Siguiente
+                            </button>
                         </div>
                     </div>
                 </div>

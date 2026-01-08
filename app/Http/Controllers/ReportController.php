@@ -1228,6 +1228,11 @@ class ReportController extends Controller
 
         $inicioIso = $inicioCarbon->toDateString();
         $finIso = $finCarbon->toDateString();
+        $page = max(1, (int) $request->input('page', 1));
+        $perPageInput = (int) $request->input('per_page', 10);
+        $perPageOptions = [10, 20, 40];
+        $perPage = in_array($perPageInput, $perPageOptions, true) ? $perPageInput : 10;
+        $applyPagination = !$request->boolean('download') && ($request->filled('page') || $request->filled('per_page'));
 
         $rows = DB::table('ventadesg as vd')
             ->select([
@@ -1368,21 +1373,71 @@ class ReportController extends Controller
                 ];
             })->values();
 
+            $totalVendido = round($details->sum(fn ($item) => $item['total']), 2);
+            $cardFeeTotal = round($details->sum(fn ($item) => $item['card_fee']), 2);
+            $manualDiscountTotal = round($details->sum(fn ($item) => $item['manual_discount']), 2);
+            $tipoDescuentoTotal = round($details->sum(fn ($item) => $item['provider_discount']), 2);
+            $realEarningTotal = round($details->sum(fn ($item) => $item['real_earning']), 2);
+            $cantidadTotal = (int) $details->sum(fn ($item) => $item['cantidad']);
+            $precioPromedio = $cantidadTotal > 0
+                ? round($details->sum(fn ($item) => $item['precio_unitario'] * $item['cantidad']) / $cantidadTotal, 2)
+                : 0.0;
+
             return [
                 'proveedor_id' => $proveedorId,
                 'proveedor_ident' => $proveedorIdent,
                 'proveedor_nombre' => $proveedorNombre,
                 'proveedor_tipo' => $proveedorTipo,
                 'proveedor_porcentaje' => $proveedorPorcentaje,
-                'total_vendido' => round($details->sum(fn ($item) => $item['total']), 2),
-                'card_fee_total' => round($details->sum(fn ($item) => $item['card_fee']), 2),
-                'manual_discount_total' => round($details->sum(fn ($item) => $item['manual_discount']), 2),
-                'tipo_descuento_total' => round($details->sum(fn ($item) => $item['provider_discount']), 2),
-                'real_earning' => round($details->sum(fn ($item) => $item['real_earning']), 2),
-                'expected_earning' => round($details->sum(fn ($item) => $item['real_earning']), 2),
+                'total_vendido' => $totalVendido,
+                'card_fee_total' => $cardFeeTotal,
+                'manual_discount_total' => $manualDiscountTotal,
+                'tipo_descuento_total' => $tipoDescuentoTotal,
+                'real_earning' => $realEarningTotal,
+                'expected_earning' => $realEarningTotal,
+                'totals' => [
+                    'cantidad' => $cantidadTotal,
+                    'precio_promedio' => $precioPromedio,
+                    'total' => $totalVendido,
+                    'provider_discount' => $tipoDescuentoTotal,
+                    'manual_discount' => $manualDiscountTotal,
+                    'card_fee' => $cardFeeTotal,
+                    'ganancia' => $realEarningTotal,
+                ],
                 'items' => $details,
             ];
         })->values();
+        $itemsMeta = null;
+        $itemsTotals = null;
+        if ($applyPagination && $provider) {
+            $providerPayload = $providers->first();
+            $items = collect($providerPayload['items'] ?? []);
+            $itemsTotals = [
+                'cantidad' => (int) $items->sum(fn ($item) => $item['cantidad']),
+                'precio_promedio' => $items->sum(fn ($item) => $item['cantidad']) > 0
+                    ? round($items->sum(fn ($item) => $item['precio_unitario'] * $item['cantidad']) / $items->sum(fn ($item) => $item['cantidad']), 2)
+                    : 0.0,
+                'total' => round($items->sum(fn ($item) => $item['total']), 2),
+                'provider_discount' => round($items->sum(fn ($item) => $item['provider_discount']), 2),
+                'manual_discount' => round($items->sum(fn ($item) => $item['manual_discount']), 2),
+                'card_fee' => round($items->sum(fn ($item) => $item['card_fee']), 2),
+                'ganancia' => round($items->sum(fn ($item) => $item['real_earning']), 2),
+            ];
+            $totalItems = $items->count();
+            $lastPage = max(1, (int) ceil($totalItems / $perPage));
+            $page = min($page, $lastPage);
+            $pagedItems = $items->forPage($page, $perPage)->values();
+            if ($providerPayload) {
+                $providerPayload['items'] = $pagedItems;
+                $providers = collect([$providerPayload])->values();
+            }
+            $itemsMeta = [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalItems,
+                'last_page' => $lastPage,
+            ];
+        }
 
         $totales = [
             'ventas_brutas' => round($providers->sum(fn($row) => $row['total_vendido']), 2),
@@ -1510,6 +1565,8 @@ class ReportController extends Controller
             'descuento_general_total' => $generalDiscountTotal,
             'cargos_tarjeta_total' => $totales['cargos_tarjeta'],
             'manual_descuentos_total' => $generalDiscountTotal,
+            'items_meta' => $itemsMeta,
+            'items_totals' => $itemsTotals,
             'provider' => $provider ? [
                 'id' => $provider->id,
                 'ident' => $provider->ident,
