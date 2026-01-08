@@ -523,7 +523,7 @@ function startOfMonth(date: Date): Date {
                                             {{ providerTotals.cantidad }}
                                         </td>
                                         <td class="px-4 py-2 text-right">
-                                            {{ formatCurrency(providerTotals.precioPromedio) }}
+                                            -
                                         </td>
                                         <td class="px-4 py-2 text-right">
                                             {{ formatCurrency(providerTotals.total) }}
