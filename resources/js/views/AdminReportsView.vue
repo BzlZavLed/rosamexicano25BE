@@ -232,15 +232,35 @@ async function fetchInventarioMarca() {
     inventarioMarcaLoading.value = true;
     inventarioMarcaError.value = '';
     try {
+        const sortColumn = inventarioMarcaSort.value === 'precio' ? 'producto' : inventarioMarcaSort.value;
         const response = await getInventarioReport({
             proveedor_id: providerIdent,
             q: inventarioMarcaSearch.value.trim() || undefined,
             page: inventarioMarcaPage.value,
             per_page: inventarioMarcaPerPage.value,
-            sort: 'producto',
-            direction: 'asc',
+            sort: sortColumn as 'producto' | 'existencia',
+            direction: inventarioMarcaSortDirection.value,
         });
-        inventarioMarcaItems.value = response.data ?? [];
+        const rows = response.data ?? [];
+        if (inventarioMarcaSort.value === 'precio') {
+            const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
+            rows.sort((a, b) => {
+                const aPrice = Number(a.precio ?? 0);
+                const bPrice = Number(b.precio ?? 0);
+                if (aPrice === bPrice) return 0;
+                return aPrice > bPrice ? dir : -dir;
+            });
+        }
+        if (inventarioMarcaSort.value === 'valor') {
+            const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
+            rows.sort((a, b) => {
+                const aValue = Number(a.costo_inventario ?? 0);
+                const bValue = Number(b.costo_inventario ?? 0);
+                if (aValue === bValue) return 0;
+                return aValue > bValue ? dir : -dir;
+            });
+        }
+        inventarioMarcaItems.value = rows;
         inventarioMarcaPagination.value = response.pagination ?? null;
     } catch (err: any) {
         inventarioMarcaError.value =
@@ -274,6 +294,22 @@ function updateInventarioMarcaPerPage(value: number) {
     fetchInventarioMarca();
 }
 
+function toggleInventarioMarcaSort(column: 'precio' | 'existencia' | 'valor') {
+    if (inventarioMarcaSort.value === column) {
+        inventarioMarcaSortDirection.value = inventarioMarcaSortDirection.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        inventarioMarcaSort.value = column;
+        inventarioMarcaSortDirection.value = 'desc';
+    }
+    resetInventarioMarcaPagination();
+    fetchInventarioMarca();
+}
+
+function inventarioMarcaSortIcon(column: 'precio' | 'existencia' | 'valor') {
+    if (inventarioMarcaSort.value !== column) return '';
+    return inventarioMarcaSortDirection.value === 'asc' ? '▲' : '▼';
+}
+
 async function fetchAllInventarioMarcaItems() {
     const providerIdent = inventarioMarcaSelectedProviderIdent.value;
     if (!providerIdent) return [];
@@ -283,18 +319,38 @@ async function fetchAllInventarioMarcaItems() {
     const rows: InventarioRow[] = [];
 
     while (true) {
+        const sortColumn = inventarioMarcaSort.value === 'precio' ? 'producto' : inventarioMarcaSort.value;
         const response = await getInventarioReport({
             proveedor_id: providerIdent,
             q: inventarioMarcaSearch.value.trim() || undefined,
             page,
             per_page: perPage,
-            sort: 'producto',
-            direction: 'asc',
+            sort: sortColumn as 'producto' | 'existencia',
+            direction: inventarioMarcaSortDirection.value,
         });
         rows.push(...(response.data ?? []));
         const pagination = response.pagination;
         if (!pagination || pagination.current_page >= pagination.last_page) break;
         page += 1;
+    }
+
+    if (inventarioMarcaSort.value === 'precio') {
+        const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
+        rows.sort((a, b) => {
+            const aPrice = Number(a.precio ?? 0);
+            const bPrice = Number(b.precio ?? 0);
+            if (aPrice === bPrice) return 0;
+            return aPrice > bPrice ? dir : -dir;
+        });
+    }
+    if (inventarioMarcaSort.value === 'valor') {
+        const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
+        rows.sort((a, b) => {
+            const aValue = Number(a.costo_inventario ?? 0);
+            const bValue = Number(b.costo_inventario ?? 0);
+            if (aValue === bValue) return 0;
+            return aValue > bValue ? dir : -dir;
+        });
     }
 
     return rows;
@@ -306,11 +362,12 @@ async function downloadInventarioMarcaCsv() {
     try {
         const providerIdent = inventarioMarcaSelectedProviderIdent.value;
         if (!providerIdent) throw new Error('Selecciona una marca para descargar.');
+        const sortColumn = inventarioMarcaSort.value === 'precio' ? 'producto' : inventarioMarcaSort.value;
         const blob = await downloadInventarioReport({
             proveedor_id: providerIdent,
             q: inventarioMarcaSearch.value.trim() || undefined,
-            sort: 'producto',
-            direction: 'asc',
+            sort: sortColumn as 'producto' | 'existencia',
+            direction: inventarioMarcaSortDirection.value,
         });
         const url = URL.createObjectURL(blob);
         const now = new Date();
@@ -592,6 +649,8 @@ const inventarioMarcaPerPageOptions = [10, 25, 50, 100];
 const inventarioMarcaDownloadLoading = ref(false);
 const inventarioMarcaPdfLoading = ref(false);
 let inventarioMarcaSearchDebounce: ReturnType<typeof setTimeout> | null = null;
+const inventarioMarcaSort = ref<'producto' | 'precio' | 'existencia' | 'valor'>('producto');
+const inventarioMarcaSortDirection = ref<SortDirection>('asc');
 
 const cajaCondensadoLoading = ref(false);
 const cajaCondensadoError = ref('');
@@ -2361,6 +2420,8 @@ watch(
             if (!inventarioMarcaProviders.value.length) {
                 fetchInventarioMarcaProviders();
             }
+            inventarioMarcaSort.value = 'producto';
+            inventarioMarcaSortDirection.value = 'asc';
             if (inventarioMarcaSelectedProviderIdent.value && !inventarioMarcaItems.value.length) {
                 fetchInventarioMarca();
             }
@@ -2420,6 +2481,8 @@ watch(
         inventarioMarcaPagination.value = null;
         inventarioMarcaError.value = '';
         inventarioMarcaSearch.value = '';
+        inventarioMarcaSort.value = 'producto';
+        inventarioMarcaSortDirection.value = 'asc';
         resetInventarioMarcaPagination();
         if (selected.value === 'inventario-marca' && inventarioMarcaSelectedProviderIdent.value) {
             fetchInventarioMarca();
@@ -2435,6 +2498,8 @@ watch(
         }
         inventarioMarcaSearchDebounce = setTimeout(() => {
             resetInventarioMarcaPagination();
+            inventarioMarcaSort.value = 'producto';
+            inventarioMarcaSortDirection.value = 'asc';
             if (selected.value === 'inventario-marca' && inventarioMarcaSelectedProviderIdent.value) {
                 fetchInventarioMarca();
             }
@@ -3262,9 +3327,36 @@ watch(
                                                 <tr>
                                                     <th class="px-3 py-2">Producto</th>
                                                     <th class="px-3 py-2">Descripcion</th>
-                                                    <th class="px-3 py-2 text-right">Precio</th>
-                                                    <th class="px-3 py-2 text-right">Existencia</th>
-                                                    <th class="px-3 py-2 text-right">Valor inventario</th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button
+                                                            type="button"
+                                                            class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                            @click="toggleInventarioMarcaSort('precio')"
+                                                        >
+                                                            Precio
+                                                            <span class="text-[10px]">{{ inventarioMarcaSortIcon('precio') }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button
+                                                            type="button"
+                                                            class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                            @click="toggleInventarioMarcaSort('existencia')"
+                                                        >
+                                                            Existencia
+                                                            <span class="text-[10px]">{{ inventarioMarcaSortIcon('existencia') }}</span>
+                                                        </button>
+                                                    </th>
+                                                    <th class="px-3 py-2 text-right">
+                                                        <button
+                                                            type="button"
+                                                            class="flex w-full items-center justify-end gap-1 font-semibold"
+                                                            @click="toggleInventarioMarcaSort('valor')"
+                                                        >
+                                                            Valor inventario
+                                                            <span class="text-[10px]">{{ inventarioMarcaSortIcon('valor') }}</span>
+                                                        </button>
+                                                    </th>
                                                 </tr>
                                             </thead>
                                             <tbody :class="tableClasses.body">
