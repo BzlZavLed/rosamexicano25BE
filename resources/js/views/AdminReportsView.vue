@@ -232,35 +232,15 @@ async function fetchInventarioMarca() {
     inventarioMarcaLoading.value = true;
     inventarioMarcaError.value = '';
     try {
-        const sortColumn = inventarioMarcaSort.value === 'precio' ? 'producto' : inventarioMarcaSort.value;
         const response = await getInventarioReport({
             proveedor_id: providerIdent,
             q: inventarioMarcaSearch.value.trim() || undefined,
             page: inventarioMarcaPage.value,
             per_page: inventarioMarcaPerPage.value,
-            sort: sortColumn as 'producto' | 'existencia',
+            sort: inventarioMarcaSort.value,
             direction: inventarioMarcaSortDirection.value,
         });
-        const rows = response.data ?? [];
-        if (inventarioMarcaSort.value === 'precio') {
-            const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
-            rows.sort((a, b) => {
-                const aPrice = Number(a.precio ?? 0);
-                const bPrice = Number(b.precio ?? 0);
-                if (aPrice === bPrice) return 0;
-                return aPrice > bPrice ? dir : -dir;
-            });
-        }
-        if (inventarioMarcaSort.value === 'valor') {
-            const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
-            rows.sort((a, b) => {
-                const aValue = Number(a.costo_inventario ?? 0);
-                const bValue = Number(b.costo_inventario ?? 0);
-                if (aValue === bValue) return 0;
-                return aValue > bValue ? dir : -dir;
-            });
-        }
-        inventarioMarcaItems.value = rows;
+        inventarioMarcaItems.value = response.data ?? [];
         inventarioMarcaPagination.value = response.pagination ?? null;
     } catch (err: any) {
         inventarioMarcaError.value =
@@ -319,38 +299,18 @@ async function fetchAllInventarioMarcaItems() {
     const rows: InventarioRow[] = [];
 
     while (true) {
-        const sortColumn = inventarioMarcaSort.value === 'precio' ? 'producto' : inventarioMarcaSort.value;
         const response = await getInventarioReport({
             proveedor_id: providerIdent,
             q: inventarioMarcaSearch.value.trim() || undefined,
             page,
             per_page: perPage,
-            sort: sortColumn as 'producto' | 'existencia',
+            sort: inventarioMarcaSort.value,
             direction: inventarioMarcaSortDirection.value,
         });
         rows.push(...(response.data ?? []));
         const pagination = response.pagination;
         if (!pagination || pagination.current_page >= pagination.last_page) break;
         page += 1;
-    }
-
-    if (inventarioMarcaSort.value === 'precio') {
-        const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
-        rows.sort((a, b) => {
-            const aPrice = Number(a.precio ?? 0);
-            const bPrice = Number(b.precio ?? 0);
-            if (aPrice === bPrice) return 0;
-            return aPrice > bPrice ? dir : -dir;
-        });
-    }
-    if (inventarioMarcaSort.value === 'valor') {
-        const dir = inventarioMarcaSortDirection.value === 'asc' ? 1 : -1;
-        rows.sort((a, b) => {
-            const aValue = Number(a.costo_inventario ?? 0);
-            const bValue = Number(b.costo_inventario ?? 0);
-            if (aValue === bValue) return 0;
-            return aValue > bValue ? dir : -dir;
-        });
     }
 
     return rows;
@@ -362,11 +322,10 @@ async function downloadInventarioMarcaCsv() {
     try {
         const providerIdent = inventarioMarcaSelectedProviderIdent.value;
         if (!providerIdent) throw new Error('Selecciona una marca para descargar.');
-        const sortColumn = inventarioMarcaSort.value === 'precio' ? 'producto' : inventarioMarcaSort.value;
         const blob = await downloadInventarioReport({
             proveedor_id: providerIdent,
             q: inventarioMarcaSearch.value.trim() || undefined,
-            sort: sortColumn as 'producto' | 'existencia',
+            sort: inventarioMarcaSort.value,
             direction: inventarioMarcaSortDirection.value,
         });
         const url = URL.createObjectURL(blob);

@@ -560,7 +560,7 @@ export async function getInventarioReport(opts: {
     q?: string;
     page?: number;
     per_page?: number;
-    sort?: 'producto' | 'existencia' | 'proveedor';
+    sort?: 'producto' | 'existencia' | 'proveedor' | 'precio' | 'valor';
     direction?: 'asc' | 'desc';
     provider_tipo?: 'normal' | 'consigna' | 'porcentaje';
     proveedor_id?: number;
@@ -580,7 +580,7 @@ export async function getInventarioReport(opts: {
 
 export async function downloadInventarioReport(opts: {
     q?: string;
-    sort?: 'producto' | 'existencia' | 'proveedor';
+    sort?: 'producto' | 'existencia' | 'proveedor' | 'precio' | 'valor';
     direction?: 'asc' | 'desc';
     provider_tipo?: 'normal' | 'consigna' | 'porcentaje';
     proveedor_id?: number;

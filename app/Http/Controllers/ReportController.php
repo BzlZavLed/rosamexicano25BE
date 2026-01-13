@@ -1082,8 +1082,14 @@ class ReportController extends Controller
             ]);
 
         switch ($sort) {
+            case 'precio':
+                $query->orderByRaw('COALESCE(p.precio, 0) ' . strtoupper($direction));
+                break;
             case 'existencia':
                 $query->orderBy('inventario.existencia', $direction);
+                break;
+            case 'valor':
+                $query->orderByRaw('COALESCE(p.precio, 0) * COALESCE(inventario.existencia, 0) ' . strtoupper($direction));
                 break;
             case 'proveedor':
                 $query->orderByRaw('LOWER(pr.nombre) ' . strtoupper($direction));
