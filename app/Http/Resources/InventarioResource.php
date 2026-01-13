@@ -21,6 +21,7 @@ class InventarioResource extends JsonResource
                 'id'     => $this->when(isset($this->producto_id), fn() => (int)$this->producto_id),
                 'ident'  => $this->ident,
                 'nombre' => $this->when(isset($this->producto_nombre), fn() => $this->producto_nombre),
+                'descripcion' => $this->when(isset($this->producto_descripcion), fn() => $this->producto_descripcion),
                 'precio' => $this->when(isset($this->producto_precio), fn() => $this->producto_precio),
             ],
             'proveedor'   => [

@@ -63,6 +63,7 @@ class InventarioController extends Controller
                 inventario.*,
                 producto.id as producto_id,
                 producto.nombre as producto_nombre,
+                producto.descripcion as producto_descripcion,
                 producto.precio as producto_precio,
                 producto.proveedorid as proveedor_id,
                 proveedores.nombre as proveedor_nombre
