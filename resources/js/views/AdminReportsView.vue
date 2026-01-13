@@ -363,14 +363,14 @@ function buildInventarioMarcaPdf(items: InventarioListItem[]) {
     const marginY = 16;
     const rowPadding = 2;
     const lineHeight = 4;
-    const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const totalWidth = inventarioMarcaPdfColumns.reduce((sum, col) => sum + col.width, 0);
-    const columnPositions = inventarioMarcaPdfColumns.reduce((positions, col, idx) => {
-        const last = positions[idx - 1] ?? marginX;
-        positions.push(idx === 0 ? marginX : last + inventarioMarcaPdfColumns[idx - 1].width);
-        return positions;
-    }, [] as number[]);
+    const columnPositions: number[] = [];
+    inventarioMarcaPdfColumns.forEach((_, idx) => {
+        const last = columnPositions[idx - 1] ?? marginX;
+        const previousWidth = inventarioMarcaPdfColumns[idx - 1]?.width ?? 0;
+        columnPositions.push(idx === 0 ? marginX : last + previousWidth);
+    });
 
     let currentY = marginY;
 
@@ -393,7 +393,7 @@ function buildInventarioMarcaPdf(items: InventarioListItem[]) {
         doc.setFontSize(8);
         doc.setTextColor(90);
         inventarioMarcaPdfColumns.forEach((col, idx) => {
-            const x = columnPositions[idx] + 1;
+            const x = (columnPositions[idx] ?? marginX) + 1;
             doc.text(col.title, x, currentY + 5);
         });
         doc.setTextColor(20);
@@ -430,10 +430,11 @@ function buildInventarioMarcaPdf(items: InventarioListItem[]) {
         ensureSpace(rowHeight);
         wrappedLines.forEach((lines, idx) => {
             const col = inventarioMarcaPdfColumns[idx];
-            const x = columnPositions[idx];
+            if (!col) return;
+            const x = columnPositions[idx] ?? marginX;
             const align = col.align ?? 'left';
             const startY = currentY + rowPadding + lineHeight - 1;
-            lines.forEach((line, lineIndex) => {
+            lines.forEach((line: string, lineIndex: number) => {
                 const textY = startY + lineIndex * lineHeight;
                 const textX = align === 'right' ? x + col.width - 1 : x + 1;
                 doc.text(String(line ?? ''), textX, textY, { align: align as 'left' | 'right' });
