@@ -234,6 +234,7 @@ async function fetchInventarioMarca() {
     try {
         const response = await getInventarioReport({
             proveedor_id: providerIdent,
+            q: inventarioMarcaSearch.value.trim() || undefined,
             page: inventarioMarcaPage.value,
             per_page: inventarioMarcaPerPage.value,
             sort: 'producto',
@@ -284,6 +285,7 @@ async function fetchAllInventarioMarcaItems() {
     while (true) {
         const response = await getInventarioReport({
             proveedor_id: providerIdent,
+            q: inventarioMarcaSearch.value.trim() || undefined,
             page,
             per_page: perPage,
             sort: 'producto',
@@ -306,6 +308,7 @@ async function downloadInventarioMarcaCsv() {
         if (!providerIdent) throw new Error('Selecciona una marca para descargar.');
         const blob = await downloadInventarioReport({
             proveedor_id: providerIdent,
+            q: inventarioMarcaSearch.value.trim() || undefined,
             sort: 'producto',
             direction: 'asc',
         });
@@ -331,7 +334,7 @@ async function downloadInventarioMarcaCsv() {
     }
 }
 
-type InventarioMarcaPdfColumnKey = 'producto' | 'descripcion' | 'existencia' | 'importe';
+type InventarioMarcaPdfColumnKey = 'producto' | 'descripcion' | 'precio' | 'existencia' | 'importe';
 
 const inventarioMarcaPdfColumns: Array<{
     key: InventarioMarcaPdfColumnKey;
@@ -339,10 +342,11 @@ const inventarioMarcaPdfColumns: Array<{
     width: number;
     align?: 'left' | 'right';
 }> = [
-    { key: 'producto', title: 'Producto', width: 60 },
-    { key: 'descripcion', title: 'Descripcion', width: 80 },
+    { key: 'producto', title: 'Producto', width: 52 },
+    { key: 'descripcion', title: 'Descripcion', width: 70 },
+    { key: 'precio', title: 'Precio', width: 22, align: 'right' },
     { key: 'existencia', title: 'Existencia', width: 20, align: 'right' },
-    { key: 'importe', title: 'Valor', width: 26, align: 'right' },
+    { key: 'importe', title: 'Valor', width: 24, align: 'right' },
 ];
 
 function buildInventarioMarcaPdf(items: InventarioRow[]) {
@@ -402,8 +406,9 @@ function buildInventarioMarcaPdf(items: InventarioRow[]) {
 
     items.forEach((item) => {
         const values = {
-            producto: item.producto_nombre ?? '',
-            descripcion: item.producto_descripcion ?? '',
+            producto: item.producto_nombre ?? (item as any)?.producto?.nombre ?? '',
+            descripcion: item.producto_descripcion ?? (item as any)?.producto?.descripcion ?? '',
+            precio: formatCurrency(Number(item.precio ?? 0)),
             existencia: String(Number(item.existencia ?? 0)),
             importe: formatCurrency(Number(item.costo_inventario ?? 0)),
         };
@@ -580,11 +585,13 @@ const inventarioMarcaItems = ref<InventarioRow[]>([]);
 const inventarioMarcaPagination = ref<ProductosPagination | null>(null);
 const inventarioMarcaLoading = ref(false);
 const inventarioMarcaError = ref('');
+const inventarioMarcaSearch = ref('');
 const inventarioMarcaPage = ref(1);
 const inventarioMarcaPerPage = ref(25);
 const inventarioMarcaPerPageOptions = [10, 25, 50, 100];
 const inventarioMarcaDownloadLoading = ref(false);
 const inventarioMarcaPdfLoading = ref(false);
+let inventarioMarcaSearchDebounce: ReturnType<typeof setTimeout> | null = null;
 
 const cajaCondensadoLoading = ref(false);
 const cajaCondensadoError = ref('');
@@ -2412,10 +2419,26 @@ watch(
         inventarioMarcaItems.value = [];
         inventarioMarcaPagination.value = null;
         inventarioMarcaError.value = '';
+        inventarioMarcaSearch.value = '';
         resetInventarioMarcaPagination();
         if (selected.value === 'inventario-marca' && inventarioMarcaSelectedProviderIdent.value) {
             fetchInventarioMarca();
         }
+    }
+);
+
+watch(
+    () => inventarioMarcaSearch.value,
+    () => {
+        if (inventarioMarcaSearchDebounce) {
+            clearTimeout(inventarioMarcaSearchDebounce);
+        }
+        inventarioMarcaSearchDebounce = setTimeout(() => {
+            resetInventarioMarcaPagination();
+            if (selected.value === 'inventario-marca' && inventarioMarcaSelectedProviderIdent.value) {
+                fetchInventarioMarca();
+            }
+        }, 300);
     }
 );
 
@@ -3157,6 +3180,16 @@ watch(
                                         </option>
                                     </select>
                                 </label>
+                                <label class="flex flex-col text-xs text-gray-500">
+                                    <span class="font-medium text-gray-700">Buscar producto</span>
+                                    <input
+                                        v-model="inventarioMarcaSearch"
+                                        type="search"
+                                        placeholder="Nombre o ident…"
+                                        class="mt-1 min-w-[220px] rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                        :disabled="!inventarioMarcaSelectedProviderIdent"
+                                    />
+                                </label>
                                 <label class="flex items-center gap-2 text-xs text-gray-500">
                                     <span class="font-medium text-gray-700">Filas por pagina</span>
                                     <select
@@ -3229,23 +3262,25 @@ watch(
                                                 <tr>
                                                     <th class="px-3 py-2">Producto</th>
                                                     <th class="px-3 py-2">Descripcion</th>
+                                                    <th class="px-3 py-2 text-right">Precio</th>
                                                     <th class="px-3 py-2 text-right">Existencia</th>
                                                     <th class="px-3 py-2 text-right">Valor inventario</th>
                                                 </tr>
                                             </thead>
                                             <tbody :class="tableClasses.body">
                                                 <tr v-if="inventarioMarcaItems.length === 0">
-                                                    <td class="px-3 py-6 text-center text-gray-500" colspan="4">
+                                                    <td class="px-3 py-6 text-center text-gray-500" colspan="5">
                                                         No hay inventario registrado para esta marca.
                                                     </td>
                                                 </tr>
                                                 <tr v-for="item in inventarioMarcaItems" :key="item.inventario_id" :class="tableClasses.row">
                                                     <td class="px-3 py-2 font-medium text-gray-900">
-                                                        {{ item.producto_nombre || 'Producto sin nombre' }}
+                                                        {{ item.producto_nombre || (item as any)?.producto?.nombre || 'Producto sin nombre' }}
                                                     </td>
                                                     <td class="px-3 py-2 text-gray-600">
-                                                        {{ item.producto_descripcion || '—' }}
+                                                        {{ item.producto_descripcion || (item as any)?.producto?.descripcion || '—' }}
                                                     </td>
+                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(item.precio ?? 0) }}</td>
                                                     <td class="px-3 py-2 text-right">{{ Number(item.existencia ?? 0) }}</td>
                                                     <td class="px-3 py-2 text-right">{{ formatCurrency(item.costo_inventario ?? 0) }}</td>
                                                 </tr>
