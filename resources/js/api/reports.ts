@@ -347,6 +347,7 @@ export interface InventarioRow {
     inventario_id: number;
     producto_ident: string;
     producto_nombre: string;
+    producto_descripcion?: string | null;
     precio: number | null;
     precio_proveedor: number | null;
     existencia: number;
@@ -562,6 +563,7 @@ export async function getInventarioReport(opts: {
     sort?: 'producto' | 'existencia' | 'proveedor';
     direction?: 'asc' | 'desc';
     provider_tipo?: 'normal' | 'consigna' | 'porcentaje';
+    proveedor_id?: number;
 } = {}): Promise<InventarioReportResponse> {
     const params: Record<string, string | number> = {};
     if (opts.q) params.q = opts.q;
@@ -570,6 +572,7 @@ export async function getInventarioReport(opts: {
     if (opts.sort) params.sort = opts.sort;
     if (opts.direction) params.direction = opts.direction;
     if (opts.provider_tipo) params.provider_tipo = opts.provider_tipo;
+    if (opts.proveedor_id) params.proveedor_id = opts.proveedor_id;
 
     const { data } = await http.get<InventarioReportResponse>('/reports/inventario', { params });
     return data;
@@ -580,12 +583,14 @@ export async function downloadInventarioReport(opts: {
     sort?: 'producto' | 'existencia' | 'proveedor';
     direction?: 'asc' | 'desc';
     provider_tipo?: 'normal' | 'consigna' | 'porcentaje';
+    proveedor_id?: number;
 } = {}): Promise<Blob> {
     const params: Record<string, string | number> = { download: 1 };
     if (opts.q) params.q = opts.q;
     if (opts.sort) params.sort = opts.sort;
     if (opts.direction) params.direction = opts.direction;
     if (opts.provider_tipo) params.provider_tipo = opts.provider_tipo;
+    if (opts.proveedor_id) params.proveedor_id = opts.proveedor_id;
 
     const { data } = await http.get('/reports/inventario', {
         params,

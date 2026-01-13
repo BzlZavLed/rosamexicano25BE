@@ -3,10 +3,11 @@ import { computed, ref, watch } from 'vue';
 import { jsPDF } from 'jspdf';
 import AppLayout from '../components/layout/AppLayout.vue';
 import { listProveedoresAll, type Proveedor } from '../api/proveedores';
-import { getProveedorInventario, type InventarioListItem, type InventarioListMeta } from '../api/inventario';
 import {
     getCajaReport,
     getEntradasReport,
+    getInventarioReport,
+    downloadInventarioReport,
     getCajaProveedoresReport,
     getEgresosCajaReport,
     getFlujoCajaReport,
@@ -25,6 +26,8 @@ import {
     type CajaProveedoresResponse,
     type CajaProveedorGroup,
     type CajaProveedorItem,
+    type InventarioRow,
+    type ProductosPagination,
     type FlujoCajaResponse,
     type FlujoCajaRow,
     type RestockForecastResponse,
@@ -187,12 +190,12 @@ function mensualidadGroupTotals(items: MensualidadReportItem[]) {
 }
 
 const inventarioMarcaSelectedProvider = computed(() => {
-    const id = inventarioMarcaSelectedProviderId.value;
-    if (!id) return null;
-    return inventarioMarcaProviders.value.find((provider) => provider.id === id) ?? null;
+    const ident = inventarioMarcaSelectedProviderIdent.value;
+    if (!ident) return null;
+    return inventarioMarcaProviders.value.find((provider) => provider.ident === ident) ?? null;
 });
-const inventarioMarcaTotalItems = computed(() => inventarioMarcaMeta.value?.total ?? inventarioMarcaItems.value.length);
-const inventarioMarcaTotalPages = computed(() => inventarioMarcaMeta.value?.last_page ?? 1);
+const inventarioMarcaTotalItems = computed(() => inventarioMarcaPagination.value?.total ?? inventarioMarcaItems.value.length);
+const inventarioMarcaTotalPages = computed(() => inventarioMarcaPagination.value?.last_page ?? 1);
 const inventarioMarcaPageStart = computed(() => {
     if (!inventarioMarcaTotalItems.value) return 0;
     return (inventarioMarcaPage.value - 1) * inventarioMarcaPerPage.value + 1;
@@ -218,31 +221,31 @@ async function fetchInventarioMarcaProviders() {
 }
 
 async function fetchInventarioMarca() {
-    const providerId = inventarioMarcaSelectedProviderId.value;
-    if (!providerId) {
+    const providerIdent = inventarioMarcaSelectedProviderIdent.value;
+    if (!providerIdent) {
         inventarioMarcaError.value = 'Selecciona una marca para consultar inventario.';
         inventarioMarcaItems.value = [];
-        inventarioMarcaMeta.value = null;
+        inventarioMarcaPagination.value = null;
         return;
     }
 
     inventarioMarcaLoading.value = true;
     inventarioMarcaError.value = '';
     try {
-        const response = await getProveedorInventario({
-            proveedorId: providerId,
+        const response = await getInventarioReport({
+            proveedor_id: providerIdent,
             page: inventarioMarcaPage.value,
             per_page: inventarioMarcaPerPage.value,
-            sort: 'nombre',
+            sort: 'producto',
             direction: 'asc',
         });
         inventarioMarcaItems.value = response.data ?? [];
-        inventarioMarcaMeta.value = response.meta ?? null;
+        inventarioMarcaPagination.value = response.pagination ?? null;
     } catch (err: any) {
         inventarioMarcaError.value =
             err?.response?.data?.message || err?.message || 'No se pudo cargar el inventario.';
         inventarioMarcaItems.value = [];
-        inventarioMarcaMeta.value = null;
+        inventarioMarcaPagination.value = null;
     } finally {
         inventarioMarcaLoading.value = false;
     }
@@ -270,33 +273,25 @@ function updateInventarioMarcaPerPage(value: number) {
     fetchInventarioMarca();
 }
 
-function csvEscape(value: string | number | null | undefined) {
-    const raw = value === null || value === undefined ? '' : String(value);
-    if (raw.includes('"') || raw.includes(',') || raw.includes('\n')) {
-        return `"${raw.replace(/"/g, '""')}"`;
-    }
-    return raw;
-}
-
 async function fetchAllInventarioMarcaItems() {
-    const providerId = inventarioMarcaSelectedProviderId.value;
-    if (!providerId) return [];
+    const providerIdent = inventarioMarcaSelectedProviderIdent.value;
+    if (!providerIdent) return [];
 
     const perPage = 200;
     let page = 1;
-    const rows: InventarioListItem[] = [];
+    const rows: InventarioRow[] = [];
 
     while (true) {
-        const response = await getProveedorInventario({
-            proveedorId: providerId,
+        const response = await getInventarioReport({
+            proveedor_id: providerIdent,
             page,
             per_page: perPage,
-            sort: 'nombre',
+            sort: 'producto',
             direction: 'asc',
         });
         rows.push(...(response.data ?? []));
-        const meta = response.meta;
-        if (!meta || meta.current_page >= meta.last_page) break;
+        const pagination = response.pagination;
+        if (!pagination || pagination.current_page >= pagination.last_page) break;
         page += 1;
     }
 
@@ -307,27 +302,20 @@ async function downloadInventarioMarcaCsv() {
     if (inventarioMarcaDownloadLoading.value) return;
     inventarioMarcaDownloadLoading.value = true;
     try {
-        const items = await fetchAllInventarioMarcaItems();
-        const headers = ['Producto', 'Descripcion', 'Existencia', 'Valor inventario'];
-        const lines = [headers.join(',')];
-        for (const item of items) {
-            const producto = item.producto?.nombre ?? '';
-            const descripcion = item.producto?.descripcion ?? '';
-            const existencia = Number(item.existencia ?? 0);
-            const importe = Number(item.importe ?? 0).toFixed(2);
-            lines.push(
-                [
-                    csvEscape(producto),
-                    csvEscape(descripcion),
-                    csvEscape(existencia),
-                    csvEscape(importe),
-                ].join(',')
-            );
-        }
-        const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const providerIdent = inventarioMarcaSelectedProviderIdent.value;
+        if (!providerIdent) throw new Error('Selecciona una marca para descargar.');
+        const blob = await downloadInventarioReport({
+            proveedor_id: providerIdent,
+            sort: 'producto',
+            direction: 'asc',
+        });
         const url = URL.createObjectURL(blob);
+        const now = new Date();
+        const pad = (num: number) => String(num).padStart(2, '0');
         const providerName = inventarioMarcaSelectedProvider.value?.nombre ?? 'marca';
-        const filename = `inventario-por-marca-${providerName}.csv`;
+        const filename = `inventario-por-marca-${providerName}-${now.getFullYear()}${pad(
+            now.getMonth() + 1
+        )}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.csv`;
         const link = document.createElement('a');
         link.href = url;
         link.download = filename;
@@ -357,7 +345,7 @@ const inventarioMarcaPdfColumns: Array<{
     { key: 'importe', title: 'Valor', width: 26, align: 'right' },
 ];
 
-function buildInventarioMarcaPdf(items: InventarioListItem[]) {
+function buildInventarioMarcaPdf(items: InventarioRow[]) {
     const doc = new jsPDF({ unit: 'mm' });
     const marginX = 12;
     const marginY = 16;
@@ -414,10 +402,10 @@ function buildInventarioMarcaPdf(items: InventarioListItem[]) {
 
     items.forEach((item) => {
         const values = {
-            producto: item.producto?.nombre ?? '',
-            descripcion: item.producto?.descripcion ?? '',
+            producto: item.producto_nombre ?? '',
+            descripcion: item.producto_descripcion ?? '',
             existencia: String(Number(item.existencia ?? 0)),
-            importe: formatCurrency(Number(item.importe ?? 0)),
+            importe: formatCurrency(Number(item.costo_inventario ?? 0)),
         };
         const wrappedLines = inventarioMarcaPdfColumns.map((col) => {
             const value = values[col.key] ?? '';
@@ -587,9 +575,9 @@ const entradasData = ref<EntradasReportResponse | null>(null);
 const inventarioMarcaProviders = ref<Proveedor[]>([]);
 const inventarioMarcaProvidersLoading = ref(false);
 const inventarioMarcaProvidersError = ref('');
-const inventarioMarcaSelectedProviderId = ref<number | null>(null);
-const inventarioMarcaItems = ref<InventarioListItem[]>([]);
-const inventarioMarcaMeta = ref<InventarioListMeta | null>(null);
+const inventarioMarcaSelectedProviderIdent = ref<number | null>(null);
+const inventarioMarcaItems = ref<InventarioRow[]>([]);
+const inventarioMarcaPagination = ref<ProductosPagination | null>(null);
 const inventarioMarcaLoading = ref(false);
 const inventarioMarcaError = ref('');
 const inventarioMarcaPage = ref(1);
@@ -2366,7 +2354,7 @@ watch(
             if (!inventarioMarcaProviders.value.length) {
                 fetchInventarioMarcaProviders();
             }
-            if (inventarioMarcaSelectedProviderId.value && !inventarioMarcaItems.value.length) {
+            if (inventarioMarcaSelectedProviderIdent.value && !inventarioMarcaItems.value.length) {
                 fetchInventarioMarca();
             }
         }
@@ -2419,13 +2407,13 @@ watch(
 );
 
 watch(
-    () => inventarioMarcaSelectedProviderId.value,
+    () => inventarioMarcaSelectedProviderIdent.value,
     () => {
         inventarioMarcaItems.value = [];
-        inventarioMarcaMeta.value = null;
+        inventarioMarcaPagination.value = null;
         inventarioMarcaError.value = '';
         resetInventarioMarcaPagination();
-        if (selected.value === 'inventario-marca' && inventarioMarcaSelectedProviderId.value) {
+        if (selected.value === 'inventario-marca' && inventarioMarcaSelectedProviderIdent.value) {
             fetchInventarioMarca();
         }
     }
@@ -3159,12 +3147,12 @@ watch(
                                 <label class="flex flex-col text-xs text-gray-500">
                                     <span class="font-medium text-gray-700">Marca</span>
                                     <select
-                                        v-model.number="inventarioMarcaSelectedProviderId"
+                                        v-model.number="inventarioMarcaSelectedProviderIdent"
                                         class="mt-1 min-w-[220px] rounded border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
                                         :disabled="inventarioMarcaProvidersLoading"
                                     >
-                                        <option :value="null">Selecciona una marca</option>
-                                        <option v-for="provider in inventarioMarcaProviders" :key="provider.id" :value="provider.id">
+                                        <option :value="0">Selecciona una marca</option>
+                                        <option v-for="provider in inventarioMarcaProviders" :key="provider.ident" :value="provider.ident">
                                             {{ provider.nombre }}
                                         </option>
                                     </select>
@@ -3184,7 +3172,7 @@ watch(
                                 <button
                                     type="button"
                                     class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
-                                    :disabled="inventarioMarcaLoading || !inventarioMarcaSelectedProviderId"
+                                    :disabled="inventarioMarcaLoading || !inventarioMarcaSelectedProviderIdent"
                                     @click="fetchInventarioMarca"
                                 >
                                     <span v-if="inventarioMarcaLoading">Consultando…</span>
@@ -3193,7 +3181,7 @@ watch(
                                 <button
                                     type="button"
                                     class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
-                                    :disabled="inventarioMarcaDownloadLoading || !inventarioMarcaSelectedProviderId"
+                                    :disabled="inventarioMarcaDownloadLoading || !inventarioMarcaSelectedProviderIdent"
                                     @click="downloadInventarioMarcaCsv"
                                 >
                                     {{ inventarioMarcaDownloadLoading ? 'Generando CSV…' : 'Descargar CSV' }}
@@ -3201,7 +3189,7 @@ watch(
                                 <button
                                     type="button"
                                     class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
-                                    :disabled="inventarioMarcaPdfLoading || !inventarioMarcaSelectedProviderId"
+                                    :disabled="inventarioMarcaPdfLoading || !inventarioMarcaSelectedProviderIdent"
                                     @click="downloadInventarioMarcaPdf"
                                 >
                                     {{ inventarioMarcaPdfLoading ? 'Generando PDF…' : 'Descargar PDF' }}
@@ -3220,7 +3208,7 @@ watch(
                                 {{ inventarioMarcaError }}
                             </p>
 
-                            <div v-if="!inventarioMarcaSelectedProviderId" class="text-xs text-gray-500">
+                            <div v-if="!inventarioMarcaSelectedProviderIdent" class="text-xs text-gray-500">
                                 Selecciona una marca para ver su inventario.
                             </div>
                             <div v-else class="space-y-4">
@@ -3251,15 +3239,15 @@ watch(
                                                         No hay inventario registrado para esta marca.
                                                     </td>
                                                 </tr>
-                                                <tr v-for="item in inventarioMarcaItems" :key="item.id" :class="tableClasses.row">
+                                                <tr v-for="item in inventarioMarcaItems" :key="item.inventario_id" :class="tableClasses.row">
                                                     <td class="px-3 py-2 font-medium text-gray-900">
-                                                        {{ item.producto?.nombre ?? 'Producto sin nombre' }}
+                                                        {{ item.producto_nombre || 'Producto sin nombre' }}
                                                     </td>
                                                     <td class="px-3 py-2 text-gray-600">
-                                                        {{ item.producto?.descripcion ?? '—' }}
+                                                        {{ item.producto_descripcion || '—' }}
                                                     </td>
                                                     <td class="px-3 py-2 text-right">{{ Number(item.existencia ?? 0) }}</td>
-                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(item.importe ?? 0) }}</td>
+                                                    <td class="px-3 py-2 text-right">{{ formatCurrency(item.costo_inventario ?? 0) }}</td>
                                                 </tr>
                                             </tbody>
                                         </table>

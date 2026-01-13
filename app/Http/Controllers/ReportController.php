@@ -1043,6 +1043,7 @@ class ReportController extends Controller
         $sort = strtolower((string) $request->input('sort', 'producto'));
         $direction = strtolower((string) $request->input('direction', 'asc')) === 'desc' ? 'desc' : 'asc';
         $providerTipo = strtolower((string) $request->input('provider_tipo', ''));
+        $providerIdent = $request->input('proveedor_id', null);
 
         $baseQuery = Inventario::query()
             ->leftJoin('producto as p', 'p.ident', '=', 'inventario.ident')
@@ -1062,6 +1063,13 @@ class ReportController extends Controller
         if ($provider) {
             $baseQuery->where('pr.ident', '=', $provider->ident);
         }
+        if ($providerIdent !== null && $providerIdent !== '') {
+            $providerIdent = (int) $providerIdent;
+            $baseQuery->where(function ($q) use ($providerIdent) {
+                $q->where('pr.ident', '=', $providerIdent)
+                    ->orWhere('pr.id', '=', $providerIdent);
+            });
+        }
         if ($providerTipo && in_array($providerTipo, ['normal', 'consigna', 'porcentaje'], true)) {
             $baseQuery->where('pr.tipo', '=', $providerTipo);
         }
@@ -1069,7 +1077,7 @@ class ReportController extends Controller
         $query = (clone $baseQuery)
             ->select('inventario.*')
             ->with([
-                'producto' => fn($q) => $q->select('id', 'ident', 'nombre', 'precio', 'precio_proveedor', 'proveedorid'),
+                'producto' => fn($q) => $q->select('id', 'ident', 'nombre', 'descripcion', 'precio', 'precio_proveedor', 'proveedorid'),
                 'producto.proveedor' => fn($q) => $q->select('id', 'ident', 'nombre', 'tipo', 'porcentaje_comision'),
             ]);
 
@@ -1098,6 +1106,7 @@ class ReportController extends Controller
             'per_page' => $perPage,
             'sort' => $sort,
             'direction' => $direction,
+            'proveedor_id' => $providerIdent,
             'provider_tipo' => $providerTipo,
         ]);
 
@@ -1144,6 +1153,7 @@ class ReportController extends Controller
             'inventario_id' => (int) $inv->id,
             'producto_ident' => (string) ($producto->ident ?? $inv->ident),
             'producto_nombre' => (string) ($producto->nombre ?? ''),
+            'producto_descripcion' => (string) ($producto->descripcion ?? ''),
             'precio' => $precio !== null ? (float) $precio : null,
             'precio_proveedor' => $precioProveedor !== null ? (float) $precioProveedor : null,
             'existencia' => $existencia,
