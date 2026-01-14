@@ -215,6 +215,16 @@ const inventarioMarcaFilteredItems = computed(() => {
         return nombre.includes(query) || descripcion.includes(query) || ident.includes(query);
     });
 });
+const inventarioMarcaFilteredTotals = computed(() => {
+    return inventarioMarcaFilteredItems.value.reduce(
+        (acc, item) => {
+            acc.existencia += Number(item.existencia ?? 0);
+            acc.valor += Number(item.costo_inventario ?? 0);
+            return acc;
+        },
+        { existencia: 0, valor: 0 }
+    );
+});
 
 async function fetchInventarioMarcaProviders() {
     if (inventarioMarcaProvidersLoading.value) return;
@@ -3352,6 +3362,17 @@ watch(
                                                     <td class="px-3 py-2 text-right">{{ formatCurrency(item.costo_inventario ?? 0) }}</td>
                                                 </tr>
                                             </tbody>
+                                            <tfoot class="border-t border-gray-200 bg-gray-50">
+                                                <tr>
+                                                    <td class="px-3 py-2 text-xs font-semibold uppercase text-gray-600" colspan="3">Totales (vista)</td>
+                                                    <td class="px-3 py-2 text-right font-semibold text-gray-900">
+                                                        {{ inventarioMarcaFilteredTotals.existencia }}
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right font-semibold text-gray-900">
+                                                        {{ formatCurrency(inventarioMarcaFilteredTotals.valor) }}
+                                                    </td>
+                                                </tr>
+                                            </tfoot>
                                         </table>
                                     </div>
                                     <div v-if="inventarioMarcaTotalPages > 1" class="flex items-center justify-end gap-2">
