@@ -204,6 +204,17 @@ const inventarioMarcaPageEnd = computed(() => {
     if (!inventarioMarcaTotalItems.value) return 0;
     return Math.min(inventarioMarcaPage.value * inventarioMarcaPerPage.value, inventarioMarcaTotalItems.value);
 });
+const inventarioMarcaHasClientFilter = computed(() => inventarioMarcaSearch.value.trim() !== '');
+const inventarioMarcaFilteredItems = computed(() => {
+    const query = inventarioMarcaSearch.value.trim().toLowerCase();
+    if (!query) return inventarioMarcaItems.value;
+    return inventarioMarcaItems.value.filter((item) => {
+        const nombre = String(item.producto_nombre || (item as any)?.producto?.nombre || '').toLowerCase();
+        const descripcion = String(item.producto_descripcion || (item as any)?.producto?.descripcion || '').toLowerCase();
+        const ident = String(item.producto_ident || (item as any)?.producto?.ident || '').toLowerCase();
+        return nombre.includes(query) || descripcion.includes(query) || ident.includes(query);
+    });
+});
 
 async function fetchInventarioMarcaProviders() {
     if (inventarioMarcaProvidersLoading.value) return;
@@ -3273,8 +3284,13 @@ watch(
                                 <div v-else>
                                     <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
                                         <div v-if="inventarioMarcaTotalItems">
-                                            Mostrando {{ inventarioMarcaPageStart }}-{{ inventarioMarcaPageEnd }}
-                                            de {{ inventarioMarcaTotalItems }}
+                                            <template v-if="inventarioMarcaHasClientFilter">
+                                                Mostrando {{ inventarioMarcaFilteredItems.length }} de {{ inventarioMarcaItems.length }} en esta pagina
+                                            </template>
+                                            <template v-else>
+                                                Mostrando {{ inventarioMarcaPageStart }}-{{ inventarioMarcaPageEnd }}
+                                                de {{ inventarioMarcaTotalItems }}
+                                            </template>
                                         </div>
                                         <div v-else>
                                             Sin registros para esta marca.
@@ -3319,12 +3335,12 @@ watch(
                                                 </tr>
                                             </thead>
                                             <tbody :class="tableClasses.body">
-                                                <tr v-if="inventarioMarcaItems.length === 0">
+                                                <tr v-if="inventarioMarcaFilteredItems.length === 0">
                                                     <td class="px-3 py-6 text-center text-gray-500" colspan="5">
                                                         No hay inventario registrado para esta marca.
                                                     </td>
                                                 </tr>
-                                                <tr v-for="item in inventarioMarcaItems" :key="item.inventario_id" :class="tableClasses.row">
+                                                <tr v-for="item in inventarioMarcaFilteredItems" :key="item.inventario_id" :class="tableClasses.row">
                                                     <td class="px-3 py-2 font-medium text-gray-900">
                                                         {{ item.producto_nombre || (item as any)?.producto?.nombre || 'Producto sin nombre' }}
                                                     </td>

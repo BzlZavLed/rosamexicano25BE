@@ -1055,6 +1055,7 @@ class ReportController extends Controller
             $q->where(function ($inner) use ($search, $like) {
                 $inner->where('inventario.ident', 'LIKE', "%{$search}%")
                     ->orWhereRaw('LOWER(p.nombre) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(p.descripcion) LIKE ?', [$like])
                     ->orWhere('pr.ident', 'LIKE', "%{$search}%")
                     ->orWhereRaw('LOWER(pr.nombre) LIKE ?', [$like]);
             });
