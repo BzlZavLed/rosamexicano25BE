@@ -121,6 +121,12 @@ function selectRow(p: Promocion) {
     form.inicia = p.inicia ?? null;
     form.vence = p.vence ?? null;
     form.estado = !!p.estado;
+    productoText.value = isProduct
+        ? (p.producto_nombre ? `${p.producto_nombre} (#${p.producto})` : (p.producto ? `Ident ${p.producto}` : ''))
+        : '';
+    proveedorText.value = !isProduct
+        ? (p.proveedor_nombre ? `${p.proveedor_nombre} (#${p.proveedor})` : (p.proveedor ? `Ident ${p.proveedor}` : ''))
+        : '';
     error.value = ''; message.value = '';
 }
 
@@ -204,6 +210,24 @@ const tipoIsGratis = computed(() => form.tipo === 'bundle');
 const tipoLabel = (tipo: PromoTipo) =>
     tipo === 'bundle' ? 'Producto gratis' : 'Descuento (%)';
 
+const targetLabel = computed(() => form.target === 'producto' ? 'Producto' : 'Proveedor');
+const lookupSelection = computed(() => {
+    if (form.target === 'producto') {
+        if (!form.producto) return 'Sin seleccionar';
+        return productoText.value?.trim() || `Ident ${form.producto}`;
+    }
+    if (!form.proveedor) return 'Sin seleccionar';
+    return proveedorText.value?.trim() || `Ident ${form.proveedor}`;
+});
+const promoValueSummary = computed(() => {
+    if (form.tipo === 'descuento') {
+        return form.descuento == null ? 'Pendiente' : `${form.descuento}%`;
+    }
+    const min = form.mincompra == null ? '—' : String(form.mincompra);
+    const free = form.gratis == null ? '—' : String(form.gratis);
+    return `${min} + ${free} gratis`;
+});
+
 onMounted(async () => {
     await Promise.all([loadPromos(), loadLists()]);
 });
@@ -213,7 +237,7 @@ onMounted(async () => {
     <AppLayout>
         <div class="space-y-6">
             <!-- Form section -->
-            <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5 md:p-6 space-y-5">
+            <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5 md:p-6 space-y-4">
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <h2 class="text-xl font-semibold">Promociones</h2>
@@ -236,119 +260,137 @@ onMounted(async () => {
                     {{ error }}
                 </div>
 
-                <!-- Target & tipo -->
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <div class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Aplica a</label>
-                        <select v-model="form.target"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
-                            <option value="producto">Producto</option>
-                            <option value="proveedor">Proveedor</option>
-                        </select>
-                        <p class="text-xs text-gray-500">Define si la promoción se asigna a un producto específico o a
-                            todos los productos del proveedor.</p>
+                <div class="grid grid-cols-1 gap-4 xl:grid-cols-12">
+                    <div class="space-y-4 xl:col-span-5">
+                        <!-- Target & tipo -->
+                        <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <div class="space-y-3">
+                                <div class="space-y-1">
+                                    <label class="block text-sm font-medium text-gray-700">Aplica a</label>
+                                    <select v-model="form.target"
+                                        class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                                        <option value="producto">Producto</option>
+                                        <option value="proveedor">Proveedor</option>
+                                    </select>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="block text-sm font-medium text-gray-700">Tipo de promoción</label>
+                                    <select v-model="form.tipo"
+                                        class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                                        <option value="descuento">Descuento (%)</option>
+                                        <option value="bundle">Producto gratis (3x2, 2x1…)</option>
+                                    </select>
+                                </div>
+                                <label class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+                                    <input type="checkbox" v-model="form.estado"
+                                        class="rounded border-gray-300 text-gray-900 focus:ring-gray-900">
+                                    Promoción activa
+                                </label>
+                            </div>
+                        </div>
+
                     </div>
-                    <div class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Tipo de promoción</label>
-                        <select v-model="form.tipo"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
-                            <option value="descuento">Descuento (%)</option>
-                            <option value="bundle">Producto gratis (3x2, 2x1…)</option>
-                        </select>
-                        <p class="text-xs text-gray-500">Selecciona si es un descuento directo o una promoción tipo
-                            bundle.</p>
+
+                    <div class="space-y-4 xl:col-span-7">
+                        <!-- Producto / proveedor selection -->
+                        <div class="space-y-1">
+                            <label class="block text-sm font-medium text-gray-700">
+                                {{ form.target === 'producto' ? 'Producto' : 'Proveedor' }}
+                            </label>
+                            <AutocompleteRemote
+                                :fetcher="form.target === 'producto'
+                                    ? (async (q:string)=>({ items: await fetchProductosBySearch(q) }))
+                                    : (async (q:string)=>({ items: await fetchProveedoresBySearch(q) }))"
+                                :labelKey="(it:any)=> it._label"
+                                :valueKey="(it:any)=> it._value"
+                                :placeholder="form.target === 'producto' ? 'Buscar por nombre/ident…' : 'Buscar proveedor…'"
+                                :minChars="2"
+                                :modelValue="form.target === 'producto' ? form.producto : form.proveedor"
+                                :modelText="form.target === 'producto' ? productoText : proveedorText"
+                                @update:modelValue="(v:any)=> {
+                                    if (form.target === 'producto') form.producto = v;
+                                    else form.proveedor = v;
+                                }"
+                                @update:modelText="(t:string)=> {
+                                    if (form.target === 'producto') productoText = t;
+                                    else proveedorText = t;
+                                }"
+                                @select="(it:any)=> {
+                                    if (form.target === 'producto') {
+                                        form.producto = it._value;
+                                        productoText = it._label;
+                                    } else {
+                                        form.proveedor = it._value;
+                                        proveedorText = it._label;
+                                    }
+                                }"
+                            />
+                            <p class="text-xs text-gray-500">
+                                Se guardará el <b>ident</b> del {{ form.target === 'producto' ? 'producto' : 'proveedor' }}.
+                            </p>
+                        </div>
+
+                        <!-- Campos según tipo -->
+                        <div v-if="tipoIsDescuento" class="space-y-1 sm:max-w-sm">
+                            <label class="block text-sm font-medium text-gray-700">Descuento (%)</label>
+                            <input v-model.number="form.descuento" type="number" min="0" max="100" step="0.01"
+                                class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                placeholder="Ej. 20" />
+                        </div>
+                        <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div class="space-y-1">
+                                <label class="block text-sm font-medium text-gray-700">Mínimo de compra</label>
+                                <input v-model.number="form.mincompra" type="number" min="1" step="1"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Ej. 2 (para 3x2)" />
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-sm font-medium text-gray-700">Gratis</label>
+                                <input v-model.number="form.gratis" type="number" min="1" step="1"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Ej. 1 (para 3x2)" />
+                            </div>
+                        </div>
+
+                        <!-- fechas -->
+                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div class="space-y-1">
+                                <label class="block text-sm font-medium text-gray-700">Fecha de inicio</label>
+                                <input v-model="form.inicia" type="date"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-sm font-medium text-gray-700">Fecha de vencimiento</label>
+                                <input v-model="form.vence" type="date"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                            </div>
+                        </div>
+
                     </div>
-                    <label class="flex items-center gap-2 px-3 py-2 text-sm">
-                        <input type="checkbox" v-model="form.estado"
-                            class="rounded border-gray-300 text-gray-900 focus:ring-gray-900">
-                        Promoción activa
-                    </label>
                 </div>
 
-                <!-- Producto / proveedor selection -->
-                <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    <div v-if="form.target === 'producto'" class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Producto</label>
-                        <AutocompleteRemote
-                            :fetcher="async (q:string)=>({ items: await fetchProductosBySearch(q) })"
-                            :labelKey="(it:any)=> it._label"
-                            :valueKey="(it:any)=> it._value"
-                            placeholder="Buscar por nombre/ident…"
-                            :minChars="2"
-                            :modelValue="form.producto"
-                            :modelText="productoText"
-                            @update:modelValue="(v:any)=> form.producto = v"
-                            @update:modelText="(t:string)=> productoText = t"
-                            @select="(it:any)=> { form.producto = it._value; productoText = it._label; }"
-                        />
-                        <p class="text-xs text-gray-500">Se guardará el <b>ident</b> del producto.</p>
-                    </div>
-                    <div v-if="form.target === 'proveedor'" class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Proveedor</label>
-                        <AutocompleteRemote
-                            :fetcher="async (q:string)=>({ items: await fetchProveedoresBySearch(q) })"
-                            :labelKey="(it:any)=> it._label"
-                            :valueKey="(it:any)=> it._value"
-                            placeholder="Buscar proveedor…"
-                            :minChars="2"
-                            :modelValue="form.proveedor"
-                            :modelText="proveedorText"
-                            @update:modelValue="(v:any)=> form.proveedor = v"
-                            @update:modelText="(t:string)=> proveedorText = t"
-                            @select="(it:any)=> { form.proveedor = it._value; proveedorText = it._label; }"
-                        />
-                        <p class="text-xs text-gray-500">Se guardará el <b>ident</b> del proveedor.</p>
+                <div class="space-y-2 text-xs text-gray-600">
+                    <span class="font-medium text-gray-700">Resumen previo</span>
+                    <div class="rounded-lg border border-gray-300 bg-gray-100 px-4 py-3 font-mono text-[12px] leading-5 text-gray-800">
+                        <p class="mb-2 text-[11px] uppercase tracking-wide text-gray-500">promotion.preview</p>
+                        <ul class="space-y-1">
+                            <li><span class="text-gray-500">aplica_a:</span> {{ targetLabel }}</li>
+                            <li><span class="text-gray-500">{{ form.target === 'producto' ? 'producto' : 'proveedor' }}:</span> {{ lookupSelection }}</li>
+                            <li><span class="text-gray-500">tipo:</span> {{ tipoLabel(form.tipo) }}</li>
+                            <li><span class="text-gray-500">{{ form.tipo === 'descuento' ? 'descuento' : 'bundle' }}:</span> {{ promoValueSummary }}</li>
+                            <li><span class="text-gray-500">inicio:</span> {{ form.inicia || 'Sin fecha' }}</li>
+                            <li><span class="text-gray-500">vence:</span> {{ form.vence || 'Pendiente' }}</li>
+                            <li><span class="text-gray-500">estado:</span> {{ form.estado ? 'Activa' : 'Inactiva' }}</li>
+                        </ul>
                     </div>
                 </div>
 
-                <!-- Campos según tipo -->
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <div v-if="tipoIsDescuento" class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Descuento (%)</label>
-                        <input v-model.number="form.descuento" type="number" min="0" max="100" step="0.01"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Ej. 20" />
-                    </div>
-                    <div v-if="tipoIsGratis" class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Mínimo de compra</label>
-                        <input v-model.number="form.mincompra" type="number" min="1" step="1"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Ej. 2 (para 3x2)" />
-                    </div>
-                    <div v-if="tipoIsGratis" class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Gratis</label>
-                        <input v-model.number="form.gratis" type="number" min="1" step="1"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Ej. 1 (para 3x2)" />
-                    </div>
-                </div>
-
-                <!-- fechas -->
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <div class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Fecha de inicio</label>
-                        <input v-model="form.inicia" type="date"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
-                    </div>
-                    <div class="space-y-1">
-                        <label class="block text-sm font-medium text-gray-700">Fecha de vencimiento</label>
-                        <input v-model="form.vence" type="date"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
-                    </div>
-                    <div class="space-y-1 text-xs text-gray-500">
-                        <span class="font-medium text-gray-700">Resumen</span>
-                        <p class="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                            {{ form.target === 'producto' ? 'Promoción aplicada a producto.' : 'Promoción aplicada a proveedor.' }}
-                        </p>
-                    </div>
-                </div>
-
-                <div class="flex flex-wrap gap-2">
-                    <button :disabled="saving" @click="submit"
+                <div class="flex flex-wrap gap-2 border-t border-gray-200 pt-4">
+                    <button type="button" :disabled="saving" @click="submit"
                         class="rounded-lg bg-[#E4007C] hover:bg-[#cc006f] text-white px-4 py-2 text-sm disabled:opacity-60">
                         {{ form.id ? 'Actualizar promoción' : 'Crear promoción' }}
                     </button>
-                    <button :disabled="!form.id || saving" @click="removePromo"
+                    <button type="button" :disabled="!form.id || saving" @click="removePromo"
                         class="rounded-lg bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 text-sm disabled:opacity-60">
                         Eliminar
                     </button>
@@ -379,7 +421,7 @@ onMounted(async () => {
                     <div class="space-y-1">
                         <label class="block text-sm font-medium text-gray-700">Buscar</label>
                         <input v-model="search" type="text" placeholder="Producto/proveedor…"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                            class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
                     </div>
                     <div class="hidden sm:flex items-end text-xs text-gray-500">
                         {{ promos.length }} resultados

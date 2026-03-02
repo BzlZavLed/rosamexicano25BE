@@ -124,7 +124,7 @@ function onFocus() {
     <div class="relative">
         <div class="flex gap-2">
             <input :placeholder="placeholder || 'Buscar…'" v-model="q" @keydown="onKey" @focus="onFocus"
-                class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
             <div class="shrink-0 flex items-center px-2 text-sm text-gray-500">
                 <span v-if="loading">Buscando…</span>
                 <span v-else-if="q.length < minChars">Min. {{ minChars }} letras</span>

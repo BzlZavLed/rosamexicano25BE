@@ -708,7 +708,7 @@ onMounted(() => { runSearch(); });
                             v-model="search"
                             type="text"
                             placeholder="Nombre, proveedor o ident…"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 pr-9"
+                            class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 pr-9"
                             aria-label="Buscar producto"
                         />
                         <button
@@ -862,13 +862,13 @@ onMounted(() => { runSearch(); });
                             <div class="space-y-1">
                                 <label class="block text-sm font-medium text-gray-700">Cantidad a ingresar</label>
                                 <input v-model.number="cantidad" type="number" min="0" step="1"
-                                    class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
                                     placeholder="0" />
                             </div>
                             <div class="space-y-1">
                                 <label class="block text-sm font-medium text-gray-700">Fecha de entrada</label>
                                 <input v-model="entradaFecha" type="date"
-                                    class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
                             </div>
                             <div class="space-y-1">
                                 <label class="block text-sm font-medium text-gray-700">Importe total</label>
@@ -911,7 +911,7 @@ onMounted(() => { runSearch(); });
                             <div class="space-y-1">
                                 <label class="block text-sm font-medium text-gray-700">Existencia nueva</label>
                                 <input v-model.number="newStock" type="number" min="0" step="1"
-                                    class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
                                     placeholder="0" />
                             </div>
                             <div class="space-y-1">
@@ -991,7 +991,7 @@ onMounted(() => { runSearch(); });
                         <div class="flex flex-col sm:flex-row sm:items-center gap-2">
                             <input type="file" accept=".csv" @change="handleBatchCsvChange"
                                 :disabled="batchCsvLoading"
-                                class="w-full rounded border border-gray-300 px-3 py-2 text-sm file:mr-3 file:rounded file:border file:border-gray-300 file:bg-white file:px-3 file:py-1.5 file:text-sm hover:file:bg-gray-50 disabled:opacity-60 sm:w-auto" />
+                                class="w-full rounded border border-gray-400 px-3 py-2 text-sm file:mr-3 file:rounded file:border file:border-gray-400 file:bg-white file:px-3 file:py-1.5 file:text-sm hover:file:bg-gray-50 disabled:opacity-60 sm:w-auto" />
                             <span v-if="batchCsvLoading" class="text-xs text-gray-500">Cargando CSV…</span>
                         </div>
                     </div>
@@ -1032,13 +1032,13 @@ onMounted(() => { runSearch(); });
                                 <td class="px-3 py-2">
                                     <div v-if="item.mode === 'add'" class="flex items-center gap-2">
                                         <input v-model.number="item.cantidad" type="number" min="0" step="1"
-                                            class="w-24 rounded border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                            class="w-24 rounded border border-gray-400 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900"
                                             @input="item.status = 'pending'; item.error = ''" />
                                         <span class="text-xs text-gray-500">uds</span>
                                     </div>
                                     <div v-else class="flex items-center gap-2">
                                         <input v-model.number="item.newStock" type="number" min="0" step="1"
-                                            class="w-24 rounded border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                            class="w-24 rounded border border-gray-400 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900"
                                             @input="item.status = 'pending'; item.error = ''" />
                                         <span class="text-xs text-gray-500">uds</span>
                                     </div>
@@ -1046,7 +1046,7 @@ onMounted(() => { runSearch(); });
                                 <td class="px-3 py-2">
                                     <template v-if="item.mode === 'add'">
                                         <input v-model="item.fecha" type="date"
-                                            class="rounded border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                            class="rounded border border-gray-400 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900"
                                             @input="item.status = 'pending'; item.error = ''" />
                                     </template>
                                     <span v-else class="text-xs text-gray-500">—</span>

@@ -700,168 +700,166 @@ onMounted(async () => {
             </div>
 
             <!-- ===== FORM (full width) ===== -->
-            <div class="space-y-5">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <!-- Identificador + barcode -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Identificador interno</label>
-                        <div class="flex gap-2">
-                            <input v-model.number="form.ident" type="number" inputmode="numeric"
-                                class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                                placeholder="6 dígitos" />
-                            <button type="button" @click="form.ident = randIdent()"
-                                class="shrink-0 rounded-lg border px-3 py-2 text-sm hover:bg-gray-50">
-                                Generar
-                            </button>
-                        </div>
-                        <div class="mt-3 border rounded-lg p-3 bg-white flex items-center justify-center">
-                            <svg ref="barcodeRef"></svg>
-                        </div>
-                    </div>
-
-                    <!-- Proveedor -->
-                    <div class="relative">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
-                        <input type="text" :value="providerSearch" @input="onProviderInput(($event.target as HTMLInputElement).value)"
-                            @focus="providerDropdownOpen = true" @blur="closeProviderDropdown"
-                            @keydown.enter.prevent="filteredProveedores[0] ? selectProviderOption(filteredProveedores[0]) : null"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Busca por nombre o identificador" autocomplete="off" />
-                        <input type="hidden" :value="form.proveedorid ?? ''">
-                        <div v-if="providerDropdownOpen"
-                            class="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-auto">
-                            <template v-if="filteredProveedores.length">
-                                <button v-for="p in filteredProveedores" :key="p.ident" type="button"
-                                    class="w-full text-left px-3 py-2 hover:bg-gray-100 flex flex-col"
-                                    @mousedown.prevent="selectProviderOption(p)">
-                                    <span class="font-medium text-gray-800">{{ p.nombre }}</span>
-                                    <span class="text-xs text-gray-500">#{{ p.ident }} · {{ p.tipo }}</span>
+            <div class="space-y-4">
+                <div class="grid grid-cols-1 gap-4 lg:grid-cols-12">
+                    <div class="space-y-4 lg:col-span-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Identificador interno</label>
+                            <div class="flex gap-2">
+                                <input v-model.number="form.ident" type="number" inputmode="numeric"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="6 dígitos" />
+                                <button type="button" @click="form.ident = randIdent()"
+                                    class="shrink-0 rounded-lg border px-3 py-2 text-sm hover:bg-gray-50">
+                                    Generar
                                 </button>
-                            </template>
-                            <p v-else class="px-3 py-2 text-sm text-gray-500">Sin resultados</p>
+                            </div>
                         </div>
-                        <p class="text-xs text-gray-500 mt-1" v-if="currentProveedor">
-                            Tipo: <b class="capitalize">{{ currentProveedor?.tipo || 'normal' }}</b>
-                            <span v-if="currentProveedor?.tipo === 'porcentaje' && currentProveedor?.porcentaje_comision">
-                                — {{ currentProveedor?.porcentaje_comision }}% de comisión
-                            </span>
-                        </p>
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Código de barras</p>
+                            <div class="mt-2 flex min-h-[106px] items-center justify-center rounded-md border bg-white p-2">
+                                <svg ref="barcodeRef"></svg>
+                            </div>
+                        </div>
                     </div>
 
-                    <!-- Nombre -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Nombre de producto</label>
-                        <input v-model="form.nombre" type="text"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Nombre del producto" />
-                    </div>
+                    <div class="space-y-4 lg:col-span-8">
+                        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <div class="relative">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
+                                <input type="text" :value="providerSearch" @input="onProviderInput(($event.target as HTMLInputElement).value)"
+                                    @focus="providerDropdownOpen = true" @blur="closeProviderDropdown"
+                                    @keydown.enter.prevent="filteredProveedores[0] ? selectProviderOption(filteredProveedores[0]) : null"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Busca por nombre o identificador" autocomplete="off" />
+                                <input type="hidden" :value="form.proveedorid ?? ''">
+                                <div v-if="providerDropdownOpen"
+                                    class="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-auto">
+                                    <template v-if="filteredProveedores.length">
+                                        <button v-for="p in filteredProveedores" :key="p.ident" type="button"
+                                            class="w-full text-left px-3 py-2 hover:bg-gray-100 flex flex-col"
+                                            @mousedown.prevent="selectProviderOption(p)">
+                                            <span class="font-medium text-gray-800">{{ p.nombre }}</span>
+                                            <span class="text-xs text-gray-500">#{{ p.ident }} · {{ p.tipo }}</span>
+                                        </button>
+                                    </template>
+                                    <p v-else class="px-3 py-2 text-sm text-gray-500">Sin resultados</p>
+                                </div>
+                                <p class="mt-1 min-h-[20px] text-xs text-gray-500" v-if="currentProveedor">
+                                    Tipo: <b class="capitalize">{{ currentProveedor?.tipo || 'normal' }}</b>
+                                    <span v-if="currentProveedor?.tipo === 'porcentaje' && currentProveedor?.porcentaje_comision">
+                                        — {{ currentProveedor?.porcentaje_comision }}% de comisión
+                                    </span>
+                                </p>
+                            </div>
 
-                    <!-- Fecha -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de creación</label>
-                        <input v-model="form.fecha" type="date"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
-                    </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Nombre de producto</label>
+                                <input v-model="form.nombre" type="text"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Nombre del producto" />
+                            </div>
 
-                    <!-- Precio -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Precio de venta</label>
-                        <input v-model.number="form.precio" type="number" step="0.01" min="0"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Precio unitario" />
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Costo proveedor</label>
-                        <input v-model.number="form.precio_proveedor" type="number" step="0.01" min="0"
-                            :disabled="esPorcentajeProveedor || !currentProveedor"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-500"
-                            placeholder="Costo base para este proveedor" />
-                        <p class="text-xs text-gray-500 mt-1" v-if="!currentProveedor">
-                            Selecciona un proveedor para definir cómo se calcula este costo.
-                        </p>
-                        <p class="text-xs text-gray-500 mt-1" v-else-if="requiereCostoProveedor">
-                            Para proveedores en consigna capturamos el costo base que se pagará al proveedor.
-                        </p>
-                        <p class="text-xs text-gray-500 mt-1" v-else-if="esPorcentajeProveedor && proveedorPorcentaje">
-                            Se calcula automáticamente aplicando {{ proveedorPorcentaje }}% al precio público.
-                        </p>
-                        <p class="text-xs text-gray-500 mt-1" v-else>
-                            Para proveedores normales igualamos el costo al precio de venta.
-                        </p>
-                    </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Fecha de creación</label>
+                                <input v-model="form.fecha" type="date"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                            </div>
 
-                    <!-- Cantidad inicial -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad inicial</label>
-                        <input v-model.number="form.cantidadInicial" type="number" step="1" min="0"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Cantidad inicial" />
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Precio de venta</label>
+                                <input v-model.number="form.precio" type="number" step="0.01" min="0"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Precio unitario" />
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Costo proveedor</label>
+                                <input v-model.number="form.precio_proveedor" type="number" step="0.01" min="0"
+                                    :disabled="esPorcentajeProveedor || !currentProveedor"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2 disabled:bg-gray-100 disabled:text-gray-500"
+                                    placeholder="Costo base para este proveedor" />
+                                <div class="mt-1 min-h-[36px] text-xs text-gray-500">
+                                    <p v-if="!currentProveedor">
+                                        Selecciona un proveedor para definir cómo se calcula este costo.
+                                    </p>
+                                    <p v-else-if="requiereCostoProveedor">
+                                        Para proveedores en consigna capturamos el costo base que se pagará al proveedor.
+                                    </p>
+                                    <p v-else-if="esPorcentajeProveedor && proveedorPorcentaje">
+                                        Se calcula automáticamente aplicando {{ proveedorPorcentaje }}% al precio público.
+                                    </p>
+                                    <p v-else>
+                                        Para proveedores normales igualamos el costo al precio de venta.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Cantidad inicial</label>
+                                <input v-model.number="form.cantidadInicial" type="number" step="1" min="0"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Cantidad inicial" />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                            <input v-model="form.descripcion" type="text"
+                                class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                placeholder="Descripción del producto" />
+                        </div>
                     </div>
                 </div>
 
-                <!-- Descripción -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
-                    <input v-model="form.descripcion" type="text"
-                        class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                        placeholder="Descripción del producto" />
-                </div>
+                <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                        <div class="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Distribución por hoja</label>
+                                <select v-model="gridPreset"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                                    <option value="5x5">5 × 5 (25 etiquetas/hoja)</option>
+                                    <option value="6x6">6 × 6 (36 etiquetas/hoja)</option>
+                                    <option value="7x7">7 × 7 (49 etiquetas/hoja)</option>
+                                </select>
+                            </div>
 
-                <!-- Opciones etiqueta (mock for now) -->
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <!-- Grid preset -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Distribución por hoja</label>
-                        <select v-model="gridPreset"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
-                            <option value="5x5">5 × 5 (25 etiquetas/hoja)</option>
-                            <option value="6x6">6 × 6 (36 etiquetas/hoja)</option>
-                            <option value="7x7">7 × 7 (49 etiquetas/hoja)</option>
-                        </select>
-                        <p class="text-xs text-gray-500 mt-1">
-                            Hoja Carta. Calculamos el tamaño de la etiqueta según filas/columnas.
-                        </p>
-                    </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Copias</label>
+                                <input v-model.number="copies" type="number" min="1"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Cantidad de páginas" />
+                            </div>
 
-                    <!-- Incluir precio -->
-                    <div class="flex items-center">
-                        <label class="inline-flex items-center gap-2 text-sm text-gray-700">
-                            <input v-model="includePrice" type="checkbox"
-                                class="rounded border-gray-300 text-gray-900 focus:ring-gray-900">
-                            Incluir precio
-                        </label>
-                    </div>
+                            <div class="flex h-full items-center pt-6">
+                                <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                    <input v-model="includePrice" type="checkbox"
+                                        class="rounded border-gray-300 text-gray-900 focus:ring-gray-900">
+                                    Incluir precio en etiqueta
+                                </label>
+                            </div>
+                        </div>
 
-                    <!-- Copias -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Copias</label>
-                        <input v-model.number="copies" type="number" min="1"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
-                            placeholder="Cantidad de etiquetas" />
-                        <p class="text-xs text-gray-500 mt-1">
-                            Número de <b>páginas</b> a imprimir. Cada página imprime {{ gridPreset.split('x')[0] }}×{{
-                                gridPreset.split('x')[1] }}
-                            etiquetas ({{ Number(gridPreset.split('x')[0]) * Number(gridPreset.split('x')[1]) }} por
-                            página).
-                        </p>
+                        <button type="button" @click="printLabels"
+                            class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800">
+                            Imprimir etiquetas (PDF)
+                        </button>
                     </div>
-                </div>
-                <!-- Botón imprimir -->
-                <div class="mt-3">
-                    <button type="button" @click="printLabels"
-                        class="rounded-lg bg-gray-100 px-4 py-2 text-sm hover:bg-gray-50">
-                        Imprimir etiquetas (PDF)
-                    </button>
+                    <p class="mt-2 text-xs text-gray-500">
+                        Hoja Carta. Cada página imprime {{ gridPreset.split('x')[0] }}×{{ gridPreset.split('x')[1] }}
+                        etiquetas ({{ Number(gridPreset.split('x')[0]) * Number(gridPreset.split('x')[1]) }} por página).
+                    </p>
                 </div>
             </div>
 
             <!-- ===== ACTIONS ===== -->
-            <div class="mt-6 flex flex-wrap gap-2">
-                <button :disabled="saving" @click="submitCreateOrUpdate"
+            <div class="mt-6 border-t border-gray-200 pt-4 flex flex-wrap gap-2">
+                <button type="button" :disabled="saving" @click="submitCreateOrUpdate"
                     class="rounded-lg bg-[#E4007C] hover:bg-[#cc006f] text-white px-4 py-2 text-sm disabled:opacity-60">
                     {{ form.id ? 'Actualizar producto' : 'Crear producto' }}
                 </button>
-                <button :disabled="!form.id || saving" @click="remove"
+                <button type="button" :disabled="!form.id || saving" @click="remove"
                     class="rounded-lg bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 text-sm disabled:opacity-60">
                     Eliminar producto
                 </button>
@@ -886,12 +884,12 @@ onMounted(async () => {
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Buscar / Consultar</label>
                         <input v-model="q" type="text" placeholder="Nombre, descripción, código…"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
+                            class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2" />
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
                         <select v-model="tableProviderFilter"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                            class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
                             <option value="">Todos los proveedores</option>
                             <option v-for="prov in proveedores" :key="prov.ident" :value="String(prov.ident)">
                                 {{ prov.nombre }} (#{{ prov.ident }})
@@ -901,7 +899,7 @@ onMounted(async () => {
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Ordenar por</label>
                         <select v-model="sortField"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                            class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
                             <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">
                                 {{ opt.label }}
                             </option>
@@ -910,7 +908,7 @@ onMounted(async () => {
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
                         <select v-model="sortDirection"
-                            class="w-full rounded-lg border-gray-300 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
+                            class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
                             <option v-for="opt in directionOptions" :key="opt.value" :value="opt.value">
                                 {{ opt.label }}
                             </option>
