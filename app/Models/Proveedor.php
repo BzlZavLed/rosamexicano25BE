@@ -45,9 +45,27 @@ class Proveedor extends Authenticatable implements WebAuthnAuthenticatable
 
     protected $hidden = ['passhash'];
 
+    /**
+     * Prefer ident as canonical route key while keeping backward compatibility
+     * with legacy links that still send the internal numeric id.
+     */
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $query = static::query();
+
+        if ($field !== null) {
+            return $query->where($field, $value)->firstOrFail();
+        }
+
+        return $query
+            ->where('ident', $value)
+            ->orWhere('id', $value)
+            ->firstOrFail();
+    }
+
     public function productos()
     {
-        return $this->hasMany(Producto::class, 'proveedorid', 'id');
+        return $this->hasMany(Producto::class, 'proveedorid', 'ident');
     }
 
     public function recommendedImporte()

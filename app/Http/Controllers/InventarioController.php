@@ -45,7 +45,7 @@ class InventarioController extends Controller
      */
     public function byProveedor(Proveedor $proveedor, Request $request)
     {
-        $request->merge(['proveedor_id' => $proveedor->id]);
+        $request->merge(['proveedor_id' => $proveedor->ident]);
         return $this->index($request);
     }
 
@@ -69,7 +69,7 @@ class InventarioController extends Controller
                 proveedores.nombre as proveedor_nombre
             ")
             ->join('producto', 'producto.ident', '=', 'inventario.ident')
-            ->join('proveedores', 'proveedores.id', '=', 'producto.proveedorid');
+            ->join('proveedores', 'proveedores.ident', '=', 'producto.proveedorid');
 
         if ($prov = $request->get('proveedor_id')) {
             $query->where('producto.proveedorid', (int) $prov);
@@ -229,7 +229,7 @@ class InventarioController extends Controller
                     proveedores.nombre as proveedor_nombre
                 ")
                 ->join('producto', 'producto.ident', '=', 'inventario.ident')
-                ->join('proveedores', 'proveedores.id', '=', 'producto.proveedorid')
+                ->join('proveedores', 'proveedores.ident', '=', 'producto.proveedorid')
                 ->where('inventario.id', $inv->id)
                 ->first();
 

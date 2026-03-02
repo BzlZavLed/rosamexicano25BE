@@ -14,7 +14,7 @@ class Inventario extends Model
         'ident',        // producto.ident (barcode)
         'existencia',   // integer (current stock)
         'importe',      // numeric(11,2) = existencia * producto.precio
-        'provee',       // proveedores.id
+        'provee',       // proveedores.ident
         'precio_individual' // numeric(11,2) = last individual price set
     ];
 
@@ -34,6 +34,6 @@ class Inventario extends Model
     public function proveedor()
     {
         // through producto (or directly if you keep proveedorid in inventario)
-        return $this->producto()->belongsTo(Proveedor::class, 'proveedorid', 'id');
+        return $this->producto()->belongsTo(Proveedor::class, 'proveedorid', 'ident');
     }
 }

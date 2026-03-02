@@ -10,7 +10,7 @@ class Producto extends Model
     protected $primaryKey = 'id';
     public $timestamps = false;
 
-    // 'ident' is your barcode/sku; 'proveedorid' ties to proveedores.id
+    // 'ident' is your barcode/sku; 'proveedorid' ties to proveedores.ident
     protected $fillable = [
         'ident',
         'nombre',
