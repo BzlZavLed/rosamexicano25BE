@@ -632,11 +632,11 @@ onMounted(async () => {
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                    <button :disabled="saving" @click="submitCreateOrUpdate"
+                    <button type="button" :disabled="saving" @click="submitCreateOrUpdate"
                         class="rounded-lg bg-[#E4007C] hover:bg-[#cc006f] text-white px-4 py-2 text-sm disabled:opacity-60">
                         {{ form.id ? 'Actualizar proveedor' : 'Crear proveedor' }}
                     </button>
-                    <button :disabled="!form.id || saving" @click="removeProveedor"
+                    <button type="button" :disabled="!form.id || saving" @click="removeProveedor"
                         class="rounded-lg bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 text-sm disabled:opacity-60">
                         Eliminar proveedor
                     </button>

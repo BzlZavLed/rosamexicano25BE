@@ -54,9 +54,9 @@ class ProveedoresController extends Controller
     }
 
     // GET /api/proveedores/{proveedor}
-    public function show(Proveedor $proveedore) // route model binding (singular key is 'proveedore' by default)
+    public function show(Proveedor $proveedor)
     {
-        return new ProveedorResource($proveedore->load('recommendedImporte'));
+        return new ProveedorResource($proveedor->load('recommendedImporte'));
     }
 
     // PUT/PATCH /api/proveedores/{proveedor}
@@ -92,9 +92,9 @@ class ProveedoresController extends Controller
     }
 
     // DELETE /api/proveedores/{proveedor}
-    public function destroy(Proveedor $proveedore)
+    public function destroy(Proveedor $proveedor)
     {
-        $proveedore->delete();
+        $proveedor->delete();
         return response()->noContent();
     }
 
