@@ -205,7 +205,6 @@ async function removePromo() {
 }
 
 const tipoIsDescuento = computed(() => form.tipo === 'descuento');
-const tipoIsGratis = computed(() => form.tipo === 'bundle');
 
 const tipoLabel = (tipo: PromoTipo) =>
     tipo === 'bundle' ? 'Producto gratis' : 'Descuento (%)';
