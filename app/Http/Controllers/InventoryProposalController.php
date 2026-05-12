@@ -24,6 +24,8 @@ class InventoryProposalController extends Controller
 
     public function index()
     {
+        $horizonOrder = array_flip(array_keys(self::HORIZONS));
+
         $proposals = InventoryProposal::query()
             ->select([
                 'horizon',
@@ -32,9 +34,9 @@ class InventoryProposalController extends Controller
                 'lead_time_days',
                 'minimum_inventory_days',
             ])
-            ->selectRaw($this->itemsCountExpression() . ' as total_items')
-            ->orderBy('horizon')
             ->get()
+            ->sortBy(fn (InventoryProposal $proposal) => $horizonOrder[$proposal->horizon] ?? 99)
+            ->values()
             ->map(function (InventoryProposal $proposal) {
                 return [
                     'horizon' => $proposal->horizon,
@@ -42,7 +44,7 @@ class InventoryProposalController extends Controller
                     'lookback_days' => (int) $proposal->lookback_days,
                     'lead_time_days' => (int) $proposal->lead_time_days,
                     'minimum_inventory_days' => (int) $proposal->minimum_inventory_days,
-                    'total_items' => (int) ($proposal->total_items ?? 0),
+                    'total_items' => 0,
                 ];
             });
 
@@ -332,15 +334,5 @@ class InventoryProposalController extends Controller
         }
 
         return trim($body);
-    }
-
-    private function itemsCountExpression(): string
-    {
-        return match (DB::connection()->getDriverName()) {
-            'mysql', 'mariadb' => 'COALESCE(JSON_LENGTH(items), 0)',
-            'pgsql' => 'COALESCE(jsonb_array_length(items::jsonb), 0)',
-            'sqlite' => 'COALESCE(json_array_length(items), 0)',
-            default => '0',
-        };
     }
 }
