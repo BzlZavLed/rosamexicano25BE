@@ -40,6 +40,7 @@ export type CheckoutLinePayload = {
     product_desc?: number;
     totdesc?: number;
     manual_discount?: number;
+    promotion_type?: 'descuento' | 'bundle' | 'precio_fijo';
 };
 
 export type CheckoutPayload = {

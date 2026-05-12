@@ -15,8 +15,9 @@ class UpdatePromocionRequest extends FormRequest
         return [
             'producto'  => ['nullable','integer','exists:producto,ident'],
             'proveedor' => ['nullable','integer','exists:proveedores,ident'],
-            'tipo'      => ['nullable', Rule::in(['descuento','bundle'])],
+            'tipo'      => ['nullable', Rule::in(['descuento','bundle','precio_fijo'])],
             'descuento' => ['nullable','numeric','min:0','max:100'],
+            'monto'     => ['nullable','numeric','min:0.01'],
             'mincompra' => ['nullable','integer','min:1'],
             'gratis'    => ['nullable','integer','min:1'],
             'inicia'    => ['nullable','date'],
@@ -49,6 +50,12 @@ class UpdatePromocionRequest extends FormRequest
                 if ($this->has('tipo') || $this->has('mincompra') || $this->has('gratis')) {
                     if ($this->input('mincompra') === null || $this->input('gratis') === null) {
                         $v->errors()->add('mincompra', 'mincompra y gratis son obligatorios para tipo=bundle.');
+                    }
+                }
+            } elseif ($tipo === 'precio_fijo') {
+                if ($this->has('tipo') || $this->has('mincompra') || $this->has('monto')) {
+                    if ($this->input('mincompra') === null || $this->input('monto') === null) {
+                        $v->errors()->add('monto', 'mincompra y monto son obligatorios para tipo=precio_fijo.');
                     }
                 }
             }

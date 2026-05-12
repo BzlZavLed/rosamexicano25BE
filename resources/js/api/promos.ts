@@ -1,7 +1,7 @@
 // src/api/promos.ts
 import http from './http'; // your axios instance
 
-export type PromoTipo = 'descuento' | 'bundle';
+export type PromoTipo = 'descuento' | 'bundle' | 'precio_fijo';
 
 export type Promocion = {
     id: number;
@@ -9,6 +9,7 @@ export type Promocion = {
     proveedor: number | null;     // proveedores.ident
     tipo: PromoTipo;
     descuento: number | null;     // %
+    monto: number | null;         // fixed total price for N products
     mincompra: number | null;     // for 'gratis'
     gratis: number | null;        // for 'gratis'
     inicia: string | null;        // YYYY-MM-DD

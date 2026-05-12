@@ -57,6 +57,10 @@ type CartRow = {
     precioProveedor?: number;
     promoDiscountPct?: number;
     promoFreeQty?: number;
+    promoFixedDiscount?: number;
+    promoFixedQty?: number;
+    promoFixedPrice?: number;
+    promoType?: 'descuento' | 'bundle' | 'precio_fijo';
     promoNote?: string;
     manualDiscount?: number;
     manualDiscountPercent?: number;
@@ -198,7 +202,8 @@ const linePromoDiscount = (row: CartRow) => {
     const percent = (row.promoDiscountPct ?? 0) / 100;
     const percentDiscount = row.precio * row.qty * percent;
     const bundleDiscount = row.precio * (row.promoFreeQty ?? 0);
-    const rawDiscount = Math.round((percentDiscount + bundleDiscount) * 100) / 100;
+    const fixedDiscount = Number(row.promoFixedDiscount ?? 0) || 0;
+    const rawDiscount = Math.round((percentDiscount + bundleDiscount + fixedDiscount) * 100) / 100;
     return Math.min(Math.max(0, rawDiscount), Math.max(0, row.precio * row.qty));
 };
 
@@ -279,6 +284,13 @@ function discountModeLabel(mode: DiscountMode) {
 
 const lineNet = (row: CartRow) =>
     Math.max(0, lineGross(row) - linePromoDiscount(row) - lineManualDiscount(row));
+
+function linePromotionType(row: CartRow): CheckoutLinePayload['promotion_type'] | undefined {
+    if ((row.promoFixedDiscount ?? 0) > 0) return 'precio_fijo';
+    if ((row.promoFreeQty ?? 0) > 0) return 'bundle';
+    if ((row.promoDiscountPct ?? 0) > 0) return 'descuento';
+    return row.promoType;
+}
 
 function discountSummaryFor(row: CartRow, mode: DiscountMode, amount: number) {
     if (mode === 'none' || amount <= 0) return '';
@@ -1022,6 +1034,10 @@ function isBundlePromo(promo: Promo) {
     return promo.tipo === 'bundle' && (promo.mincompra ?? 0) > 0 && (promo.gratis ?? 0) > 0;
 }
 
+function isFixedPricePromo(promo: Promo) {
+    return promo.tipo === 'precio_fijo' && (promo.mincompra ?? 0) > 0 && (promo.monto ?? 0) > 0;
+}
+
 function isProductPromo(promo: Promo) {
     return promo.producto != null;
 }
@@ -1040,6 +1056,10 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
     row.qty = paidQty;
     row.promoDiscountPct = 0;
     row.promoFreeQty = 0;
+    row.promoFixedDiscount = 0;
+    row.promoFixedQty = undefined;
+    row.promoFixedPrice = undefined;
+    row.promoType = undefined;
     row.promoNote = undefined;
 
     const promos = await getPromosForRow(row, proveedorIdent);
@@ -1054,10 +1074,12 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
 
     const pctPromo = candidates.find(p => p.tipo === 'descuento' && (p.descuento ?? 0) > 0);
     const bundle = productPromos.find(isBundlePromo);
+    const fixedPrice = productPromos.find(isFixedPricePromo);
     const noteParts: string[] = [];
 
     if (pctPromo?.descuento) {
         row.promoDiscountPct = Number(pctPromo.descuento) || 0;
+        row.promoType = 'descuento';
         noteParts.push(`Descuento ${row.promoDiscountPct}%`);
     }
 
@@ -1072,10 +1094,24 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
             row.promoFreeQty = freebies;
             if (freebies > 0) {
                 row.qty = paidQty + freebies;
+                row.promoType = 'bundle';
                 noteParts.push(`${min + freeEach}x${min} aplicado (+${row.promoFreeQty} gratis)`);
             }
         } else {
             row.promoFreeQty = 0;
+        }
+    }
+
+    if (fixedPrice?.mincompra && fixedPrice?.monto && paidQty === Number(fixedPrice.mincompra)) {
+        const fixedAmount = Number(fixedPrice.monto);
+        const base = round2(Math.max(0, lineGross(row) - linePromoDiscount(row)));
+        const discount = round2(Math.max(0, base - fixedAmount));
+        if (discount > 0) {
+            row.promoFixedDiscount = discount;
+            row.promoFixedQty = paidQty;
+            row.promoFixedPrice = fixedAmount;
+            row.promoType = 'precio_fijo';
+            noteParts.push(`${paidQty} por ${currency(fixedAmount)}`);
         }
     }
 
@@ -1112,7 +1148,33 @@ function allocateProviderFreebies(rows: CartRow[], freeQty: number, mode: 'selec
     }
 }
 
-async function applyProviderBundlePromotions() {
+function allocateProviderFixedDiscount(rows: CartRow[], fixedAmount: number, min: number) {
+    const base = round2(rows.reduce((sum, row) => {
+        return sum + Math.max(0, lineGross(row) - linePromoDiscount(row));
+    }, 0));
+    let remaining = round2(Math.max(0, base - fixedAmount));
+    if (remaining <= 0) return false;
+
+    for (const row of preferredProviderRows(rows)) {
+        if (remaining <= 0) break;
+
+        const available = round2(Math.max(0, lineGross(row) - linePromoDiscount(row)));
+        const discount = round2(Math.min(available, remaining));
+        if (discount <= 0) continue;
+
+        row.promoFixedDiscount = round2((row.promoFixedDiscount ?? 0) + discount);
+        row.promoFixedQty = min;
+        row.promoFixedPrice = fixedAmount;
+        row.promoType = 'precio_fijo';
+        appendPromoNote(row, `Proveedor ${min} por ${currency(fixedAmount)}`);
+        refreshManualDiscountForRow(row);
+        remaining = round2(remaining - discount);
+    }
+
+    return remaining <= 0;
+}
+
+async function applyProviderCartPromotions() {
     const groups = new Map<number, CartRow[]>();
     for (const row of cart.value) {
         const providerIdent = Number(row.proveedorid ?? 0);
@@ -1125,25 +1187,35 @@ async function applyProviderBundlePromotions() {
     for (const [providerIdent, rows] of groups) {
         const eligibleRows: CartRow[] = [];
         let bundle: Promo | undefined;
+        let fixedPrice: Promo | undefined;
 
         for (const row of rows) {
             const promos = await getPromosForRow(row, providerIdent);
             if (promos.some(isProductPromo)) continue;
 
             const providerBundle = promos.find(p => isProviderPromo(p) && isBundlePromo(p));
-            if (!providerBundle) continue;
+            const providerFixed = promos.find(p => isProviderPromo(p) && isFixedPricePromo(p));
+            if (!providerBundle && !providerFixed) continue;
 
             bundle ??= providerBundle;
+            fixedPrice ??= providerFixed;
             eligibleRows.push(row);
         }
 
-        if (!bundle || !eligibleRows.length) continue;
+        if ((!bundle && !fixedPrice) || !eligibleRows.length) continue;
 
-        const min = Number(bundle.mincompra ?? 0);
-        const freeEach = Number(bundle.gratis ?? 0);
+        const fixedMin = Number(fixedPrice?.mincompra ?? 0);
+        const fixedAmount = Number(fixedPrice?.monto ?? 0);
+        const selectedQty = eligibleRows.reduce((sum, row) => sum + rowPaidQty(row), 0);
+        if (fixedPrice && fixedMin > 0 && fixedAmount > 0 && selectedQty === fixedMin) {
+            allocateProviderFixedDiscount(eligibleRows, fixedAmount, fixedMin);
+            continue;
+        }
+
+        const min = Number(bundle?.mincompra ?? 0);
+        const freeEach = Number(bundle?.gratis ?? 0);
         if (min <= 0 || freeEach <= 0) continue;
 
-        const selectedQty = eligibleRows.reduce((sum, row) => sum + rowPaidQty(row), 0);
         if (selectedQty === min + freeEach) {
             allocateProviderFreebies(eligibleRows, freeEach, 'selected', min);
         } else if (selectedQty === min) {
@@ -1156,7 +1228,7 @@ async function refreshCartPromotions() {
     for (const row of cart.value) {
         await applyPromotionsToRow(row, row.proveedorid);
     }
-    await applyProviderBundlePromotions();
+    await applyProviderCartPromotions();
 }
 
 /** Runs the remote search and handles loading/errors for the quick lookup list. */
@@ -1452,6 +1524,10 @@ async function onCheckout() {
             }
             if (manual > 0) {
                 line.manual_discount = manual;
+            }
+            const promotionType = linePromotionType(row);
+            if (promotionType && promo > 0) {
+                line.promotion_type = promotionType;
             }
             return line;
         });
@@ -1896,6 +1972,7 @@ onUnmounted(() => {
                                     <li><strong>Cantidad y existencia</strong>: edita la cantidad; el sistema la limita al inventario disponible.</li>
                                     <li><strong>Promos automáticas</strong>: las promociones creadas siguen funcionando igual; se aplican al agregar o cambiar cantidad y muestran una nota en la fila.</li>
                                     <li><strong>Promos por proveedor</strong>: las promociones de piezas gratis se calculan sobre todos los productos del proveedor en el carrito; la pieza gratis se marca en el último producto agregado o editado.</li>
+                                    <li><strong>N por monto fijo</strong>: aplica cuando la fila o el grupo del proveedor llega exactamente a la cantidad configurada; el total de esas piezas queda en el monto definido.</li>
                                     <li><strong>Promos y descuentos manuales</strong>: si una promoción automática aplica a esa línea, el botón “Descuento” queda bloqueado porque no se combinan en la misma venta.</li>
                                     <li><strong>Descuento manual</strong>: usa el botón “Descuento” de la fila para abrir el modal y elegir sin descuento, porcentaje a toda la línea, monto fijo o piezas seleccionadas.</li>
                                     <li><strong>Porcentaje a toda la línea</strong>: aplica el porcentaje sobre todas las piezas vendidas en esa fila.</li>

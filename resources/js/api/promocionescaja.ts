@@ -6,8 +6,9 @@ export type Promo = {
     target: 'producto' | 'proveedor';
     producto?: number | null;   // ident (barcode) when target=producto
     proveedor?: number | null;  // ident when target=proveedor
-    tipo: 'descuento' | 'bundle';
+    tipo: 'descuento' | 'bundle' | 'precio_fijo';
     descuento?: number | null;  // %
+    monto?: number | null;      // fixed total price for mincompra products
     mincompra?: number | null;  // bundle threshold
     gratis?: number | null;     // bundle bonus
     inicia: string;             // 'YYYY-MM-DD' (your BE may return this)

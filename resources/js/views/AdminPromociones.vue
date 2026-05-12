@@ -64,6 +64,7 @@ type FormT = {
     proveedor: number | null;     // ident
     tipo: PromoTipo;
     descuento: number | null;
+    monto: number | null;
     mincompra: number | null;
     gratis: number | null;
     inicia: string | null;        // YYYY-MM-DD
@@ -77,6 +78,7 @@ const form = reactive<FormT>({
     proveedor: null,
     tipo: 'descuento',
     descuento: null,
+    monto: null,
     mincompra: null,
     gratis: null,
     inicia: new Date().toISOString().slice(0, 10),
@@ -91,6 +93,7 @@ function resetForm() {
     form.proveedor = null;
     form.tipo = 'descuento';
     form.descuento = null;
+    form.monto = null;
     form.mincompra = null;
     form.gratis = null;
     form.inicia = new Date().toISOString().slice(0, 10);
@@ -116,6 +119,7 @@ function selectRow(p: Promocion) {
     form.proveedor = !isProduct ? Number(p.proveedor) : null;
     form.tipo = p.tipo as PromoTipo;
     form.descuento = p.descuento ?? null;
+    form.monto = p.monto ?? null;
     form.mincompra = p.mincompra ?? null;
     form.gratis = p.gratis ?? null;
     form.inicia = p.inicia ?? null;
@@ -137,10 +141,14 @@ function validate(): string | null {
     if (form.tipo === 'descuento') {
         const d = Number(form.descuento);
         if (!Number.isFinite(d) || d < 0 || d > 100) return 'Descuento inválido (0–100)';
-    } else {
+    } else if (form.tipo === 'bundle') {
         const m = Number(form.mincompra), g = Number(form.gratis);
         if (!Number.isFinite(m) || m < 1) return 'Min. compra inválido (>=1)';
         if (!Number.isFinite(g) || g < 1) return 'Gratis inválido (>=1)';
+    } else if (form.tipo === 'precio_fijo') {
+        const m = Number(form.mincompra), amount = Number(form.monto);
+        if (!Number.isFinite(m) || m < 1) return 'Cantidad inválida (>=1)';
+        if (!Number.isFinite(amount) || amount <= 0) return 'Monto fijo inválido (>0)';
     }
     if (!form.vence) return 'Selecciona fecha de vencimiento';
     return null;
@@ -156,7 +164,8 @@ async function submit() {
         proveedor: form.target === 'proveedor' ? Number(form.proveedor) : null,
         tipo: form.tipo,
         descuento: form.tipo === 'descuento' ? Number(form.descuento) : null,
-        mincompra: form.tipo === 'bundle' ? Number(form.mincompra) : null,
+        monto: form.tipo === 'precio_fijo' ? Number(form.monto) : null,
+        mincompra: form.tipo === 'bundle' || form.tipo === 'precio_fijo' ? Number(form.mincompra) : null,
         gratis: form.tipo === 'bundle' ? Number(form.gratis) : null,
         inicia: form.inicia || null,
         vence: form.vence!,
@@ -205,9 +214,15 @@ async function removePromo() {
 }
 
 const tipoIsDescuento = computed(() => form.tipo === 'descuento');
+const tipoIsBundle = computed(() => form.tipo === 'bundle');
+const tipoIsPrecioFijo = computed(() => form.tipo === 'precio_fijo');
 
 const tipoLabel = (tipo: PromoTipo) =>
-    tipo === 'bundle' ? 'Producto gratis' : 'Descuento (%)';
+    tipo === 'bundle'
+        ? 'Producto gratis'
+        : tipo === 'precio_fijo'
+            ? 'N por monto fijo'
+            : 'Descuento (%)';
 
 const targetLabel = computed(() => form.target === 'producto' ? 'Producto' : 'Proveedor');
 const lookupSelection = computed(() => {
@@ -221,6 +236,13 @@ const lookupSelection = computed(() => {
 const promoValueSummary = computed(() => {
     if (form.tipo === 'descuento') {
         return form.descuento == null ? 'Pendiente' : `${form.descuento}%`;
+    }
+    if (form.tipo === 'precio_fijo') {
+        const min = form.mincompra == null ? '—' : String(form.mincompra);
+        const amount = form.monto == null
+            ? '—'
+            : new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(form.monto));
+        return `${min} por ${amount}`;
     }
     const min = form.mincompra == null ? '—' : String(form.mincompra);
     const free = form.gratis == null ? '—' : String(form.gratis);
@@ -278,6 +300,7 @@ onMounted(async () => {
                                         class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2">
                                         <option value="descuento">Descuento (%)</option>
                                         <option value="bundle">Producto gratis (3x2, 2x1…)</option>
+                                        <option value="precio_fijo">N productos por $X</option>
                                     </select>
                                 </div>
                                 <label class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
@@ -336,7 +359,7 @@ onMounted(async () => {
                                 class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
                                 placeholder="Ej. 20" />
                         </div>
-                        <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div v-else-if="tipoIsBundle" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div class="space-y-1">
                                 <label class="block text-sm font-medium text-gray-700">Mínimo de compra</label>
                                 <input v-model.number="form.mincompra" type="number" min="1" step="1"
@@ -349,6 +372,23 @@ onMounted(async () => {
                                     class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
                                     placeholder="Ej. 1 (para 3x2)" />
                             </div>
+                        </div>
+                        <div v-else-if="tipoIsPrecioFijo" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div class="space-y-1">
+                                <label class="block text-sm font-medium text-gray-700">Cantidad de productos</label>
+                                <input v-model.number="form.mincompra" type="number" min="1" step="1"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Ej. 3" />
+                            </div>
+                            <div class="space-y-1">
+                                <label class="block text-sm font-medium text-gray-700">Monto total</label>
+                                <input v-model.number="form.monto" type="number" min="0.01" step="0.01"
+                                    class="w-full rounded-lg border border-gray-400 focus:border-gray-900 focus:ring-gray-900 px-3 py-2"
+                                    placeholder="Ej. 250.00" />
+                            </div>
+                            <p class="text-xs text-gray-500 sm:col-span-2">
+                                Aplica cuando el cliente compra exactamente esa cantidad del producto, o esa cantidad de productos del proveedor.
+                            </p>
                         </div>
 
                         <!-- fechas -->
@@ -376,7 +416,7 @@ onMounted(async () => {
                             <li><span class="text-gray-500">aplica_a:</span> {{ targetLabel }}</li>
                             <li><span class="text-gray-500">{{ form.target === 'producto' ? 'producto' : 'proveedor' }}:</span> {{ lookupSelection }}</li>
                             <li><span class="text-gray-500">tipo:</span> {{ tipoLabel(form.tipo) }}</li>
-                            <li><span class="text-gray-500">{{ form.tipo === 'descuento' ? 'descuento' : 'bundle' }}:</span> {{ promoValueSummary }}</li>
+                            <li><span class="text-gray-500">{{ form.tipo === 'descuento' ? 'descuento' : form.tipo === 'bundle' ? 'bundle' : 'precio_fijo' }}:</span> {{ promoValueSummary }}</li>
                             <li><span class="text-gray-500">inicio:</span> {{ form.inicia || 'Sin fecha' }}</li>
                             <li><span class="text-gray-500">vence:</span> {{ form.vence || 'Pendiente' }}</li>
                             <li><span class="text-gray-500">estado:</span> {{ form.estado ? 'Activa' : 'Inactiva' }}</li>
@@ -437,6 +477,7 @@ onMounted(async () => {
                                 <th class="text-left font-medium px-3 py-2">Proveedor</th>
                                 <th class="text-left font-medium px-3 py-2">Tipo</th>
                                 <th class="text-left font-medium px-3 py-2">Descuento</th>
+                                <th class="text-left font-medium px-3 py-2">Monto</th>
                                 <th class="text-left font-medium px-3 py-2">Min. compra</th>
                                 <th class="text-left font-medium px-3 py-2">Gratis</th>
                                 <th class="text-left font-medium px-3 py-2">Inicia</th>
@@ -461,6 +502,7 @@ onMounted(async () => {
                                 </td>
                                 <td class="px-3 py-2 capitalize">{{ tipoLabel(p.tipo as PromoTipo) }}</td>
                                 <td class="px-3 py-2">{{ p.descuento ?? '—' }}</td>
+                                <td class="px-3 py-2">{{ p.monto ?? '—' }}</td>
                                 <td class="px-3 py-2">{{ p.mincompra ?? '—' }}</td>
                                 <td class="px-3 py-2">{{ p.gratis ?? '—' }}</td>
                                 <td class="px-3 py-2">{{ p.inicia ?? '—' }}</td>
@@ -469,10 +511,10 @@ onMounted(async () => {
                                 <td class="px-3 py-2">{{ p.activa ? 'Sí' : 'No' }}</td>
                             </tr>
                             <tr v-if="!loading && promos.length === 0">
-                                <td colspan="11" class="px-3 py-3 text-center text-gray-500">Sin resultados</td>
+                                <td colspan="12" class="px-3 py-3 text-center text-gray-500">Sin resultados</td>
                             </tr>
                             <tr v-if="loading">
-                                <td colspan="11" class="px-3 py-3 text-center text-gray-500">Cargando…</td>
+                                <td colspan="12" class="px-3 py-3 text-center text-gray-500">Cargando…</td>
                             </tr>
                         </tbody>
                     </table>
@@ -498,6 +540,8 @@ onMounted(async () => {
                                     p.estado ? 'Activa' : 'Inactiva' }}</div>
                                 <div><span class="font-medium text-gray-700">Descuento:</span> {{
                                     p.descuento ?? '—' }}</div>
+                                <div><span class="font-medium text-gray-700">Monto:</span> {{
+                                    p.monto ?? '—' }}</div>
                                 <div><span class="font-medium text-gray-700">Bundle:</span> {{
                                     p.mincompra && p.gratis ? `${p.mincompra} x ${Number(p.mincompra) + Number(p.gratis)}` : '—'
                                     }}</div>

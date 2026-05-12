@@ -15,6 +15,7 @@ class PromocionResource extends JsonResource
             'proveedor'  => $this->proveedor,  // ident
             'tipo'       => $this->tipo,
             'descuento'  => $this->descuento,
+            'monto'      => $this->monto,
             'mincompra'  => $this->mincompra,
             'gratis'     => $this->gratis,
             'inicia'     => optional($this->inicia)->toDateString(),
@@ -27,4 +28,3 @@ class PromocionResource extends JsonResource
         ];
     }
 }
-

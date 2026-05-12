@@ -304,18 +304,28 @@ class CashierController extends Controller
                 $unitPrice = round((float) $line['pUni'], 2);
                 $totalDiscount = round((float) ($line['product_desc'] ?? $line['totdesc'] ?? 0), 2);
                 $manualDiscount = round((float) ($line['manual_discount'] ?? 0), 2);
+                $promotionType = (string) ($line['promotion_type'] ?? '');
                 if ($manualDiscount > $totalDiscount) {
                     $manualDiscount = $totalDiscount;
                 }
 
                 $promotionDiscountTotal = round(max(0, $totalDiscount - $manualDiscount), 2);
                 $promotionRules = $this->resolvePromotionRules($producto);
-                [$paidQty, $freeQty, $promotionPercentAmount] = $this->breakdownPromotionDiscount(
-                    $quantity,
-                    $unitPrice,
-                    $promotionRules['percent'] ?? 0.0,
-                    $promotionDiscountTotal
-                );
+                $isFixedPricePromotion = $promotionType === 'precio_fijo'
+                    || ($promotionType === '' && ($promotionRules['fixed_price'] ?? 0) > 0 && $promotionDiscountTotal > 0);
+
+                if ($isFixedPricePromotion) {
+                    $paidQty = $quantity;
+                    $freeQty = 0;
+                    $promotionPercentAmount = $promotionDiscountTotal;
+                } else {
+                    [$paidQty, $freeQty, $promotionPercentAmount] = $this->breakdownPromotionDiscount(
+                        $quantity,
+                        $unitPrice,
+                        $promotionRules['percent'] ?? 0.0,
+                        $promotionDiscountTotal
+                    );
+                }
 
                 if ($promotionDiscountTotal > 0 && $manualDiscount > 0) {
                     throw ValidationException::withMessages([
@@ -345,6 +355,7 @@ class CashierController extends Controller
                     'paid_quantity' => $paidQty,
                     'free_qty' => $freeQty,
                     'promotion_percent' => $promotionRules['percent'] ?? 0.0,
+                    'promotion_type' => $promotionType !== '' ? $promotionType : null,
                     'promotion_discount_total' => $promotionDiscountTotal,
                     'promotion_percent_amount' => $promotionPercentAmount,
                     'manual_discount' => $manualDiscount,
@@ -582,11 +593,14 @@ class CashierController extends Controller
         $bundlePromo = $candidates->first(function (Promocion $promo) {
             return in_array($promo->tipo, ['bundle', 'gratis']);
         });
+        $fixedPricePromo = $candidates->firstWhere('tipo', 'precio_fijo');
 
         return $cache[$cacheKey] = [
             'percent' => $percentPromo ? (float) ($percentPromo->descuento ?? 0) : 0.0,
             'bundle_min' => $bundlePromo ? (int) ($bundlePromo->mincompra ?? 0) : 0,
             'bundle_bonus' => $bundlePromo ? (int) ($bundlePromo->gratis ?? 0) : 0,
+            'fixed_min' => $fixedPricePromo ? (int) ($fixedPricePromo->mincompra ?? 0) : 0,
+            'fixed_price' => $fixedPricePromo ? (float) ($fixedPricePromo->monto ?? 0) : 0.0,
         ];
     }
 

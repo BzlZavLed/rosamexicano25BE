@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class CheckoutRequest extends FormRequest
 {
@@ -25,6 +26,7 @@ class CheckoutRequest extends FormRequest
             'lineas.*.product_desc'=> ['nullable','numeric','min:0'],
             'lineas.*.totdesc'=> ['nullable','numeric','min:0'],
             'lineas.*.manual_discount' => ['nullable','numeric','min:0'],
+            'lineas.*.promotion_type' => ['nullable', Rule::in(['descuento', 'bundle', 'precio_fijo'])],
         ];
     }
 }

@@ -15,6 +15,7 @@ class Promocion extends Model
         'proveedor',      // int -> proveedores.ident (nullable)
         'tipo',           // 'descuento'|'gratis'
         'descuento',      // numeric %
+        'monto',          // fixed price total for N products
         'mincompra',      // int
         'gratis',         // int
         'inicia',         // date
@@ -24,6 +25,7 @@ class Promocion extends Model
 
     protected $casts = [
         'descuento' => 'float',
+        'monto' => 'float',
         'mincompra' => 'integer',
         'gratis' => 'integer',
         'inicia' => 'date',
