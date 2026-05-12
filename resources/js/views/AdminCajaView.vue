@@ -814,19 +814,15 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
         const min = Number(bundle.mincompra);
         const freeEach = Number(bundle.gratis);
 
-        if (paidQty >= min) {
-            const groupsFromPaid = Math.floor(paidQty / min);
-            let freebies = groupsFromPaid * freeEach;
-
+        if (paidQty === min) {
             const maxExtra = Math.max(0, row.existencia - paidQty);
-            freebies = clamp(freebies, 0, maxExtra);
+            const freebies = clamp(freeEach, 0, maxExtra);
 
             row.promoFreeQty = freebies;
             if (freebies > 0) {
                 row.qty = paidQty + freebies;
+                noteParts.push(`${min}x${min + freeEach} aplicado (+${row.promoFreeQty} gratis)`);
             }
-
-            noteParts.push(`${min}x${min + freeEach} aplicado (+${row.promoFreeQty} gratis)`);
         } else {
             row.promoFreeQty = 0;
         }
