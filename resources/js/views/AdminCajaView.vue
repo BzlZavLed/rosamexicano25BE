@@ -41,6 +41,8 @@ type Producto = {
     inventario?: { existencia: number; importe: number };
 };
 
+type DiscountMode = 'none' | 'line-percent' | 'line-amount' | 'unit-percent';
+
 type CartRow = {
     ident: number;
     nombre: string;
@@ -58,7 +60,12 @@ type CartRow = {
     promoNote?: string;
     manualDiscount?: number;
     manualDiscountPercent?: number;
-    pairDiscountPct?: number;
+    discountMode?: DiscountMode;
+    lineDiscountAmount?: number;
+    unitDiscountQty?: number;
+    unitDiscountPct?: number;
+    discountSummary?: string;
+    promoOrder?: number;
 };
 
 type SaleSnapshot = {
@@ -120,6 +127,25 @@ let scanTimer: number | undefined;
 
 const cart = ref<CartRow[]>([]);
 const showPairHelp = ref(false);
+let cartTouchSeq = 0;
+
+// Product discount modal state ---------------------------------------------
+const showDiscountModal = ref(false);
+const discountTarget = ref<CartRow | null>(null);
+const discountError = ref('');
+const discountDraft = reactive<{
+    mode: DiscountMode;
+    linePercent: number | null;
+    lineAmount: number | null;
+    unitQty: number | null;
+    unitPercent: number | null;
+}>({
+    mode: 'none',
+    linePercent: null,
+    lineAmount: null,
+    unitQty: 1,
+    unitPercent: 50,
+});
 
 // Expense modal state -------------------------------------------------------
 const showExpenseModal = ref(false);
@@ -166,12 +192,14 @@ const closeAmountTouched = ref(false);
 /** Memoizes promotions per product to avoid redundant API requests during cart edits. */
 const promoCache = new Map<number, Promo[]>();
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 const linePromoDiscount = (row: CartRow) => {
     const percent = (row.promoDiscountPct ?? 0) / 100;
     const percentDiscount = row.precio * row.qty * percent;
     const bundleDiscount = row.precio * (row.promoFreeQty ?? 0);
-    return Math.round((percentDiscount + bundleDiscount) * 100) / 100;
+    const rawDiscount = Math.round((percentDiscount + bundleDiscount) * 100) / 100;
+    return Math.min(Math.max(0, rawDiscount), Math.max(0, row.precio * row.qty));
 };
 
 const lineGross = (row: CartRow) => Math.max(0, row.precio * row.qty);
@@ -182,6 +210,22 @@ function rowPaidQty(row: CartRow) {
     return clamp(paid, 0, row.existencia);
 }
 
+function productStock(producto: Producto) {
+    return Math.max(0, Math.trunc(Number(producto?.inventario?.existencia ?? 0) || 0));
+}
+
+function productAddBlockReason(producto: Producto) {
+    const stock = productStock(producto);
+    if (stock <= 0) return 'Sin existencia en inventario';
+
+    const row = cart.value.find(r => r.ident === producto.ident);
+    if (row && rowPaidQty(row) >= stock) {
+        return `Ya agregaste la existencia disponible (${stock})`;
+    }
+
+    return '';
+}
+
 function computeManualPercent(row: CartRow) {
     const base = lineGross(row);
     if (base <= 0) return 0;
@@ -190,11 +234,25 @@ function computeManualPercent(row: CartRow) {
     return Math.round(clamped * 10) / 10;
 }
 
-function clampManualDiscount(row: CartRow) {
+function maxManualDiscount(row: CartRow) {
     const promoDiscount = linePromoDiscount(row);
-    const maxDiscount = Math.max(0, lineGross(row) - promoDiscount);
+    return round2(Math.max(0, lineGross(row) - promoDiscount));
+}
+
+function clearManualDiscount(row: CartRow) {
+    row.manualDiscount = 0;
+    row.manualDiscountPercent = undefined;
+    row.discountMode = 'none';
+    row.lineDiscountAmount = undefined;
+    row.unitDiscountQty = undefined;
+    row.unitDiscountPct = undefined;
+    row.discountSummary = undefined;
+}
+
+function clampManualDiscount(row: CartRow) {
+    const maxDiscount = maxManualDiscount(row);
     const manual = Math.max(0, Math.min(Number(row.manualDiscount ?? 0) || 0, maxDiscount));
-    row.manualDiscount = Math.round(manual * 100) / 100;
+    row.manualDiscount = round2(manual);
     const percent = computeManualPercent(row);
     row.manualDiscountPercent = percent > 0 ? percent : undefined;
     return row.manualDiscount;
@@ -202,46 +260,221 @@ function clampManualDiscount(row: CartRow) {
 
 const lineManualDiscount = (row: CartRow) => Math.max(0, Number(row.manualDiscount ?? 0));
 
-function applyManualDiscountPercent(row: CartRow, percent: number) {
-    if (!Number.isFinite(percent) || percent <= 0) {
-        row.manualDiscountPercent = undefined;
-        row.manualDiscount = 0;
-        onManualDiscountChange(row);
-        return;
-    }
-    const safePercent = Math.min(Math.max(percent, 0), 100);
-    row.manualDiscountPercent = safePercent;
-    const base = lineGross(row);
-    if (base <= 0) {
-        row.manualDiscountPercent = undefined;
-        row.manualDiscount = 0;
-        onManualDiscountChange(row);
-        return;
-    }
-    row.manualDiscount = Math.round(base * (safePercent / 100) * 100) / 100;
-    onManualDiscountChange(row);
+function hasPromoDiscount(row: CartRow) {
+    return linePromoDiscount(row) > 0;
 }
 
-function onManualPercentInput(row: CartRow) {
-    const percent = Number(row.manualDiscountPercent ?? 0);
-    if (!Number.isFinite(percent) || percent <= 0) {
-        row.manualDiscountPercent = undefined;
-        row.manualDiscount = 0;
-        onManualDiscountChange(row);
-        return;
+function discountModeLabel(mode: DiscountMode) {
+    switch (mode) {
+        case 'line-percent':
+            return 'Porcentaje a toda la línea';
+        case 'line-amount':
+            return 'Monto fijo a la línea';
+        case 'unit-percent':
+            return 'Descuento a piezas seleccionadas';
+        default:
+            return 'Sin descuento';
     }
-    applyManualDiscountPercent(row, percent);
 }
 
 const lineNet = (row: CartRow) =>
     Math.max(0, lineGross(row) - linePromoDiscount(row) - lineManualDiscount(row));
 
-function rowHasPairDiscount(row: CartRow) {
-    const pct = Number(row.pairDiscountPct ?? 0);
-    if (pct <= 0) return false;
-    const expected = Math.round(row.precio * (pct / 100) * Math.floor(row.qty / 2) * 100) / 100;
-    const current = Math.round((row.manualDiscount ?? 0) * 100) / 100;
-    return expected > 0 && current === expected;
+function discountSummaryFor(row: CartRow, mode: DiscountMode, amount: number) {
+    if (mode === 'none' || amount <= 0) return '';
+    if (mode === 'line-percent') {
+        const pct = clamp(Number(row.manualDiscountPercent ?? discountDraft.linePercent ?? 0), 0, 100);
+        return `${pct}% en toda la línea (-${currency(amount)})`;
+    }
+    if (mode === 'line-amount') {
+        return `Monto fijo (-${currency(amount)})`;
+    }
+
+    const qty = Math.trunc(Number(row.unitDiscountQty ?? discountDraft.unitQty ?? 0) || 0);
+    const pct = clamp(Number(row.unitDiscountPct ?? discountDraft.unitPercent ?? 0) || 0, 0, 100);
+    return `${qty} pza${qty === 1 ? '' : 's'} con ${pct}% (-${currency(amount)})`;
+}
+
+function discountLabel(row: CartRow) {
+    const manual = lineManualDiscount(row);
+    if (manual <= 0) return 'Sin descuento manual';
+    return row.discountSummary || `Descuento manual -${currency(manual)}`;
+}
+
+function receiptDiscountLabel(row: CartRow) {
+    return row.discountSummary?.replace(/\s\(-[^)]*\)$/, '') || 'Desc. manual';
+}
+
+function calculateDraftDiscount(row: CartRow) {
+    const maxDiscount = maxManualDiscount(row);
+    let amount = 0;
+
+    if (discountDraft.mode === 'line-percent') {
+        const pct = clamp(Number(discountDraft.linePercent ?? 0) || 0, 0, 100);
+        amount = lineGross(row) * (pct / 100);
+    } else if (discountDraft.mode === 'line-amount') {
+        amount = Number(discountDraft.lineAmount ?? 0) || 0;
+    } else if (discountDraft.mode === 'unit-percent') {
+        const qty = clamp(Math.trunc(Number(discountDraft.unitQty ?? 0) || 0), 0, rowPaidQty(row));
+        const pct = clamp(Number(discountDraft.unitPercent ?? 0) || 0, 0, 100);
+        amount = row.precio * qty * (pct / 100);
+    }
+
+    return round2(clamp(amount, 0, maxDiscount));
+}
+
+const discountPreview = computed(() => {
+    const row = discountTarget.value;
+    if (!row) {
+        return {
+            gross: 0,
+            promo: 0,
+            discount: 0,
+            total: 0,
+            max: 0,
+            summary: '',
+        };
+    }
+
+    const gross = lineGross(row);
+    const promo = linePromoDiscount(row);
+    const discount = calculateDraftDiscount(row);
+
+    return {
+        gross,
+        promo,
+        discount,
+        total: Math.max(0, round2(gross - promo - discount)),
+        max: maxManualDiscount(row),
+        summary: discountSummaryFor(row, discountDraft.mode, discount),
+    };
+});
+
+function resetDiscountDraft() {
+    discountDraft.mode = 'none';
+    discountDraft.linePercent = null;
+    discountDraft.lineAmount = null;
+    discountDraft.unitQty = 1;
+    discountDraft.unitPercent = 50;
+}
+
+function openDiscountModal(row: CartRow) {
+    discountTarget.value = row;
+    discountError.value = '';
+    resetDiscountDraft();
+
+    const mode = row.discountMode ?? (lineManualDiscount(row) > 0 ? 'line-amount' : 'none');
+    discountDraft.mode = mode;
+    discountDraft.linePercent = row.manualDiscountPercent ?? null;
+    discountDraft.lineAmount = row.lineDiscountAmount ?? row.manualDiscount ?? null;
+    discountDraft.unitQty = row.unitDiscountQty ?? Math.min(1, rowPaidQty(row));
+    discountDraft.unitPercent = row.unitDiscountPct ?? 50;
+    showDiscountModal.value = true;
+}
+
+function closeDiscountModal() {
+    showDiscountModal.value = false;
+    discountTarget.value = null;
+    discountError.value = '';
+    resetDiscountDraft();
+}
+
+function setDiscountMode(mode: DiscountMode) {
+    discountDraft.mode = mode;
+    discountError.value = '';
+}
+
+function applyDiscountPresetHalfUnit() {
+    if (!discountTarget.value) return;
+    setDiscountMode('unit-percent');
+    discountDraft.unitQty = Math.min(1, rowPaidQty(discountTarget.value));
+    discountDraft.unitPercent = 50;
+}
+
+function validateDiscountDraft(row: CartRow) {
+    if (discountDraft.mode === 'none') return true;
+    if (hasPromoDiscount(row)) {
+        discountError.value = 'Este producto ya tiene una promoción automática. Quita la promo o usa otro producto para aplicar descuento manual.';
+        return false;
+    }
+    if (discountPreview.value.discount <= 0) {
+        discountError.value = 'Captura un descuento mayor a cero.';
+        return false;
+    }
+    if (discountDraft.mode === 'unit-percent') {
+        const qty = Math.trunc(Number(discountDraft.unitQty ?? 0) || 0);
+        if (qty < 1 || qty > rowPaidQty(row)) {
+            discountError.value = 'La cantidad con descuento debe estar dentro de las piezas vendidas.';
+            return false;
+        }
+    }
+    return true;
+}
+
+function refreshManualDiscountForRow(row: CartRow) {
+    const mode = row.discountMode ?? 'none';
+    if (mode === 'none') {
+        clampManualDiscount(row);
+        return;
+    }
+
+    if (hasPromoDiscount(row)) {
+        clearManualDiscount(row);
+        return;
+    }
+
+    if (mode === 'line-percent') {
+        const pct = clamp(Number(row.manualDiscountPercent ?? 0) || 0, 0, 100);
+        row.manualDiscount = round2(lineGross(row) * (pct / 100));
+    } else if (mode === 'line-amount') {
+        row.manualDiscount = Number(row.lineDiscountAmount ?? row.manualDiscount ?? 0) || 0;
+    } else if (mode === 'unit-percent') {
+        const qty = clamp(Math.trunc(Number(row.unitDiscountQty ?? 0) || 0), 0, rowPaidQty(row));
+        const pct = clamp(Number(row.unitDiscountPct ?? 0) || 0, 0, 100);
+        row.unitDiscountQty = qty;
+        row.manualDiscount = round2(row.precio * qty * (pct / 100));
+    }
+
+    const manual = clampManualDiscount(row);
+    if (manual <= 0) {
+        clearManualDiscount(row);
+        return;
+    }
+    row.discountSummary = discountSummaryFor(row, mode, manual);
+}
+
+function applyDiscountModal() {
+    const row = discountTarget.value;
+    if (!row) return;
+
+    discountError.value = '';
+    if (!validateDiscountDraft(row)) return;
+
+    if (discountDraft.mode === 'none') {
+        clearManualDiscount(row);
+        closeDiscountModal();
+        return;
+    }
+
+    const amount = discountPreview.value.discount;
+    row.discountMode = discountDraft.mode;
+    row.manualDiscount = amount;
+    row.manualDiscountPercent =
+        discountDraft.mode === 'line-percent'
+            ? clamp(Number(discountDraft.linePercent ?? 0) || 0, 0, 100)
+            : computeManualPercent(row);
+    row.lineDiscountAmount = discountDraft.mode === 'line-amount' ? amount : undefined;
+    row.unitDiscountQty =
+        discountDraft.mode === 'unit-percent'
+            ? clamp(Math.trunc(Number(discountDraft.unitQty ?? 0) || 0), 0, rowPaidQty(row))
+            : undefined;
+    row.unitDiscountPct =
+        discountDraft.mode === 'unit-percent'
+            ? clamp(Number(discountDraft.unitPercent ?? 0) || 0, 0, 100)
+            : undefined;
+    row.discountSummary = discountSummaryFor(row, row.discountMode, amount);
+    clampManualDiscount(row);
+    closeDiscountModal();
 }
 
 /** Raw total before discounts or surcharges. */
@@ -266,7 +499,6 @@ const afterDiscount = computed(() => Math.max(0, subTotal.value - totalDiscountA
 const cardChargePercent = ref(4.5);
 const cardChargeRate = computed(() => cardChargePercent.value / 100);
 const surchargePercent = computed(() => (paymentMethod.value === 'tarjeta' ? cardChargePercent.value : 0));
-const round2 = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 function calculateProviderBruto(
     type: CartRow['proveedorTipo'],
@@ -786,6 +1018,22 @@ async function getPromosForRow(row: CartRow, proveedorIdent?: number) {
     return promos;
 }
 
+function isBundlePromo(promo: Promo) {
+    return promo.tipo === 'bundle' && (promo.mincompra ?? 0) > 0 && (promo.gratis ?? 0) > 0;
+}
+
+function isProductPromo(promo: Promo) {
+    return promo.producto != null;
+}
+
+function isProviderPromo(promo: Promo) {
+    return promo.producto == null && promo.proveedor != null;
+}
+
+function appendPromoNote(row: CartRow, note: string) {
+    row.promoNote = row.promoNote ? `${row.promoNote} · ${note}` : note;
+}
+
 async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
     const paidQty = rowPaidQty(row);
     row.paidQty = paidQty;
@@ -795,14 +1043,17 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
     row.promoNote = undefined;
 
     const promos = await getPromosForRow(row, proveedorIdent);
-    if (!promos.length) return;
+    if (!promos.length) {
+        refreshManualDiscountForRow(row);
+        return;
+    }
 
-    const productPromos = promos.filter(p => p.proveedor === null);
-    const providerPromos = promos.filter(p => p.proveedor != null);
+    const productPromos = promos.filter(isProductPromo);
+    const providerPromos = promos.filter(isProviderPromo);
     const candidates = productPromos.length ? productPromos : providerPromos;
 
     const pctPromo = candidates.find(p => p.tipo === 'descuento' && (p.descuento ?? 0) > 0);
-    const bundle = candidates.find(p => p.tipo === 'bundle' && (p.mincompra ?? 0) > 0 && (p.gratis ?? 0) > 0);
+    const bundle = productPromos.find(isBundlePromo);
     const noteParts: string[] = [];
 
     if (pctPromo?.descuento) {
@@ -821,7 +1072,7 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
             row.promoFreeQty = freebies;
             if (freebies > 0) {
                 row.qty = paidQty + freebies;
-                noteParts.push(`${min}x${min + freeEach} aplicado (+${row.promoFreeQty} gratis)`);
+                noteParts.push(`${min + freeEach}x${min} aplicado (+${row.promoFreeQty} gratis)`);
             }
         } else {
             row.promoFreeQty = 0;
@@ -830,7 +1081,82 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
 
     if (noteParts.length) row.promoNote = noteParts.join(' · ');
 
-    clampManualDiscount(row);
+    refreshManualDiscountForRow(row);
+}
+
+function preferredProviderRows(rows: CartRow[]) {
+    return [...rows].sort((a, b) => (b.promoOrder ?? 0) - (a.promoOrder ?? 0));
+}
+
+function allocateProviderFreebies(rows: CartRow[], freeQty: number, mode: 'selected' | 'extra', min: number) {
+    let remaining = Math.max(0, freeQty);
+    const totalBundleQty = min + freeQty;
+
+    for (const row of preferredProviderRows(rows)) {
+        if (remaining <= 0) break;
+
+        const available = mode === 'extra'
+            ? Math.max(0, row.existencia - row.qty)
+            : Math.max(0, row.qty);
+        const freebies = Math.min(available, remaining);
+        if (freebies <= 0) continue;
+
+        if (mode === 'extra') {
+            row.qty += freebies;
+        }
+
+        row.promoFreeQty = (row.promoFreeQty ?? 0) + freebies;
+        appendPromoNote(row, `Proveedor ${totalBundleQty}x${min} aplicado (${freebies} gratis)`);
+        refreshManualDiscountForRow(row);
+        remaining -= freebies;
+    }
+}
+
+async function applyProviderBundlePromotions() {
+    const groups = new Map<number, CartRow[]>();
+    for (const row of cart.value) {
+        const providerIdent = Number(row.proveedorid ?? 0);
+        if (!providerIdent) continue;
+        const rows = groups.get(providerIdent) ?? [];
+        rows.push(row);
+        groups.set(providerIdent, rows);
+    }
+
+    for (const [providerIdent, rows] of groups) {
+        const eligibleRows: CartRow[] = [];
+        let bundle: Promo | undefined;
+
+        for (const row of rows) {
+            const promos = await getPromosForRow(row, providerIdent);
+            if (promos.some(isProductPromo)) continue;
+
+            const providerBundle = promos.find(p => isProviderPromo(p) && isBundlePromo(p));
+            if (!providerBundle) continue;
+
+            bundle ??= providerBundle;
+            eligibleRows.push(row);
+        }
+
+        if (!bundle || !eligibleRows.length) continue;
+
+        const min = Number(bundle.mincompra ?? 0);
+        const freeEach = Number(bundle.gratis ?? 0);
+        if (min <= 0 || freeEach <= 0) continue;
+
+        const selectedQty = eligibleRows.reduce((sum, row) => sum + rowPaidQty(row), 0);
+        if (selectedQty === min + freeEach) {
+            allocateProviderFreebies(eligibleRows, freeEach, 'selected', min);
+        } else if (selectedQty === min) {
+            allocateProviderFreebies(eligibleRows, freeEach, 'extra', min);
+        }
+    }
+}
+
+async function refreshCartPromotions() {
+    for (const row of cart.value) {
+        await applyPromotionsToRow(row, row.proveedorid);
+    }
+    await applyProviderBundlePromotions();
 }
 
 /** Runs the remote search and handles loading/errors for the quick lookup list. */
@@ -912,11 +1238,18 @@ async function addFirstMatchFromBarcode(code: string) {
 
 /** Inserts or updates a cart row and reapplies promotions on every addition. */
 async function addToCart(producto: Producto) {
+    const row = cart.value.find(r => r.ident === producto.ident);
+    const max = productStock(producto);
+    const blockReason = productAddBlockReason(producto);
+
+    if (blockReason) {
+        showError(`${producto.nombre} no se puede agregar: ${blockReason}.`);
+        return;
+    }
+
     SHOW_RESULTS.value = false;
     query.value = '';
 
-    const row = cart.value.find(r => r.ident === producto.ident);
-    const max = Number(producto?.inventario?.existencia ?? 0);
     const proveedorIdent = producto.proveedor?.ident ?? producto.proveedorid;
     const proveedorTipo = (producto.proveedor?.tipo as CartRow['proveedorTipo']) ?? 'normal';
     const proveedorPct = producto.proveedor?.porcentaje_comision ?? null;
@@ -924,7 +1257,8 @@ async function addToCart(producto: Producto) {
 
     if (row) {
         const currentPaidQty = rowPaidQty(row);
-        if (row.qty < max) row.paidQty = currentPaidQty + 1;
+        row.paidQty = Math.min(max, currentPaidQty + 1);
+        row.promoOrder = ++cartTouchSeq;
         if (!row.proveedorTipo) row.proveedorTipo = proveedorTipo;
         if (row.proveedorPct == null) row.proveedorPct = proveedorPct;
         if (row.precioProveedor == null) row.precioProveedor = precioProveedor;
@@ -932,8 +1266,7 @@ async function addToCart(producto: Producto) {
         if (!row.proveedorname && producto.proveedor?.nombre) {
             row.proveedorname = producto.proveedor.nombre;
         }
-        await applyPromotionsToRow(row, proveedorIdent);
-        clampManualDiscount(row);
+        await refreshCartPromotions();
         return;
     }
 
@@ -951,21 +1284,24 @@ async function addToCart(producto: Producto) {
         precioProveedor,
         manualDiscount: 0,
         manualDiscountPercent: undefined,
+        promoOrder: ++cartTouchSeq,
     };
 
-    await applyPromotionsToRow(newRow, proveedorIdent);
     cart.value.unshift(newRow);
+    await refreshCartPromotions();
 }
 
 /** Keeps quantities valid while reacting to manual edits on the cart table. */
 async function onQtyChange(row: CartRow) {
     clampQty(row);
-    await applyPromotionsToRow(row, row.proveedorid);
+    row.promoOrder = ++cartTouchSeq;
+    await refreshCartPromotions();
 }
 
 /** Removes an item entirely from the cart. */
 function removeFromCart(ident: number) {
     cart.value = cart.value.filter(row => row.ident !== ident);
+    void refreshCartPromotions();
 }
 
 /** Ensures quantity stays within 0..existence and always an integer. */
@@ -974,57 +1310,6 @@ function clampQty(row: CartRow) {
     if (row.paidQty < 0) row.paidQty = 0;
     if (row.paidQty > row.existencia) row.paidQty = row.existencia;
     row.qty = row.paidQty;
-    clampManualDiscount(row);
-    if (row.paidQty < 2) {
-        row.manualDiscount = 0;
-        row.manualDiscountPercent = undefined;
-        row.pairDiscountPct = undefined;
-    }
-}
-
-function onManualDiscountChange(row: CartRow) {
-    row.manualDiscount = Math.max(0, Number(row.manualDiscount ?? 0) || 0);
-    clampManualDiscount(row);
-}
-
-function applyHalfOffPair(row: CartRow) {
-    // Toggle behavior: if already applied, clear it.
-    const rawPct = Number(row.pairDiscountPct);
-    const pct = Number.isFinite(rawPct) && rawPct > 0 ? rawPct : 50;
-    const safePct = Math.min(Math.max(pct, 0), 100);
-    row.pairDiscountPct = safePct;
-    const expectedDiscount = () => Math.round(row.precio * (safePct / 100) * Math.floor(row.qty / 2) * 100) / 100;
-    const current = Math.round((row.manualDiscount ?? 0) * 100) / 100;
-    const target = expectedDiscount();
-
-    // If discount already matches the target, clear it.
-    if (current === target && target > 0) {
-        row.manualDiscount = 0;
-        row.manualDiscountPercent = undefined;
-        row.pairDiscountPct = undefined;
-        clampManualDiscount(row);
-        return;
-    }
-
-    if (row.qty < 2) {
-        row.manualDiscount = 0;
-        row.manualDiscountPercent = undefined;
-        row.pairDiscountPct = undefined;
-        clampManualDiscount(row);
-        return;
-    }
-
-    row.manualDiscount = target;
-    const percent = computeManualPercent(row);
-    row.manualDiscountPercent = percent > 0 ? percent : undefined;
-    clampManualDiscount(row);
-}
-
-function onPairDiscountInput(row: CartRow) {
-    console.log('execution');
-    // Keep within 0-100, but do not auto-apply unless button is clicked.
-    const pct = Number.isFinite(row.pairDiscountPct) ? Number(row.pairDiscountPct) : 0;
-    row.pairDiscountPct = Math.min(Math.max(pct, 0), 100);
 }
 
 /** Refreshes the caja status banner (open/closed, current user, balances). */
@@ -1312,7 +1597,7 @@ function buildReceiptPDF(snapshot: SaleSnapshot) {
         if (manualDiscount > 0) {
             pageBreakIfNeeded();
             doc.setFontSize(9);
-            doc.text('Desc. manual', xL, y);
+            doc.text(receiptDiscountLabel(row), xL, y);
             doc.text(`- ${money(manualDiscount)}`, xMidRight, y, { align: 'right' });
             doc.setFontSize(10);
             y += lineGap - 2;
@@ -1512,15 +1797,22 @@ onUnmounted(() => {
                                                         )
                                                     }}
                                                 </p>
-                                                <p class="text-[11px] text-gray-500">
-                                                    Existencia: {{ Number(p?.inventario?.existencia ?? 0) }}
+                                                <p class="text-[11px]"
+                                                    :class="productStock(p) > 0 ? 'text-gray-500' : 'font-medium text-rose-700'">
+                                                    {{ productStock(p) > 0 ? `Existencia: ${productStock(p)}` : productAddBlockReason(p) }}
+                                                </p>
+                                                <p v-if="productAddBlockReason(p) && productStock(p) > 0"
+                                                    class="text-[11px] font-medium text-amber-700">
+                                                    {{ productAddBlockReason(p) }}
                                                 </p>
                                             </div>
                                         </div>
                                         <div class="mt-3 flex justify-end">
                                             <button @click="addToCart(p)"
-                                                class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50">
-                                                Agregar
+                                                :disabled="!!productAddBlockReason(p)"
+                                                class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                :title="productAddBlockReason(p) || 'Agregar al carrito'">
+                                                {{ productAddBlockReason(p) ? 'No disponible' : 'Agregar' }}
                                             </button>
                                         </div>
                                     </li>
@@ -1553,12 +1845,20 @@ onUnmounted(() => {
                                                 }}
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
-                                                {{ Number(p?.inventario?.existencia ?? 0) }}
+                                                <span :class="productStock(p) > 0 ? '' : 'font-medium text-rose-700'">
+                                                    {{ productStock(p) > 0 ? productStock(p) : 'Sin existencia' }}
+                                                </span>
+                                                <div v-if="productAddBlockReason(p) && productStock(p) > 0"
+                                                    class="text-[10px] text-amber-700">
+                                                    {{ productAddBlockReason(p) }}
+                                                </div>
                                             </td>
                                             <td class="px-2.5 py-1.5 text-right">
                                                 <button @click="addToCart(p)"
-                                                    class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100">
-                                                    Agregar
+                                                    :disabled="!!productAddBlockReason(p)"
+                                                    class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    :title="productAddBlockReason(p) || 'Agregar al carrito'">
+                                                    {{ productAddBlockReason(p) ? 'No disponible' : 'Agregar' }}
                                                 </button>
                                             </td>
                                         </tr>
@@ -1578,14 +1878,14 @@ onUnmounted(() => {
                     </section>
                 </div>
 
-                <!-- Pair discount info modal -->
+                <!-- Cart help modal -->
                 <transition name="fade">
                     <div v-if="showPairHelp" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center px-4">
                         <div class="max-w-lg w-full rounded-lg bg-white shadow-lg border border-gray-200">
                             <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
                                 <div class="flex items-center gap-2 text-sm font-semibold text-gray-800">
                                     <span aria-hidden="true">ℹ️</span>
-                                    <span>Cómo usar el descuento por par</span>
+                                    <span>Cómo usar descuentos y caja</span>
                                 </div>
                                 <button class="text-gray-500 hover:text-gray-700" @click="showPairHelp = false">✕</button>
                             </div>
@@ -1594,15 +1894,13 @@ onUnmounted(() => {
                                 <ul class="list-disc pl-5 space-y-1">
                                     <li><strong>Buscar y agregar</strong>: usa el buscador o el lector de código de barras; clic en “Agregar” suma 1 unidad al carrito.</li>
                                     <li><strong>Cantidad y existencia</strong>: edita la cantidad; el sistema la limita al inventario disponible.</li>
-                                    <li><strong>Promos automáticas</strong>: las promos de producto (porcentaje o piezas gratis) se aplican al agregar/editar cantidad y muestran nota en la fila.</li>
-                                    <li><strong>Descuento manual</strong>: escribe % en “Desc. (%)”; el importe en “Desc. ($)” se calcula y bloquea a un máximo razonable.</li>
-                                    <li><strong>Par % (segundo a X%)</strong>: define el % que se descuenta a <em>una</em> pieza por cada par (ej. 50% = segunda a mitad). Con cantidad ≥ 2, clic en el botón:
-                                        <ul class="list-disc pl-5 space-y-1">
-                                            <li>Verde = aplicar; Rojo = activo. Clic de nuevo lo quita.</li>
-                                            <li>Si la cantidad baja de 2, se limpia solo.</li>
-                                            <li>Cambia el % antes de aplicar si la promo no es 50%.</li>
-                                        </ul>
-                                    </li>
+                                    <li><strong>Promos automáticas</strong>: las promociones creadas siguen funcionando igual; se aplican al agregar o cambiar cantidad y muestran una nota en la fila.</li>
+                                    <li><strong>Promos por proveedor</strong>: las promociones de piezas gratis se calculan sobre todos los productos del proveedor en el carrito; la pieza gratis se marca en el último producto agregado o editado.</li>
+                                    <li><strong>Promos y descuentos manuales</strong>: si una promoción automática aplica a esa línea, el botón “Descuento” queda bloqueado porque no se combinan en la misma venta.</li>
+                                    <li><strong>Descuento manual</strong>: usa el botón “Descuento” de la fila para abrir el modal y elegir sin descuento, porcentaje a toda la línea, monto fijo o piezas seleccionadas.</li>
+                                    <li><strong>Porcentaje a toda la línea</strong>: aplica el porcentaje sobre todas las piezas vendidas en esa fila.</li>
+                                    <li><strong>Monto fijo</strong>: descuenta una cantidad exacta, limitada al total disponible de la línea.</li>
+                                    <li><strong>Piezas seleccionadas</strong>: descuenta solo algunas piezas; por ejemplo, 3 piezas de $50 con 1 pieza al 50% queda en $125.</li>
                                     <li><strong>Importe por fila</strong>: muestra el total de la línea después de promos y descuentos.</li>
                                     <li><strong>Quitar</strong>: elimina la fila completa.</li>
                                     <li><strong>Totalización</strong>: la derecha de la pantalla resume subtotal, descuentos, recargo por tarjeta (4.5%), total y cambio.</li>
@@ -1610,7 +1908,7 @@ onUnmounted(() => {
                                     <li><strong>Clientes</strong>: busca o crea cliente para ticket por email/SMS.</li>
                                     <li><strong>Cobro</strong>: al “Cobrar”, el sistema valida caja abierta, existencias y guarda la venta; puedes imprimir o enviar ticket.</li>
                                 </ul>
-                                <p class="text-xs text-gray-500">Tip: usa el botón “Par %” para promos de 30/40/50% al segundo artículo, y el campo de % manual para ajustes puntuales.</p>
+                                <p class="text-xs text-gray-500">Los productos con promoción automática no aceptan descuento manual en la misma venta.</p>
                             </div>
                             <div class="px-4 py-3 border-t border-gray-200 text-right">
                                 <button class="rounded border px-3 py-1.5 text-sm hover:bg-gray-50" @click="showPairHelp = false">Cerrar</button>
@@ -1691,46 +1989,30 @@ onUnmounted(() => {
                                                     </div>
                                                 </div>
                                             </div>
-                                            <label class="flex flex-col gap-2">
-                                                <span class="font-medium text-gray-700">Desc. (%)</span>
-                                                <input v-model.number="r.manualDiscountPercent" type="number" min="0"
-                                                    step="0.1" placeholder="%"
-                                                    class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
-                                                    @input="onManualPercentInput(r)" />
-                                            </label>
-                                            <div class="flex items-end gap-2">
-                                                <label class="flex flex-col gap-2 flex-1">
-                                                    <span class="font-medium text-gray-700">Par %</span>
-                                                    <input v-model.number="r.pairDiscountPct" type="number" min="0"
-                                                        max="100" step="1" placeholder="50"
-                                                        class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm"
-                                                        @input="onPairDiscountInput(r)"
-                                                        :disabled="r.qty < 2" />
-                                                </label>
-                                                <button
-                                                    @click="applyHalfOffPair(r)"
-                                                    :disabled="r.qty < 2"
-                                                    class="inline-flex items-center rounded border px-3 py-1.5 text-[12px] font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    :class="rowHasPairDiscount(r) ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'"
-                                                    title="Aplicar descuento a una pieza por cada par">
-                                                    {{ rowHasPairDiscount(r) ? 'Quitar par %' : 'Par %' }}
-                                                </button>
+                                            <div class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                                                <div class="flex items-center justify-between gap-3">
+                                                    <div>
+                                                        <span class="font-medium text-gray-700">Descuento manual</span>
+                                                        <p class="text-[11px]"
+                                                            :class="lineManualDiscount(r) > 0 ? 'text-emerald-700' : 'text-gray-500'">
+                                                            {{ discountLabel(r) }}
+                                                        </p>
+                                                    </div>
+                                                    <button type="button"
+                                                        @click="openDiscountModal(r)"
+                                                        :disabled="hasPromoDiscount(r)"
+                                                        class="shrink-0 rounded border px-3 py-1.5 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50"
+                                                        :class="lineManualDiscount(r) > 0 ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : 'border-gray-300 text-gray-700 hover:bg-white'"
+                                                        title="Configurar descuento manual">
+                                                        {{ lineManualDiscount(r) > 0 ? 'Editar' : 'Descuento' }}
+                                                    </button>
+                                                </div>
+                                                <p v-if="hasPromoDiscount(r)" class="mt-1 text-[11px] text-amber-700">
+                                                    No disponible con promoción automática.
+                                                </p>
                                             </div>
-                                            <label class="flex flex-col gap-2">
-                                                <span class="font-medium text-gray-700">Desc. manual ($)</span>
-                                                <input :value="(r.manualDiscount ?? 0).toFixed(2)" type="number"
-                                                    disabled
-                                                    class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm bg-gray-100 text-gray-600" />
-                                            </label>
                                         </div>
                                             <div class="flex flex-wrap justify-end gap-2">
-                                            <button
-                                                @click="applyHalfOffPair(r)"
-                                                :disabled="r.qty < 2"
-                                                class="inline-flex items-center rounded border border-emerald-200 px-3 py-1.5 text-[12px] font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                title="Aplicar 50% a una pieza por cada par">
-                                                2x1 mitad
-                                            </button>
                                             <button @click="removeFromCart(r.ident)"
                                                 class="inline-flex items-center rounded border border-gray-300 px-3 py-1.5 text-[12px] font-medium text-gray-700 hover:bg-gray-50">
                                                 Quitar
@@ -1750,8 +2032,7 @@ onUnmounted(() => {
                                                 <th class="text-right font-medium px-2.5 py-1.5">P. Unit.</th>
                                                 <th class="text-right font-medium px-2.5 py-1.5">Exist.</th>
                                                 <th class="text-right font-medium px-2.5 py-1.5">Cantidad</th>
-                                                <th class="text-right font-medium px-2.5 py-1.5">Desc. (%)</th>
-                                                <th class="text-right font-medium px-2.5 py-1.5">Desc. ($)</th>
+                                                <th class="text-left font-medium px-2.5 py-1.5">Descuento</th>
                                                 <th class="text-right font-medium px-2.5 py-1.5">Importe</th>
                                                 <th class="px-2.5 py-1.5"></th>
                                             </tr>
@@ -1789,34 +2070,31 @@ onUnmounted(() => {
                                                         Gratis: {{ r.promoFreeQty }} · Desc: {{ r.qty }}
                                                     </div>
                                                 </td>
-                                                <td class="px-2.5 py-1.5 text-right">
-                                                    <input v-model.number="r.manualDiscountPercent" type="number"
-                                                        min="0" step="0.1" placeholder="%"
-                                                        class="w-16 rounded border px-2 py-1 text-right text-[12px]"
-                                                        @input="onManualPercentInput(r)" />
-                                                </td>
-                                                <td class="px-2.5 py-1.5 text-right">
-                                                    <input :value="(r.manualDiscount ?? 0).toFixed(2)" type="number"
-                                                        disabled
-                                                        class="w-20 rounded border px-2 py-1 text-right text-[12px] bg-gray-100 text-gray-600" />
+                                                <td class="px-2.5 py-1.5">
+                                                    <div class="flex min-w-[14rem] items-center justify-between gap-2">
+                                                        <div class="min-w-0">
+                                                            <p class="truncate text-[11px]"
+                                                                :class="lineManualDiscount(r) > 0 ? 'text-emerald-700' : 'text-gray-500'">
+                                                                {{ discountLabel(r) }}
+                                                            </p>
+                                                            <p v-if="hasPromoDiscount(r)" class="text-[10px] text-amber-700">
+                                                                No disponible con promo
+                                                            </p>
+                                                        </div>
+                                                        <button type="button"
+                                                            @click="openDiscountModal(r)"
+                                                            :disabled="hasPromoDiscount(r)"
+                                                            class="shrink-0 rounded border px-2 py-1 text-[12px] transition disabled:cursor-not-allowed disabled:opacity-50"
+                                                            :class="lineManualDiscount(r) > 0 ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : 'border-gray-300 text-gray-700 hover:bg-gray-100'"
+                                                            title="Configurar descuento manual">
+                                                            {{ lineManualDiscount(r) > 0 ? 'Editar' : 'Descuento' }}
+                                                        </button>
+                                                    </div>
                                                 </td>
                                                 <td class="px-2.5 py-1.5 text-right whitespace-nowrap">
                                                     {{ currency(lineNet(r)) }}
                                                 </td>
                                                 <td class="px-2.5 py-1.5 text-right">
-                                                    <div class="flex items-center justify-end gap-2 mb-1">
-                                                        <input v-model.number="r.pairDiscountPct" type="number" min="0" max="100" step="1"
-                                                            class="w-16 rounded border px-2 py-1 text-right text-[12px]"
-                                                            :title="'Porcentaje para descuento por par'" @input="onPairDiscountInput(r)" :disabled="r.qty < 2" />
-                                                        <button
-                                                            @click="applyHalfOffPair(r)"
-                                                            :disabled="r.qty < 2"
-                                                            class="rounded border px-2 py-1 text-[12px] transition disabled:opacity-50 disabled:cursor-not-allowed"
-                                                            :class="rowHasPairDiscount(r) ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'"
-                                                            title="Aplicar/limpiar descuento a una pieza por cada par">
-                                                            {{ rowHasPairDiscount(r) ? 'Quitar par %' : 'Par %' }}
-                                                        </button>
-                                                    </div>
                                                     <button @click="removeFromCart(r.ident)"
                                                         class="rounded border px-2 py-1 text-[12px] hover:bg-gray-100">
                                                         Quitar
@@ -1824,7 +2102,7 @@ onUnmounted(() => {
                                                 </td>
                                             </tr>
                                             <tr v-if="cart.length === 0">
-                                                <td colspan="10" class="px-2.5 py-4 text-center text-gray-500">No hay
+                                                <td colspan="9" class="px-2.5 py-4 text-center text-gray-500">No hay
                                                     productos en
                                                     el carrito</td>
                                             </tr>
@@ -2003,6 +2281,137 @@ onUnmounted(() => {
                             </div>
                         </div>
                     </section>
+                </div>
+            </div>
+        </div>
+        <div v-if="showDiscountModal && discountTarget"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+            @click.self="closeDiscountModal">
+            <div class="w-full max-w-xl rounded-lg bg-white shadow-lg">
+                <div class="flex items-start justify-between gap-3 border-b border-gray-200 px-5 py-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-900">Descuento de producto</h2>
+                        <p class="mt-1 text-sm text-gray-500">
+                            {{ discountTarget.nombre }} · {{ rowPaidQty(discountTarget) }} pza{{ rowPaidQty(discountTarget) === 1 ? '' : 's' }} vendida{{ rowPaidQty(discountTarget) === 1 ? '' : 's' }}
+                        </p>
+                    </div>
+                    <button type="button" @click="closeDiscountModal"
+                        class="inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
+                        ✕
+                    </button>
+                </div>
+
+                <div class="space-y-4 px-5 py-4 text-sm">
+                    <div v-if="hasPromoDiscount(discountTarget)"
+                        class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                        Este producto ya tiene promoción automática y no puede combinarse con descuento manual.
+                    </div>
+
+                    <div v-if="discountError"
+                        class="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-rose-700">
+                        {{ discountError }}
+                    </div>
+
+                    <div class="grid gap-2 sm:grid-cols-2">
+                        <button type="button" @click="setDiscountMode('none')"
+                            class="rounded-md border px-3 py-2 text-left transition"
+                            :class="discountDraft.mode === 'none' ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 hover:bg-gray-50'">
+                            <span class="block font-semibold">Sin descuento</span>
+                            <span class="block text-xs opacity-80">Quita cualquier ajuste manual.</span>
+                        </button>
+                        <button type="button" @click="setDiscountMode('line-percent')"
+                            class="rounded-md border px-3 py-2 text-left transition"
+                            :class="discountDraft.mode === 'line-percent' ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 hover:bg-gray-50'">
+                            <span class="block font-semibold">% a toda la línea</span>
+                            <span class="block text-xs opacity-80">Aplica a todas las piezas vendidas.</span>
+                        </button>
+                        <button type="button" @click="setDiscountMode('line-amount')"
+                            class="rounded-md border px-3 py-2 text-left transition"
+                            :class="discountDraft.mode === 'line-amount' ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 hover:bg-gray-50'">
+                            <span class="block font-semibold">Monto fijo</span>
+                            <span class="block text-xs opacity-80">Descuenta una cantidad exacta.</span>
+                        </button>
+                        <button type="button" @click="setDiscountMode('unit-percent')"
+                            class="rounded-md border px-3 py-2 text-left transition"
+                            :class="discountDraft.mode === 'unit-percent' ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 hover:bg-gray-50'">
+                            <span class="block font-semibold">Piezas seleccionadas</span>
+                            <span class="block text-xs opacity-80">Ej. 1 pieza con 50% en una venta de 3.</span>
+                        </button>
+                    </div>
+
+                    <div v-if="discountDraft.mode === 'line-percent'" class="grid gap-3 sm:grid-cols-2">
+                        <label class="block">
+                            <span class="mb-1 block text-xs font-medium text-gray-600">Porcentaje</span>
+                            <input v-model.number="discountDraft.linePercent" type="number" min="0" max="100" step="0.1"
+                                class="w-full rounded-md border px-3 py-2 text-right"
+                                placeholder="25" />
+                        </label>
+                    </div>
+
+                    <div v-else-if="discountDraft.mode === 'line-amount'" class="grid gap-3 sm:grid-cols-2">
+                        <label class="block">
+                            <span class="mb-1 block text-xs font-medium text-gray-600">Monto a descontar</span>
+                            <input v-model.number="discountDraft.lineAmount" type="number" min="0" step="0.01"
+                                class="w-full rounded-md border px-3 py-2 text-right"
+                                placeholder="0.00" />
+                        </label>
+                    </div>
+
+                    <div v-else-if="discountDraft.mode === 'unit-percent'" class="grid gap-3 sm:grid-cols-3">
+                        <label class="block">
+                            <span class="mb-1 block text-xs font-medium text-gray-600">Piezas con descuento</span>
+                            <input v-model.number="discountDraft.unitQty" type="number" min="1"
+                                :max="rowPaidQty(discountTarget)" step="1"
+                                class="w-full rounded-md border px-3 py-2 text-right" />
+                        </label>
+                        <label class="block">
+                            <span class="mb-1 block text-xs font-medium text-gray-600">Porcentaje</span>
+                            <input v-model.number="discountDraft.unitPercent" type="number" min="0" max="100" step="0.1"
+                                class="w-full rounded-md border px-3 py-2 text-right"
+                                placeholder="50" />
+                        </label>
+                        <div class="flex items-end">
+                            <button type="button" @click="applyDiscountPresetHalfUnit"
+                                class="w-full rounded-md border border-emerald-200 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50">
+                                1 pieza al 50%
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-[13px]">
+                        <div class="flex justify-between gap-3">
+                            <span>Subtotal línea</span>
+                            <b>{{ currency(discountPreview.gross) }}</b>
+                        </div>
+                        <div v-if="discountPreview.promo > 0" class="mt-1 flex justify-between gap-3 text-emerald-700">
+                            <span>Promoción automática</span>
+                            <b>- {{ currency(discountPreview.promo) }}</b>
+                        </div>
+                        <div class="mt-1 flex justify-between gap-3 text-emerald-700">
+                            <span>{{ discountPreview.summary || discountModeLabel(discountDraft.mode) }}</span>
+                            <b>- {{ currency(discountPreview.discount) }}</b>
+                        </div>
+                        <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 text-base">
+                            <span>Total línea</span>
+                            <b>{{ currency(discountPreview.total) }}</b>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap justify-end gap-2 border-t border-gray-200 px-5 py-4">
+                    <button v-if="lineManualDiscount(discountTarget) > 0" type="button"
+                        @click="setDiscountMode('none'); applyDiscountModal()"
+                        class="rounded-md border border-rose-200 px-3 py-1.5 text-sm text-rose-700 hover:bg-rose-50">
+                        Quitar descuento
+                    </button>
+                    <button type="button" @click="closeDiscountModal"
+                        class="rounded-md border px-3 py-1.5 text-sm hover:bg-gray-50">
+                        Cancelar
+                    </button>
+                    <button type="button" @click="applyDiscountModal"
+                        class="rounded-md bg-[#E4007C] px-3 py-1.5 text-sm text-white hover:bg-[#cc006f]">
+                        Aplicar descuento
+                    </button>
                 </div>
             </div>
         </div>
