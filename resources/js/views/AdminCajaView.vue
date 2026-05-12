@@ -47,6 +47,7 @@ type CartRow = {
     precio: number;
     existencia: number;
     qty: number;
+    paidQty?: number;
     proveedorname?: string;
     proveedorid?: number;
     proveedorTipo?: 'normal' | 'consigna' | 'porcentaje';
@@ -174,6 +175,12 @@ const linePromoDiscount = (row: CartRow) => {
 };
 
 const lineGross = (row: CartRow) => Math.max(0, row.precio * row.qty);
+
+function rowPaidQty(row: CartRow) {
+    const raw = row.paidQty ?? (Number(row.qty ?? 0) - Number(row.promoFreeQty ?? 0));
+    const paid = Math.trunc(Number(raw) || 0);
+    return clamp(paid, 0, row.existencia);
+}
 
 function computeManualPercent(row: CartRow) {
     const base = lineGross(row);
@@ -780,6 +787,9 @@ async function getPromosForRow(row: CartRow, proveedorIdent?: number) {
 }
 
 async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
+    const paidQty = rowPaidQty(row);
+    row.paidQty = paidQty;
+    row.qty = paidQty;
     row.promoDiscountPct = 0;
     row.promoFreeQty = 0;
     row.promoNote = undefined;
@@ -804,16 +814,16 @@ async function applyPromotionsToRow(row: CartRow, proveedorIdent?: number) {
         const min = Number(bundle.mincompra);
         const freeEach = Number(bundle.gratis);
 
-        if (row.qty >= min) {
-            const groupsFromPaid = Math.floor(row.qty / min);
+        if (paidQty >= min) {
+            const groupsFromPaid = Math.floor(paidQty / min);
             let freebies = groupsFromPaid * freeEach;
 
-            const maxExtra = Math.max(0, row.existencia - row.qty);
+            const maxExtra = Math.max(0, row.existencia - paidQty);
             freebies = clamp(freebies, 0, maxExtra);
 
             row.promoFreeQty = freebies;
             if (freebies > 0) {
-                row.qty += freebies;
+                row.qty = paidQty + freebies;
             }
 
             noteParts.push(`${min}x${min + freeEach} aplicado (+${row.promoFreeQty} gratis)`);
@@ -917,7 +927,8 @@ async function addToCart(producto: Producto) {
     const precioProveedor = Number(producto.precio_proveedor ?? producto.precio);
 
     if (row) {
-        if (row.qty < max) row.qty++;
+        const currentPaidQty = rowPaidQty(row);
+        if (row.qty < max) row.paidQty = currentPaidQty + 1;
         if (!row.proveedorTipo) row.proveedorTipo = proveedorTipo;
         if (row.proveedorPct == null) row.proveedorPct = proveedorPct;
         if (row.precioProveedor == null) row.precioProveedor = precioProveedor;
@@ -937,6 +948,7 @@ async function addToCart(producto: Producto) {
         proveedorname: producto.proveedor?.nombre,
         existencia: max,
         qty: max > 0 ? 1 : 0,
+        paidQty: max > 0 ? 1 : 0,
         proveedorid: proveedorIdent,
         proveedorTipo,
         proveedorPct,
@@ -962,11 +974,12 @@ function removeFromCart(ident: number) {
 
 /** Ensures quantity stays within 0..existence and always an integer. */
 function clampQty(row: CartRow) {
-    row.qty = Math.trunc(Number(row.qty) || 0);
-    if (row.qty < 0) row.qty = 0;
-    if (row.qty > row.existencia) row.qty = row.existencia;
+    row.paidQty = Math.trunc(Number(row.paidQty ?? rowPaidQty(row)) || 0);
+    if (row.paidQty < 0) row.paidQty = 0;
+    if (row.paidQty > row.existencia) row.paidQty = row.existencia;
+    row.qty = row.paidQty;
     clampManualDiscount(row);
-    if (row.qty < 2) {
+    if (row.paidQty < 2) {
         row.manualDiscount = 0;
         row.manualDiscountPercent = undefined;
         row.pairDiscountPct = undefined;
@@ -1658,12 +1671,12 @@ onUnmounted(() => {
                                         <div class="space-y-3 text-[12px] text-gray-600">
                                             <label class="flex flex-col gap-1">
                                                 <span class="font-medium text-gray-700">Cantidad</span>
-                                                <input v-model.number="r.qty" @change="onQtyChange(r)" type="number"
+                                                <input v-model.number="r.paidQty" @change="onQtyChange(r)" type="number"
                                                     min="0" :max="r.existencia"
                                                     class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm" />
                                                 <span v-if="(r.promoFreeQty ?? 0) > 0"
                                                     class="text-[11px] text-gray-500">
-                                                    Cobrar: {{ Math.max(0, r.qty - (r.promoFreeQty ?? 0)) }}
+                                                    Gratis: {{ r.promoFreeQty }} · Se descuentan: {{ r.qty }}
                                                 </span>
                                             </label>
                                             <div class="grid grid-cols-2 gap-3">
@@ -1772,12 +1785,12 @@ onUnmounted(() => {
                                                     currency(r.precio) }}</td>
                                                 <td class="px-2.5 py-1.5 text-right">{{ r.existencia }}</td>
                                                 <td class="px-2.5 py-1.5 text-right">
-                                                    <input v-model.number="r.qty" @change="onQtyChange(r)" type="number"
+                                                    <input v-model.number="r.paidQty" @change="onQtyChange(r)" type="number"
                                                         min="0" :max="r.existencia"
                                                         class="w-20 rounded border px-2 py-1 text-right text-[12px]" />
                                                     <div v-if="(r.promoFreeQty ?? 0) > 0"
                                                         class="text-[11px] text-gray-500">
-                                                        Cobrar: {{ Math.max(0, r.qty - (r.promoFreeQty ?? 0)) }}
+                                                        Gratis: {{ r.promoFreeQty }} · Desc: {{ r.qty }}
                                                     </div>
                                                 </td>
                                                 <td class="px-2.5 py-1.5 text-right">
