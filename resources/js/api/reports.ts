@@ -430,6 +430,53 @@ export interface MensualidadReportResponse {
 }
 
 // ---------------------
+// REPORT PROVEEDORES ELIMINADOS
+// ---------------------
+
+export interface DeletedProviderProduct {
+    id: number;
+    ident: number;
+    nombre: string | null;
+    descripcion: string | null;
+    cantidad: number;
+    existencia: number;
+    precio: number;
+    precio_proveedor: number;
+    valor_publico: number;
+    valor_proveedor: number;
+    deleted_at: string | null;
+}
+
+export interface DeletedProviderReportItem {
+    id: number;
+    ident: number;
+    nombre: string | null;
+    tel: string | null;
+    email: string | null;
+    ciudad: string | null;
+    sucursal: string | null;
+    deleted_at: string | null;
+    delete_reason: string | null;
+    products_count: number;
+    products_quantity: number;
+    public_value: number;
+    provider_value: number;
+    products: DeletedProviderProduct[];
+}
+
+export interface DeletedProvidersReportResponse {
+    generated_at: string;
+    summary: {
+        providers_count: number;
+        products_count: number;
+        products_quantity: number;
+        public_value: number;
+        provider_value: number;
+    };
+    items: DeletedProviderReportItem[];
+}
+
+// ---------------------
 // REPORT CAJA PROVEEDORES (CONDENSADO)
 // ---------------------
 
@@ -650,6 +697,27 @@ export async function getMensualidadReport(params: { download?: boolean } = {}) 
 
     const { data } = await http.get<MensualidadReportResponse>('/reports/mensualidad', { params: query });
     return data;
+}
+
+export async function getDeletedProvidersReport(params: { q?: string } = {}) {
+    const query: Record<string, string> = {};
+    if (params.q) query.q = params.q;
+
+    const { data } = await http.get<DeletedProvidersReportResponse>('/reports/proveedores-eliminados', {
+        params: query,
+    });
+    return data;
+}
+
+export async function downloadDeletedProvidersReport(params: { q?: string } = {}) {
+    const query: Record<string, string | number> = { download: 1 };
+    if (params.q) query.q = params.q;
+
+    const { data } = await http.get('/reports/proveedores-eliminados', {
+        params: query,
+        responseType: 'blob',
+    });
+    return data as Blob;
 }
 
 export type CancelacionReportItem = {

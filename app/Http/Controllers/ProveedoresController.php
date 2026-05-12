@@ -8,6 +8,7 @@ use App\Http\Resources\ProveedorResource;
 use App\Models\Proveedor;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
@@ -20,13 +21,22 @@ class ProveedoresController extends Controller
     {
         $perPage = (int) $request->get('per_page', 20);
 
+        $status = Str::lower((string) $request->get('status', 'active'));
+
         $q = Proveedor::query();
+
+        if (in_array($status, ['deleted', 'eliminados', 'trashed'], true)) {
+            $q->onlyTrashed();
+        } elseif (in_array($status, ['all', 'todos', 'with_deleted'], true)) {
+            $q->withTrashed();
+        }
 
         if ($s = $request->get('search')) {
             $like = '%' . Str::lower($s) . '%';
             $q->where(function ($qq) use ($like) {
                 $qq->whereRaw('LOWER(nombre) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(email) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(tel) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(ciudad) LIKE ?', [$like])
                     ->orWhereRaw('LOWER(sucursal) LIKE ?', [$like]);
             });
@@ -92,10 +102,62 @@ class ProveedoresController extends Controller
     }
 
     // DELETE /api/proveedores/{proveedor}
-    public function destroy(Proveedor $proveedor)
+    public function destroy(Request $request, Proveedor $proveedor)
     {
-        $proveedor->delete();
-        return response()->noContent();
+        $data = $request->validate([
+            'delete_reason' => ['required', 'string', 'min:3', 'max:1000'],
+        ]);
+
+        $reason = trim($data['delete_reason']);
+
+        $receipt = DB::transaction(function () use ($proveedor, $reason) {
+            $products = $proveedor->productos()
+                ->with(['inventario:id,ident,existencia'])
+                ->orderBy('nombre')
+                ->get(['id', 'ident', 'nombre', 'descripcion', 'precio', 'precio_proveedor']);
+
+            $productRows = $products->map(fn ($product) => [
+                'id' => $product->id,
+                'ident' => $product->ident,
+                'nombre' => $product->nombre,
+                'descripcion' => $product->descripcion,
+                'cantidad' => (int) optional($product->inventario)->existencia,
+                'existencia' => (int) optional($product->inventario)->existencia,
+                'precio' => $product->precio,
+                'precio_proveedor' => $product->precio_proveedor,
+            ])->values();
+
+            $proveedor->forceFill([
+                'delete_reason' => $reason,
+            ])->save();
+
+            $proveedor->productos()->delete();
+            $proveedor->delete();
+
+            return [
+                'proveedor' => [
+                    'id' => $proveedor->id,
+                    'ident' => $proveedor->ident,
+                    'nombre' => $proveedor->nombre,
+                    'tel' => $proveedor->tel,
+                    'email' => $proveedor->email,
+                    'ciudad' => $proveedor->ciudad,
+                    'sucursal' => $proveedor->sucursal,
+                    'deleted_at' => optional($proveedor->deleted_at)->toDateTimeString(),
+                    'delete_reason' => $reason,
+                ],
+                'deleted_at' => optional($proveedor->deleted_at)->toDateTimeString(),
+                'delete_reason' => $reason,
+                'products_count' => $products->count(),
+                'products_quantity' => $productRows->sum('cantidad'),
+                'products' => $productRows,
+            ];
+        });
+
+        return response()->json([
+            'message' => 'Proveedor eliminado.',
+            'receipt' => $receipt,
+        ]);
     }
 
     // POST /api/proveedores/import

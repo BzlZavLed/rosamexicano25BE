@@ -939,6 +939,191 @@ class ReportController extends Controller
         ]);
     }
 
+    public function proveedoresEliminados(Request $request)
+    {
+        $search = trim((string) $request->input('q', ''));
+
+        $query = Proveedor::onlyTrashed()
+            ->with(['productos' => function ($q) {
+                $q->onlyTrashed()
+                    ->with(['inventario:id,ident,existencia'])
+                    ->orderBy('nombre')
+                    ->orderBy('ident');
+            }])
+            ->orderByDesc('deleted_at')
+            ->orderBy('nombre');
+
+        if ($search !== '') {
+            $like = '%' . strtolower($search) . '%';
+            $query->where(function ($q) use ($like, $search) {
+                $q->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(COALESCE(email, \'\')) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(COALESCE(tel, \'\')) LIKE ?', [$like])
+                    ->orWhereRaw('LOWER(COALESCE(delete_reason, \'\')) LIKE ?', [$like])
+                    ->orWhereHas('productos', function ($productQuery) use ($like, $search) {
+                        $productQuery->onlyTrashed()
+                            ->where(function ($inner) use ($like, $search) {
+                                $inner->whereRaw('LOWER(nombre) LIKE ?', [$like])
+                                    ->orWhereRaw('LOWER(COALESCE(descripcion, \'\')) LIKE ?', [$like]);
+
+                                if (is_numeric($search)) {
+                                    $inner->orWhere('ident', (int) $search);
+                                }
+                            });
+                    });
+
+                if (is_numeric($search)) {
+                    $q->orWhere('ident', (int) $search);
+                }
+            });
+        }
+
+        $providers = $query->get();
+
+        $items = $providers->map(function (Proveedor $proveedor) {
+            $products = $proveedor->productos->map(function (Producto $product) {
+                $quantity = (int) optional($product->inventario)->existencia;
+                $publicPrice = (float) ($product->precio ?? 0);
+                $providerPrice = (float) ($product->precio_proveedor ?? 0);
+
+                return [
+                    'id' => (int) $product->id,
+                    'ident' => (int) $product->ident,
+                    'nombre' => $product->nombre,
+                    'descripcion' => $product->descripcion,
+                    'cantidad' => $quantity,
+                    'existencia' => $quantity,
+                    'precio' => $publicPrice,
+                    'precio_proveedor' => $providerPrice,
+                    'valor_publico' => round($quantity * $publicPrice, 2),
+                    'valor_proveedor' => round($quantity * $providerPrice, 2),
+                    'deleted_at' => optional($product->deleted_at)->toDateTimeString(),
+                ];
+            })->values();
+
+            return [
+                'id' => (int) $proveedor->id,
+                'ident' => (int) $proveedor->ident,
+                'nombre' => $proveedor->nombre,
+                'tel' => $proveedor->tel,
+                'email' => $proveedor->email,
+                'ciudad' => $proveedor->ciudad,
+                'sucursal' => $proveedor->sucursal,
+                'deleted_at' => optional($proveedor->deleted_at)->toDateTimeString(),
+                'delete_reason' => $proveedor->delete_reason,
+                'products_count' => $products->count(),
+                'products_quantity' => $products->sum('cantidad'),
+                'public_value' => round($products->sum('valor_publico'), 2),
+                'provider_value' => round($products->sum('valor_proveedor'), 2),
+                'products' => $products->toArray(),
+            ];
+        })->values();
+
+        $summary = [
+            'providers_count' => $items->count(),
+            'products_count' => $items->sum('products_count'),
+            'products_quantity' => $items->sum('products_quantity'),
+            'public_value' => round($items->sum('public_value'), 2),
+            'provider_value' => round($items->sum('provider_value'), 2),
+        ];
+
+        if ($request->boolean('download')) {
+            $filename = 'proveedores_eliminados_' . now()->format('Y-m-d_His') . '.csv';
+
+            return response()->streamDownload(function () use ($items) {
+                $handle = fopen('php://output', 'w');
+                fputcsv($handle, [
+                    'proveedor_id',
+                    'proveedor_ident',
+                    'proveedor',
+                    'email',
+                    'telefono',
+                    'ciudad',
+                    'sucursal',
+                    'fecha_baja',
+                    'motivo_baja',
+                    'productos_eliminados',
+                    'piezas_eliminadas',
+                    'valor_publico',
+                    'valor_proveedor',
+                    'producto_id',
+                    'producto_ident',
+                    'producto',
+                    'descripcion',
+                    'cantidad',
+                    'precio_venta',
+                    'precio_proveedor',
+                    'producto_fecha_baja',
+                ]);
+
+                foreach ($items as $provider) {
+                    if (empty($provider['products'])) {
+                        fputcsv($handle, [
+                            $provider['id'],
+                            $provider['ident'],
+                            $provider['nombre'],
+                            $provider['email'],
+                            $provider['tel'],
+                            $provider['ciudad'],
+                            $provider['sucursal'],
+                            $provider['deleted_at'],
+                            $provider['delete_reason'],
+                            $provider['products_count'],
+                            $provider['products_quantity'],
+                            $provider['public_value'],
+                            $provider['provider_value'],
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                        ]);
+                        continue;
+                    }
+
+                    foreach ($provider['products'] as $product) {
+                        fputcsv($handle, [
+                            $provider['id'],
+                            $provider['ident'],
+                            $provider['nombre'],
+                            $provider['email'],
+                            $provider['tel'],
+                            $provider['ciudad'],
+                            $provider['sucursal'],
+                            $provider['deleted_at'],
+                            $provider['delete_reason'],
+                            $provider['products_count'],
+                            $provider['products_quantity'],
+                            $provider['public_value'],
+                            $provider['provider_value'],
+                            $product['id'],
+                            $product['ident'],
+                            $product['nombre'],
+                            $product['descripcion'],
+                            $product['cantidad'],
+                            $product['precio'],
+                            $product['precio_proveedor'],
+                            $product['deleted_at'],
+                        ]);
+                    }
+                }
+
+                fclose($handle);
+            }, $filename, [
+                'Content-Type' => 'text/csv',
+            ]);
+        }
+
+        return response()->json([
+            'generated_at' => now()->toDateTimeString(),
+            'summary' => $summary,
+            'items' => $items->toArray(),
+        ]);
+    }
+
     public function productos(Request $request)
     {
         // Optional query params; endpoint works fine with none:

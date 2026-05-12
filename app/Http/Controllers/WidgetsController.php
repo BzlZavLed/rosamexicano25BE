@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\EstadoCaja;
 use App\Models\Venta;
 use App\Models\VentaDesg;
+use App\Models\HostingServicePayment;
 use App\Models\Proveedor;
 use App\Models\ProviderRestockForecast;
 use App\Models\Usuario;
@@ -17,6 +18,12 @@ use Illuminate\Support\Facades\DB;
 class WidgetsController extends Controller
 {
     private const RESTOCK_HORIZONS = ['2w', '4w', '6w'];
+    private const HOSTING_IMPLEMENTATIONS = [
+        ['key' => 'rosamexicano', 'name' => 'Rosa Mexicano'],
+        ['key' => 'dpekesypekas', 'name' => 'D Pekes y Pekas'],
+    ];
+    private const HOSTING_MONTHLY_AMOUNT = 200.00;
+
     public function cashierSummary(Request $request)
     {
         $fecha = $request->input('fecha');
@@ -175,6 +182,102 @@ class WidgetsController extends Controller
             'horizon' => $horizon,
             'items' => $items,
         ]);
+    }
+
+    public function hostingServicePayments(Request $request)
+    {
+        $months = (int) $request->input('months', 3);
+        if (!in_array($months, [3, 6, 9, 12], true)) {
+            $months = 3;
+        }
+
+        $startDueDate = Carbon::today()->endOfMonth();
+        $payments = collect();
+
+        for ($index = 0; $index < $months; $index += 1) {
+            $dueDate = $startDueDate->copy()->addMonthsNoOverflow($index)->endOfMonth();
+            $serviceMonth = $dueDate->copy()->addDay()->startOfMonth();
+
+            foreach (self::HOSTING_IMPLEMENTATIONS as $implementation) {
+                $payments->push(HostingServicePayment::firstOrCreate(
+                    [
+                        'implementation_key' => $implementation['key'],
+                        'service_month' => $serviceMonth->toDateString(),
+                    ],
+                    [
+                        'implementation_name' => $implementation['name'],
+                        'due_date' => $dueDate->toDateString(),
+                        'amount' => self::HOSTING_MONTHLY_AMOUNT,
+                        'paid' => false,
+                    ]
+                ));
+            }
+        }
+
+        $payments = $payments
+            ->sortBy([
+                ['due_date', 'asc'],
+                ['implementation_name', 'asc'],
+            ])
+            ->values();
+
+        $monthsPayload = $payments
+            ->groupBy(fn (HostingServicePayment $payment) => $payment->due_date->toDateString())
+            ->map(function ($group) {
+                $first = $group->first();
+                $implementations = $group->map(fn (HostingServicePayment $payment) => $this->formatHostingPayment($payment))->values();
+
+                return [
+                    'due_date' => $first->due_date->toDateString(),
+                    'service_month' => $first->service_month->format('Y-m'),
+                    'service_month_label' => $first->service_month->translatedFormat('F Y'),
+                    'total_amount' => round($implementations->sum('amount'), 2),
+                    'paid_amount' => round($implementations->where('paid', true)->sum('amount'), 2),
+                    'all_paid' => $implementations->every(fn ($payment) => (bool) $payment['paid']),
+                    'implementations' => $implementations,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'months_requested' => $months,
+            'monthly_amount_per_implementation' => self::HOSTING_MONTHLY_AMOUNT,
+            'implementations_count' => count(self::HOSTING_IMPLEMENTATIONS),
+            'monthly_total' => self::HOSTING_MONTHLY_AMOUNT * count(self::HOSTING_IMPLEMENTATIONS),
+            'items' => $monthsPayload,
+        ]);
+    }
+
+    public function updateHostingServicePayment(Request $request, HostingServicePayment $payment)
+    {
+        $data = $request->validate([
+            'paid' => ['required', 'boolean'],
+            'paid_at' => ['nullable', 'date'],
+        ]);
+
+        $paid = (bool) $data['paid'];
+        $payment->paid = $paid;
+        $payment->paid_at = $paid
+            ? Carbon::parse($data['paid_at'] ?? Carbon::today())->toDateString()
+            : null;
+        $payment->save();
+
+        return response()->json($this->formatHostingPayment($payment->fresh()));
+    }
+
+    private function formatHostingPayment(HostingServicePayment $payment): array
+    {
+        return [
+            'id' => $payment->id,
+            'implementation_key' => $payment->implementation_key,
+            'implementation_name' => $payment->implementation_name,
+            'service_month' => $payment->service_month->format('Y-m'),
+            'service_month_date' => $payment->service_month->toDateString(),
+            'due_date' => $payment->due_date->toDateString(),
+            'amount' => (float) $payment->amount,
+            'paid' => (bool) $payment->paid,
+            'paid_at' => optional($payment->paid_at)->toDateString(),
+        ];
     }
 
     private function resolveRestockHorizon(Request $request, string $default = '2w'): string

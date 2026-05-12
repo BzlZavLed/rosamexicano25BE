@@ -26,9 +26,31 @@ export type Proveedor = {
     tipo: 'normal' | 'consigna' | 'porcentaje';
     porcentaje_comision?: number | null;
     recommendation?: ProveedorRecommendation | null;
+    deleted_at?: string | null;
+    delete_reason?: string | null;
 };
 
-export async function listProveedores(params?: { search?: string; page?: number; per_page?: number }) {
+export type ProveedorDeletionReceiptProduct = {
+    id: number;
+    ident?: number | null;
+    nombre?: string | null;
+    descripcion?: string | null;
+    cantidad?: number | string | null;
+    existencia?: number | string | null;
+    precio?: number | string | null;
+    precio_proveedor?: number | string | null;
+};
+
+export type ProveedorDeletionReceipt = {
+    proveedor: Pick<Proveedor, 'id' | 'ident' | 'nombre' | 'tel' | 'email' | 'ciudad' | 'sucursal' | 'deleted_at' | 'delete_reason'>;
+    deleted_at?: string | null;
+    delete_reason: string;
+    products_count: number;
+    products_quantity?: number | string | null;
+    products: ProveedorDeletionReceiptProduct[];
+};
+
+export async function listProveedores(params?: { search?: string; page?: number; per_page?: number; status?: 'active' | 'deleted' | 'all' }) {
     const out: any = { ...params };
     if ((params as any)?.q && !params?.search) out.search = (params as any).q;
     delete out.q;
@@ -57,8 +79,11 @@ export async function updateProviderProfile(payload: { email?: string | null; te
     return data as Proveedor;
 }
 
-export async function deleteProveedor(id: number) {
-    await http.delete(`/proveedores/${id}`);
+export async function deleteProveedor(id: number, deleteReason: string) {
+    const { data } = await http.delete(`/proveedores/${id}`, {
+        data: { delete_reason: deleteReason },
+    });
+    return data as { message: string; receipt: ProveedorDeletionReceipt };
 }
 
 export async function listProveedoresAll() {

@@ -23,6 +23,8 @@ class ProveedorResource extends JsonResource
             'sucursal' => $this->sucursal,
             'tipo'     => $this->tipo,
             'porcentaje_comision' => $this->porcentaje_comision,
+            'deleted_at' => optional($this->deleted_at)->toDateTimeString(),
+            'delete_reason' => $this->delete_reason,
             'recommendation' => $this->whenLoaded('recommendedImporte', function ($rec) {
                 if (!$rec) {
                     return null;

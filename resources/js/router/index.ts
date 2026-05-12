@@ -161,6 +161,24 @@ const routes: RouteRecordRaw[] = [
 
 const router = createRouter({history: createWebHistory('/'),routes,});
 
+router.onError((error) => {
+    const message = error?.message ?? '';
+    const staleChunkError = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(message);
+
+    if (!staleChunkError || typeof window === 'undefined') {
+        return;
+    }
+
+    const reloadKey = 'vite:stale-chunk-reload';
+    if (sessionStorage.getItem(reloadKey) === '1') {
+        sessionStorage.removeItem(reloadKey);
+        return;
+    }
+
+    sessionStorage.setItem(reloadKey, '1');
+    window.location.reload();
+});
+
 router.beforeEach(async (to) => {
     const auth = useAuthStore();
 

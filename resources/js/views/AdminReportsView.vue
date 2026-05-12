@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { jsPDF } from 'jspdf';
 import AppLayout from '../components/layout/AppLayout.vue';
-import { listProveedoresAll, type Proveedor } from '../api/proveedores';
+import { listProveedoresAll, type Proveedor, type ProveedorDeletionReceipt } from '../api/proveedores';
+import { buildProveedorDeletionReceiptPdf, openPdfInNewTab } from '../utils/proveedorDeletionReceipt';
 import {
     getCajaReport,
     getEntradasReport,
@@ -14,6 +16,8 @@ import {
     getRestockForecastReport,
     updateRestockPreference,
     getMensualidadReport,
+    getDeletedProvidersReport,
+    downloadDeletedProvidersReport,
     getCancelacionesReport,
     type CajaReportResponse,
     type CajaReportVenta,
@@ -33,6 +37,8 @@ import {
     type RestockForecastResponse,
     type RestockForecastItem,
     type RestockHorizon,
+    type DeletedProvidersReportResponse,
+    type DeletedProviderReportItem,
     type CancelacionesReportResponse,
 } from '../api/reports';
 
@@ -502,7 +508,31 @@ type ReportType =
     | 'flujo-caja'
     | 'restock'
     | 'mensualidad'
+    | 'proveedores-eliminados'
     | 'cancelaciones';
+
+const reportTypeValues: ReportType[] = [
+    'caja',
+    'entradas',
+    'inventario-marca',
+    'caja-condensado',
+    'caja-egresos',
+    'flujo-caja',
+    'restock',
+    'mensualidad',
+    'proveedores-eliminados',
+    'cancelaciones',
+];
+
+function firstQueryValue(value: unknown): string | undefined {
+    if (Array.isArray(value)) return value[0];
+    return typeof value === 'string' ? value : undefined;
+}
+
+function resolveReportType(value: unknown): ReportType | null {
+    const candidate = firstQueryValue(value);
+    return candidate && reportTypeValues.includes(candidate as ReportType) ? (candidate as ReportType) : null;
+}
 
 type MensualidadSortableColumn =
     | 'proveedor'
@@ -569,7 +599,10 @@ const groupedOptions: Array<{ group: string; options: Array<{ value: ReportType;
     },
     {
         group: 'Proveedores',
-        options: [{ value: 'mensualidad', label: 'Mensualidad' }],
+        options: [
+            { value: 'mensualidad', label: 'Mensualidad' },
+            { value: 'proveedores-eliminados', label: 'Proveedores eliminados' },
+        ],
     },
     {
         group: 'Administrativo',
@@ -595,7 +628,9 @@ const cajaSortLabels: Record<CajaSortColumn, string> = {
 };
 
 
-const selected = ref<ReportType>('caja');
+const route = useRoute();
+const router = useRouter();
+const selected = ref<ReportType>(resolveReportType(route.query.report) ?? 'caja');
 const rangeStart = ref('');
 const rangeEnd = ref('');
 
@@ -750,6 +785,12 @@ const mensualidadStatusMap: Record<string, string> = {
     paid: 'Pagado',
 };
 
+const deletedProvidersLoading = ref(false);
+const deletedProvidersError = ref('');
+const deletedProvidersData = ref<DeletedProvidersReportResponse | null>(null);
+const deletedProvidersSearch = ref('');
+const deletedProvidersExpanded = ref<Record<number, boolean>>({});
+
 const reportHeader = computed(() => {
     switch (selected.value) {
         case 'caja':
@@ -764,6 +805,8 @@ const reportHeader = computed(() => {
             return 'Reporte de egresos de caja';
         case 'flujo-caja':
             return 'Reporte de flujo de caja';
+        case 'proveedores-eliminados':
+            return 'Proveedores eliminados';
         default:
             return 'Reporte';
     }
@@ -1162,6 +1205,228 @@ async function fetchMensualidadReport(download = false) {
     } finally {
         mensualidadLoading.value = false;
     }
+}
+
+async function fetchDeletedProvidersReport() {
+    if (selected.value !== 'proveedores-eliminados') return;
+    deletedProvidersLoading.value = true;
+    deletedProvidersError.value = '';
+
+    try {
+        const data = await getDeletedProvidersReport();
+        deletedProvidersData.value = data;
+        deletedProvidersExpanded.value = {};
+    } catch (err: any) {
+        deletedProvidersError.value =
+            err?.response?.data?.message || err?.message || 'No se pudo cargar el reporte de proveedores eliminados.';
+        deletedProvidersData.value = null;
+    } finally {
+        deletedProvidersLoading.value = false;
+    }
+}
+
+async function downloadDeletedProvidersCsv() {
+    deletedProvidersError.value = '';
+    try {
+        const q = deletedProvidersSearch.value.trim();
+        const blob = await downloadDeletedProvidersReport({ q: q || undefined });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'proveedores-eliminados.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    } catch (err: any) {
+        deletedProvidersError.value =
+            err?.response?.data?.message || err?.message || 'No se pudo descargar el reporte de proveedores eliminados.';
+    }
+}
+
+function toggleDeletedProviderExpanded(id: number) {
+    deletedProvidersExpanded.value = {
+        ...deletedProvidersExpanded.value,
+        [id]: !deletedProvidersExpanded.value[id],
+    };
+}
+
+function deletedProviderToReceipt(item: DeletedProviderReportItem): ProveedorDeletionReceipt {
+    const deleteReason = item.delete_reason || 'Sin motivo registrado.';
+    return {
+        proveedor: {
+            id: item.id,
+            ident: item.ident,
+            nombre: item.nombre || 'Proveedor sin nombre',
+            tel: item.tel ?? undefined,
+            email: item.email ?? undefined,
+            ciudad: item.ciudad ?? undefined,
+            sucursal: item.sucursal ?? undefined,
+            deleted_at: item.deleted_at,
+            delete_reason: deleteReason,
+        },
+        deleted_at: item.deleted_at,
+        delete_reason: deleteReason,
+        products_count: item.products_count,
+        products_quantity: item.products_quantity,
+        products: item.products.map((product) => ({
+            id: product.id,
+            ident: product.ident,
+            nombre: product.nombre,
+            descripcion: product.descripcion,
+            cantidad: product.cantidad,
+            existencia: product.existencia,
+            precio: product.precio,
+            precio_proveedor: product.precio_proveedor,
+        })),
+    };
+}
+
+function reprintDeletedProviderReceipt(item: DeletedProviderReportItem) {
+    deletedProvidersError.value = '';
+    const pdf = buildProveedorDeletionReceiptPdf(deletedProviderToReceipt(item));
+    if (!openPdfInNewTab(pdf.base64)) {
+        deletedProvidersError.value = 'El navegador bloqueó la apertura del recibo.';
+    }
+}
+
+function downloadDeletedProvidersPdf() {
+    const items = filteredDeletedProviders.value;
+    if (!items.length) return;
+
+    const totals = deletedProvidersVisibleSummary.value;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'legal' });
+    const marginX = 36;
+    const marginY = 36;
+    const lineHeight = 12;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const columns = [
+        { title: 'SKU', width: 70 },
+        { title: 'Producto / descripcion', width: 310 },
+        { title: 'Cant.', width: 48, align: 'right' },
+        { title: 'Venta', width: 78, align: 'right' },
+        { title: 'Proveedor', width: 78, align: 'right' },
+        { title: 'Valor venta', width: 90, align: 'right' },
+        { title: 'Valor prov.', width: 90, align: 'right' },
+        { title: 'Baja producto', width: 116 },
+    ];
+    const productDescriptionWidth = 300;
+    const columnPositions: number[] = [];
+    let offset = marginX;
+    columns.forEach((col) => {
+        columnPositions.push(offset);
+        offset += col.width;
+    });
+
+    let currentY = marginY;
+    let page = 1;
+    const drawHeader = () => {
+        doc.setFontSize(16);
+        doc.text('Reporte de proveedores eliminados', marginX, currentY);
+        doc.setFontSize(9);
+        doc.text(`Generado: ${new Date().toLocaleString('es-MX')}`, marginX, currentY + 16);
+        const search = deletedProvidersSearch.value.trim();
+        if (search) doc.text(`Filtro: ${search}`, marginX, currentY + 30);
+        doc.text(`Pagina ${page}`, pageWidth - marginX, currentY + 16, { align: 'right' });
+        doc.text(
+            `Proveedores: ${totals.providers} | Productos: ${totals.products} | Piezas: ${totals.quantity} | Valor venta: ${formatCurrency(totals.publicValue)} | Valor proveedor: ${formatCurrency(totals.providerValue)}`,
+            marginX,
+            currentY + 46
+        );
+        currentY += 66;
+    };
+    const ensureSpace = (height: number) => {
+        if (currentY + height > pageHeight - marginY) {
+            doc.addPage();
+            page += 1;
+            currentY = marginY;
+            drawHeader();
+        }
+    };
+    const drawProductHeader = () => {
+        ensureSpace(22);
+        doc.setFontSize(8);
+        doc.setFillColor(243, 244, 246);
+        doc.rect(marginX, currentY, columns.reduce((sum, col) => sum + col.width, 0), 18, 'F');
+        columns.forEach((col, idx) => {
+            const x = columnPositions[idx] ?? marginX;
+            const align = (col.align ?? 'left') as 'left' | 'right';
+            doc.text(col.title, align === 'right' ? x + col.width - 5 : x + 5, currentY + 12, { align });
+        });
+        currentY += 22;
+    };
+
+    drawHeader();
+
+    items.forEach((provider) => {
+        const providerTitle = `${provider.nombre ?? 'Proveedor sin nombre'} (#${provider.ident})`;
+        const reason = provider.delete_reason || 'Sin motivo registrado';
+        const reasonLines = doc.splitTextToSize(`Motivo: ${reason}`, pageWidth - marginX * 2);
+        ensureSpace(46 + reasonLines.length * lineHeight);
+
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.text(providerTitle, marginX, currentY);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.text(`Baja: ${formatDateTime(provider.deleted_at)} | Email: ${provider.email ?? '--'} | Tel: ${provider.tel ?? '--'}`, marginX, currentY + 14);
+        reasonLines.forEach((line: string, index: number) => {
+            doc.text(line, marginX, currentY + 28 + index * lineHeight);
+        });
+        currentY += 34 + reasonLines.length * lineHeight;
+        doc.text(
+            `Productos eliminados: ${provider.products_count} | Piezas: ${provider.products_quantity} | Valor venta: ${formatCurrency(provider.public_value)} | Valor proveedor: ${formatCurrency(provider.provider_value)}`,
+            marginX,
+            currentY
+        );
+        currentY += 12;
+
+        if (!provider.products.length) {
+            ensureSpace(18);
+            doc.text('Sin productos eliminados ligados a este proveedor.', marginX, currentY + 10);
+            currentY += 22;
+            return;
+        }
+
+        drawProductHeader();
+        provider.products.forEach((product) => {
+            const productText = [product.nombre || 'Producto sin nombre', product.descripcion || ''].filter(Boolean).join(' - ');
+            const productLines = doc.splitTextToSize(productText, productDescriptionWidth);
+            const rowHeight = Math.max(18, productLines.length * lineHeight + 6);
+            ensureSpace(rowHeight);
+            doc.setFontSize(8);
+
+            const rowValues = [
+                String(product.ident ?? ''),
+                productLines,
+                String(product.cantidad ?? 0),
+                formatCurrency(product.precio),
+                formatCurrency(product.precio_proveedor),
+                formatCurrency(product.valor_publico),
+                formatCurrency(product.valor_proveedor),
+                formatDateTime(product.deleted_at),
+            ];
+
+            rowValues.forEach((value, idx) => {
+                const col = columns[idx] ?? { title: '', width: 80 };
+                const x = columnPositions[idx] ?? marginX;
+                const align = (col.align ?? 'left') as 'left' | 'right';
+                const textX = align === 'right' ? x + col.width - 5 : x + 5;
+                if (Array.isArray(value)) {
+                    value.forEach((line: string, lineIndex: number) => {
+                        doc.text(line, textX, currentY + 12 + lineIndex * lineHeight, { align });
+                    });
+                } else {
+                    doc.text(value, textX, currentY + 12, { align });
+                }
+            });
+            currentY += rowHeight;
+        });
+        currentY += 14;
+    });
+
+    doc.save('proveedores-eliminados.pdf');
 }
 
 async function fetchCancelacionesReport() {
@@ -1919,6 +2184,55 @@ const mensualidadSummary = computed(() => {
     };
 });
 
+const filteredDeletedProviders = computed<DeletedProviderReportItem[]>(() => {
+    if (!deletedProvidersData.value) return [];
+    const search = deletedProvidersSearch.value.trim().toLowerCase();
+    const items = deletedProvidersData.value.items ?? [];
+    if (!search) return items;
+
+    return items.filter((item) => {
+        const providerFields = [
+            item.ident?.toString() ?? '',
+            item.nombre ?? '',
+            item.email ?? '',
+            item.tel ?? '',
+            item.ciudad ?? '',
+            item.sucursal ?? '',
+            item.delete_reason ?? '',
+        ];
+        const productMatch = item.products.some((product) => {
+            const productFields = [
+                product.ident?.toString() ?? '',
+                product.nombre ?? '',
+                product.descripcion ?? '',
+            ];
+            return productFields.some((value) => value.toLowerCase().includes(search));
+        });
+
+        return providerFields.some((value) => value.toLowerCase().includes(search)) || productMatch;
+    });
+});
+
+const deletedProvidersVisibleSummary = computed(() => {
+    return filteredDeletedProviders.value.reduce(
+        (acc, item) => {
+            acc.providers += 1;
+            acc.products += Number(item.products_count ?? 0);
+            acc.quantity += Number(item.products_quantity ?? 0);
+            acc.publicValue += Number(item.public_value ?? 0);
+            acc.providerValue += Number(item.provider_value ?? 0);
+            return acc;
+        },
+        {
+            providers: 0,
+            products: 0,
+            quantity: 0,
+            publicValue: 0,
+            providerValue: 0,
+        }
+    );
+});
+
 const filteredMensualidadItems = computed<MensualidadReportItem[]>(() => {
     if (!mensualidadData.value) return [];
     const search = mensualidadSearch.value.trim().toLowerCase();
@@ -2363,6 +2677,32 @@ function downloadProveedorModalPdf() {
 }
 
 watch(
+    () => route.query.report,
+    (value) => {
+        const nextReport = resolveReportType(value) ?? 'caja';
+        if (nextReport !== selected.value) {
+            selected.value = nextReport;
+        }
+    }
+);
+
+watch(
+    () => selected.value,
+    (val) => {
+        const currentReport = resolveReportType(route.query.report) ?? 'caja';
+        if (currentReport === val) return;
+
+        const query = { ...route.query };
+        if (val === 'caja') {
+            delete query.report;
+        } else {
+            query.report = val;
+        }
+        router.replace({ query }).catch(() => {});
+    }
+);
+
+watch(
     () => selected.value,
     (val) => {
         if (val === 'entradas') {
@@ -2412,6 +2752,12 @@ watch(
                 fetchMensualidadReport();
             }
         }
+        if (val === 'proveedores-eliminados') {
+            deletedProvidersError.value = '';
+            if (!deletedProvidersData.value) {
+                fetchDeletedProvidersReport();
+            }
+        }
         if (val === 'cancelaciones') {
             cancelacionesError.value = '';
             if (!cancelacionesData.value && rangeStart.value) {
@@ -2419,7 +2765,7 @@ watch(
             }
         }
     },
-    { immediate: false }
+    { immediate: true }
 );
 
 watch(
@@ -3766,6 +4112,173 @@ watch(
                                 </div>
                             </template>
                             <p v-else class="text-xs text-gray-500">Consulta el reporte para ver los cobros del mes seleccionado.</p>
+                        </div>
+                    </template>
+
+                    <template v-else-if="selected === 'proveedores-eliminados'">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                                :disabled="deletedProvidersLoading" @click="fetchDeletedProvidersReport">
+                                <span v-if="deletedProvidersLoading">Consultando…</span>
+                                <span v-else>Consultar reporte</span>
+                            </button>
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                :disabled="deletedProvidersLoading || !deletedProvidersData?.items.length"
+                                @click="downloadDeletedProvidersCsv">
+                                Descargar CSV
+                            </button>
+                            <button type="button"
+                                class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                :disabled="deletedProvidersLoading || !filteredDeletedProviders.length"
+                                @click="downloadDeletedProvidersPdf">
+                                Descargar PDF
+                            </button>
+                        </div>
+                        <p v-if="deletedProvidersError"
+                            class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            {{ deletedProvidersError }}
+                        </p>
+                        <div v-else class="mt-4 space-y-4">
+                            <div v-if="deletedProvidersLoading" class="text-xs text-gray-500">Cargando datos…</div>
+                            <template v-else-if="deletedProvidersData">
+                                <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
+                                    <div>
+                                        Generado:
+                                        <span class="font-semibold text-gray-900">{{ formatDateTime(deletedProvidersData.generated_at) }}</span>
+                                    </div>
+                                    <label class="flex items-center gap-2 text-xs text-gray-600">
+                                        <span class="font-medium text-gray-700">Buscar</span>
+                                        <input v-model="deletedProvidersSearch" type="search"
+                                            placeholder="Proveedor, producto o motivo…"
+                                            class="w-72 rounded border border-gray-300 px-3 py-1 text-xs focus:border-gray-900 focus:ring-gray-900" />
+                                    </label>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-3 text-[11px] text-gray-500 lg:grid-cols-5">
+                                    <div>
+                                        <span class="block font-semibold text-gray-900">{{ deletedProvidersVisibleSummary.providers }}</span>
+                                        <span>Proveedores</span>
+                                    </div>
+                                    <div>
+                                        <span class="block font-semibold text-gray-900">{{ deletedProvidersVisibleSummary.products }}</span>
+                                        <span>Productos eliminados</span>
+                                    </div>
+                                    <div>
+                                        <span class="block font-semibold text-gray-900">{{ deletedProvidersVisibleSummary.quantity }}</span>
+                                        <span>Piezas en inventario</span>
+                                    </div>
+                                    <div>
+                                        <span class="block font-semibold text-gray-900">{{ formatCurrency(deletedProvidersVisibleSummary.publicValue) }}</span>
+                                        <span>Valor venta</span>
+                                    </div>
+                                    <div>
+                                        <span class="block font-semibold text-gray-900">{{ formatCurrency(deletedProvidersVisibleSummary.providerValue) }}</span>
+                                        <span>Valor proveedor</span>
+                                    </div>
+                                </div>
+
+                                <div v-if="!filteredDeletedProviders.length"
+                                    class="rounded-2xl border border-dashed border-gray-200 bg-white/60 px-4 py-6 text-center text-sm text-gray-500">
+                                    No hay proveedores eliminados para los filtros seleccionados.
+                                </div>
+                                <div v-else :class="tableClasses.wrapper">
+                                    <table :class="tableClasses.table">
+                                        <thead :class="tableClasses.head">
+                                            <tr>
+                                                <th class="px-3 py-2">Fecha baja</th>
+                                                <th class="px-3 py-2">Proveedor</th>
+                                                <th class="px-3 py-2">Contacto</th>
+                                                <th class="px-3 py-2">Motivo</th>
+                                                <th class="px-3 py-2 text-right">Productos</th>
+                                                <th class="px-3 py-2 text-right">Piezas</th>
+                                                <th class="px-3 py-2 text-right">Valor</th>
+                                                <th class="px-3 py-2 text-left">Detalle</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody :class="tableClasses.body">
+                                            <template v-for="item in filteredDeletedProviders" :key="item.id">
+                                                <tr :class="tableClasses.row">
+                                                    <td class="px-3 py-2">
+                                                        <div class="font-medium text-gray-900">{{ formatDateTime(item.deleted_at) }}</div>
+                                                    </td>
+                                                    <td class="px-3 py-2">
+                                                        <div class="font-semibold text-gray-900">{{ item.nombre ?? 'Proveedor sin nombre' }}</div>
+                                                        <p class="text-[11px] text-gray-500">Ident: {{ item.ident }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2">
+                                                        <div>{{ item.email ?? 'Sin correo' }}</div>
+                                                        <p class="text-[11px] text-gray-500">{{ item.tel ?? 'Sin teléfono' }}</p>
+                                                    </td>
+                                                    <td class="max-w-xs px-3 py-2">
+                                                        <p class="line-clamp-3">{{ item.delete_reason ?? 'Sin motivo registrado' }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2 text-right">{{ item.products_count }}</td>
+                                                    <td class="px-3 py-2 text-right">{{ item.products_quantity }}</td>
+                                                    <td class="px-3 py-2 text-right">
+                                                        <div class="font-medium text-gray-900">{{ formatCurrency(item.public_value) }}</div>
+                                                        <p class="text-[11px] text-gray-500">Prov. {{ formatCurrency(item.provider_value) }}</p>
+                                                    </td>
+                                                    <td class="px-3 py-2">
+                                                        <div class="flex flex-col items-start gap-1">
+                                                            <button type="button" class="text-xs text-gray-500 underline"
+                                                                @click="toggleDeletedProviderExpanded(item.id)">
+                                                                {{ deletedProvidersExpanded[item.id] ? 'Ocultar' : 'Ver' }} productos
+                                                            </button>
+                                                            <button type="button" class="text-xs font-medium text-gray-900 underline"
+                                                                @click="reprintDeletedProviderReceipt(item)">
+                                                                Reimprimir recibo
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                                <tr v-if="deletedProvidersExpanded[item.id]" class="bg-gray-50">
+                                                    <td colspan="8" class="px-4 py-3">
+                                                        <div class="space-y-2 text-xs text-gray-600">
+                                                            <p class="font-semibold text-gray-800">Productos eliminados</p>
+                                                            <div v-if="!item.products.length" class="rounded border border-gray-200 bg-white px-3 py-2">
+                                                                No hay productos eliminados ligados a este proveedor.
+                                                            </div>
+                                                            <div v-else class="overflow-x-auto rounded border border-gray-200 bg-white">
+                                                                <table class="min-w-full text-[11px]">
+                                                                    <thead class="bg-gray-50 text-left uppercase tracking-wide text-gray-500">
+                                                                        <tr>
+                                                                            <th class="px-3 py-2">SKU</th>
+                                                                            <th class="px-3 py-2">Producto</th>
+                                                                            <th class="px-3 py-2">Descripción</th>
+                                                                            <th class="px-3 py-2 text-right">Cantidad</th>
+                                                                            <th class="px-3 py-2 text-right">Precio venta</th>
+                                                                            <th class="px-3 py-2 text-right">Precio proveedor</th>
+                                                                            <th class="px-3 py-2 text-right">Valor venta</th>
+                                                                            <th class="px-3 py-2 text-right">Valor proveedor</th>
+                                                                            <th class="px-3 py-2">Fecha baja</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody class="divide-y divide-gray-100">
+                                                                        <tr v-for="product in item.products" :key="`${item.id}-${product.id}`">
+                                                                            <td class="px-3 py-2">{{ product.ident }}</td>
+                                                                            <td class="px-3 py-2 font-medium text-gray-900">{{ product.nombre ?? 'Producto sin nombre' }}</td>
+                                                                            <td class="px-3 py-2">{{ product.descripcion ?? '—' }}</td>
+                                                                            <td class="px-3 py-2 text-right">{{ product.cantidad }}</td>
+                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(product.precio) }}</td>
+                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(product.precio_proveedor) }}</td>
+                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(product.valor_publico) }}</td>
+                                                                            <td class="px-3 py-2 text-right">{{ formatCurrency(product.valor_proveedor) }}</td>
+                                                                            <td class="px-3 py-2">{{ formatDateTime(product.deleted_at) }}</td>
+                                                                        </tr>
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </template>
+                            <div v-else class="text-xs text-gray-500">No hay datos disponibles.</div>
                         </div>
                     </template>
 

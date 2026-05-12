@@ -11,6 +11,7 @@ const CashierSummaryWidget = defineAsyncComponent(() => import('../components/wi
 const TopProductsWidget = defineAsyncComponent(() => import('../components/widgets/TopProductsWidget.vue'))
 const RestockAlertsWidget = defineAsyncComponent(() => import('../components/widgets/RestockAlertsWidget.vue'))
 const InventoryProposalWidget = defineAsyncComponent(() => import('../components/widgets/InventoryProposalWidget.vue'))
+const HostingServicePaymentsWidget = defineAsyncComponent(() => import('../components/widgets/HostingServicePaymentsWidget.vue'))
 
 const auth = useAuthStore();
 const isCashier = computed(() => auth.isCashier);
@@ -30,6 +31,13 @@ const canShowCashierWidget = computed(() => isCashier.value && auth.allowedModul
             </p>
 
             <template v-if="!isCashier">
+                <Suspense>
+                    <HostingServicePaymentsWidget />
+                    <template #fallback>
+                        <div class="h-40 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />
+                    </template>
+                </Suspense>
+
                 <!-- Widgets row -->
                 <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mt-4 auto-rows-auto">
                     <Suspense>

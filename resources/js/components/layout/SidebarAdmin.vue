@@ -130,6 +130,12 @@ const showAdminTools = computed(() => showUsuarios.value || showRoles.value);
                         <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                     </svg>
                 </SidebarItem>
+                <SidebarItem v-if="canUse('reportes')" :to="{ path: '/admin/reportes', query: { report: 'proveedores-eliminados' } }" label="Proveedores eliminados">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 7h14M8 7V5h8v2M7 7l1 12h8l1-12" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 11v4M14 11v4" />
+                    </svg>
+                </SidebarItem>
                 <SidebarItem v-if="canUse('analisis')" :to="{ path: '/admin/analisis' }" label="Análisis histórico">
             <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 19h16M4 12h16M4 5h16" />

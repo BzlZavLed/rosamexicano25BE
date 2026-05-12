@@ -3,9 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Producto extends Model
 {
+    use SoftDeletes;
+
     protected $table = 'producto';   // existing table
     protected $primaryKey = 'id';
     public $timestamps = false;
@@ -27,6 +30,7 @@ class Producto extends Model
         'proveedorid' => 'integer',
         'precio' => 'decimal:2',
         'precio_proveedor' => 'decimal:2',
+        'deleted_at' => 'datetime',
     ];
 
     public function proveedor()

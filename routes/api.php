@@ -119,6 +119,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/widgets/cashier-summary', [WidgetsController::class, 'cashierSummary']);
     Route::get('/widgets/top-products', [WidgetsController::class, 'topProducts']);
     Route::get('/widgets/restock-alerts', [WidgetsController::class, 'restockAlerts']);
+    Route::get('/widgets/hosting-service-payments', [WidgetsController::class, 'hostingServicePayments']);
+    Route::patch('/widgets/hosting-service-payments/{payment}', [WidgetsController::class, 'updateHostingServicePayment'])
+        ->whereNumber('payment');
 
     // Reports
     Route::get('/reports/caja', [ReportController::class, 'caja']);
@@ -147,6 +150,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/analysis/transition-report', [AnalysisController::class, 'transitionReport']);
     Route::get('/analysis/transition-report/provider', [AnalysisController::class, 'transitionProviderDetails']);
     Route::get('/reports/mensualidad', [ReportController::class, 'mensualidad']);
+    Route::get('/reports/proveedores-eliminados', [ReportController::class, 'proveedoresEliminados']);
     Route::get('/reports/productos', [ReportController::class, 'productos']);
     Route::get('/reports/inventario', [ReportController::class, 'inventario']);
     Route::get('/reports/entradas', [ReportController::class, 'entradas']);

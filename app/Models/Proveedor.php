@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
@@ -15,7 +16,7 @@ use Ramsey\Uuid\UuidInterface;
 
 class Proveedor extends Authenticatable implements WebAuthnAuthenticatable
 {
-    use HasApiTokens, WebAuthnAuthentication;
+    use HasApiTokens, WebAuthnAuthentication, SoftDeletes;
 
     protected $table = 'proveedores';
     protected $primaryKey = 'id';
@@ -34,6 +35,7 @@ class Proveedor extends Authenticatable implements WebAuthnAuthenticatable
         'sucursal',
         'tipo',
         'porcentaje_comision',
+        'delete_reason',
         // 'passhash',
     ];
 
@@ -41,6 +43,7 @@ class Proveedor extends Authenticatable implements WebAuthnAuthenticatable
         'ident'   => 'integer',
         'importe' => 'decimal:2',
         'porcentaje_comision' => 'integer',
+        'deleted_at' => 'datetime',
     ];
 
     protected $hidden = ['passhash'];

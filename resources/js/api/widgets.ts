@@ -84,3 +84,48 @@ export async function getRestockAlerts(params: { horizon?: RestockHorizon; limit
     });
     return data;
 }
+
+export type HostingServicePayment = {
+    id: number;
+    implementation_key: string;
+    implementation_name: string;
+    service_month: string;
+    service_month_date: string;
+    due_date: string;
+    amount: number;
+    paid: boolean;
+    paid_at: string | null;
+};
+
+export type HostingServicePaymentMonth = {
+    due_date: string;
+    service_month: string;
+    service_month_label: string;
+    total_amount: number;
+    paid_amount: number;
+    all_paid: boolean;
+    implementations: HostingServicePayment[];
+};
+
+export type HostingServicePaymentsResponse = {
+    months_requested: number;
+    monthly_amount_per_implementation: number;
+    implementations_count: number;
+    monthly_total: number;
+    items: HostingServicePaymentMonth[];
+};
+
+export async function getHostingServicePayments(params: { months?: 3 | 6 | 9 | 12 } = {}) {
+    const { data } = await http.get<HostingServicePaymentsResponse>('/widgets/hosting-service-payments', {
+        params: params.months ? { months: params.months } : undefined,
+    });
+    return data;
+}
+
+export async function updateHostingServicePayment(
+    id: number,
+    payload: { paid: boolean; paid_at?: string | null }
+) {
+    const { data } = await http.patch<HostingServicePayment>(`/widgets/hosting-service-payments/${id}`, payload);
+    return data;
+}

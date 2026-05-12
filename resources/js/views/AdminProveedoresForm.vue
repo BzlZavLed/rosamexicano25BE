@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch, computed } from 'vue';
 import AppLayout from '../components/layout/AppLayout.vue';
+import { resendMailerEmail } from '../api/mailer';
+import {
+    buildProveedorDeletionReceiptPdf as buildDeletionReceiptPdf,
+    openPdfInNewTab,
+} from '../utils/proveedorDeletionReceipt';
 import {
     listProveedores,
     createProveedor,
@@ -8,6 +13,7 @@ import {
     deleteProveedor,
     importProveedoresCsv,
     type Proveedor,
+    type ProveedorDeletionReceipt,
     type ProveedorImportSummary,
 } from '../api/proveedores';
 
@@ -35,6 +41,7 @@ const pageNumbers = computed(() => {
 const filterEmailMode = ref<'all' | 'with' | 'without'>('all');
 const filterTipo = ref<'all' | 'normal' | 'consigna' | 'porcentaje'>('all');
 const filterImporteConValor = ref(false);
+const filterDeletedMode = ref<'active' | 'deleted' | 'all'>('active');
 const visibleProveedores = computed(() => {
     return proveedores.value.filter((p) => {
         if (filterEmailMode.value === 'with') {
@@ -136,6 +143,16 @@ const showImporteField = computed(() => form.tipo === 'normal');
 const showPorcentajeField = computed(() => form.tipo === 'porcentaje');
 const selectedProveedor = computed(() => proveedores.value.find((p) => p.id === selectedId.value) || null);
 const selectedRecommendation = computed(() => selectedProveedor.value?.recommendation ?? null);
+const selectedIsDeleted = computed(() => Boolean(selectedProveedor.value?.deleted_at));
+
+const deleteModalOpen = ref(false);
+const deleteReason = ref('');
+const deleteTarget = ref<Proveedor | null>(null);
+const deleteReceipt = ref<ProveedorDeletionReceipt | null>(null);
+const lastDeletionPdf = ref<{ base64: string; filename: string } | null>(null);
+const sendingDeletionReceipt = ref(false);
+const deletionReceiptMessage = ref('');
+const deletionReceiptError = ref('');
 
 
 watch(() => form.tipo, (value) => {
@@ -153,6 +170,78 @@ function formatCurrency(amount: number, currencyCode = 'MXN', locale = 'es-MX') 
         return new Intl.NumberFormat(locale, { style: 'currency', currency: currencyCode }).format(amount);
     } catch {
         return `$${amount.toFixed(2)}`;
+    }
+}
+
+function formatDateTimeLabel(value?: string | null) {
+    if (!value) return 'Fecha no disponible';
+    const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat('es-MX', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+    }).format(date);
+}
+
+function getDeletionReceiptPdf() {
+    if (!deleteReceipt.value) return null;
+    if (!lastDeletionPdf.value) {
+        lastDeletionPdf.value = buildDeletionReceiptPdf(deleteReceipt.value);
+    }
+    return lastDeletionPdf.value;
+}
+
+function openDeletionReceipt() {
+    deletionReceiptError.value = '';
+    const pdf = getDeletionReceiptPdf();
+    if (!pdf) return;
+    if (!openPdfInNewTab(pdf.base64)) {
+        deletionReceiptError.value = 'El navegador bloqueó la apertura del recibo.';
+    }
+}
+
+async function sendDeletionReceiptEmail() {
+    deletionReceiptError.value = '';
+    deletionReceiptMessage.value = '';
+    const receipt = deleteReceipt.value;
+    if (!receipt) return;
+    const email = (receipt.proveedor.email ?? '').trim();
+    if (!email) {
+        deletionReceiptError.value = 'El proveedor no tiene correo registrado.';
+        return;
+    }
+
+    const pdf = getDeletionReceiptPdf();
+    if (!pdf) {
+        deletionReceiptError.value = 'No se pudo generar el PDF del recibo.';
+        return;
+    }
+
+    sendingDeletionReceipt.value = true;
+    try {
+        const response = await resendMailerEmail({
+            email,
+            subject: `Aviso de baja - ${receipt.proveedor.nombre}`,
+            body: [
+                `Hola ${receipt.proveedor.nombre}.`,
+                '',
+                'Adjuntamos el comprobante de baja de proveedor en Rosa Mexicano.',
+                `Motivo registrado: ${receipt.delete_reason}`,
+                `Productos dados de baja: ${receipt.products_count}`,
+            ].join('\n'),
+            pdf: pdf.base64,
+        });
+
+        if (response?.mail?.sent === false) {
+            throw new Error(response?.message || 'No se pudo enviar el correo.');
+        }
+
+        deletionReceiptMessage.value = 'Recibo enviado al proveedor.';
+    } catch (e: any) {
+        deletionReceiptError.value = e?.response?.data?.message || e?.message || 'No se pudo enviar el recibo.';
+    } finally {
+        sendingDeletionReceipt.value = false;
     }
 }
 
@@ -250,6 +339,7 @@ function resetBulkDrafts() {
 async function saveBulkTipos() {
     const dirtyEntries = proveedores.value
         .map((provider) => {
+            if (provider.deleted_at) return null;
             const draft = bulkTipoDrafts[provider.id];
             if (!draft || !draft.dirty) return null;
             return { provider, draft };
@@ -306,7 +396,12 @@ async function saveBulkTipos() {
 async function loadList() {
     loading.value = true;
     try {
-        const params = q.value ? { search: q.value, page: pagination.page, per_page: pagination.perPage } : { page: pagination.page, per_page: pagination.perPage };
+        const params = {
+            page: pagination.page,
+            per_page: pagination.perPage,
+            status: filterDeletedMode.value,
+            ...(q.value ? { search: q.value } : {}),
+        };
         const data = await listProveedores(params);
         const rows = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
         proveedores.value = rows;
@@ -394,14 +489,45 @@ async function submitCreateOrUpdate() {
     }
 }
 
-async function removeProveedor() {
+function requestRemoveProveedor() {
     if (!form.id) return;
-    if (!confirm('¿Eliminar proveedor?')) return;
+    const target = selectedProveedor.value;
+    if (!target || target.deleted_at) return;
+    deleteTarget.value = target;
+    deleteReason.value = '';
+    deletionReceiptError.value = '';
+    deletionReceiptMessage.value = '';
+    deleteReceipt.value = null;
+    lastDeletionPdf.value = null;
+    deleteModalOpen.value = true;
+}
+
+function closeDeleteModal() {
+    if (saving.value) return;
+    deleteModalOpen.value = false;
+    deleteTarget.value = null;
+    deleteReason.value = '';
+}
+
+async function confirmRemoveProveedor() {
+    const target = deleteTarget.value;
+    if (!target?.id) return;
+    const reason = deleteReason.value.trim();
+    if (reason.length < 3) {
+        deletionReceiptError.value = 'Escribe el motivo de baja.';
+        return;
+    }
+
     saving.value = true; error.value = ''; message.value = '';
     try {
-        await deleteProveedor(form.id);
-        message.value = 'Proveedor eliminado';
+        const response = await deleteProveedor(target.id, reason);
+        deleteReceipt.value = response.receipt;
+        lastDeletionPdf.value = response.receipt ? buildDeletionReceiptPdf(response.receipt) : null;
+        deleteModalOpen.value = false;
+        deleteTarget.value = null;
+        deleteReason.value = '';
         resetForm();
+        message.value = `Proveedor eliminado. Productos dados de baja: ${response.receipt?.products_count ?? 0}.`;
         await loadList();
     } catch (e: any) {
         error.value = e?.response?.data?.message || 'No se pudo eliminar';
@@ -465,13 +591,19 @@ watch(() => pagination.page, (newVal, oldVal) => {
     loadList();
 });
 
-watch([filterEmailMode, filterImporteConValor], () => {
+watch([filterEmailMode, filterImporteConValor, filterTipo], () => {
     if (selectedId.value != null) {
         const stillVisible = visibleProveedores.value.some((p) => p.id === selectedId.value);
         if (!stillVisible) {
             resetForm();
         }
     }
+});
+
+watch(filterDeletedMode, () => {
+    pagination.page = 1;
+    resetForm();
+    loadList();
 });
 
 onMounted(async () => {
@@ -506,6 +638,38 @@ onMounted(async () => {
                 <div v-if="error"
                     class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-2 text-sm">
                     {{ error }}
+                </div>
+                <div v-if="selectedIsDeleted && selectedProveedor"
+                    class="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
+                    <p class="font-semibold">Proveedor eliminado el {{ formatDateTimeLabel(selectedProveedor.deleted_at) }}</p>
+                    <p class="mt-1">Motivo: {{ selectedProveedor.delete_reason || 'Sin motivo registrado.' }}</p>
+                </div>
+                <div v-if="deleteReceipt"
+                    class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 px-4 py-3 text-sm space-y-3">
+                    <div>
+                        <p class="font-semibold">Recibo de baja generado</p>
+                        <p>
+                            {{ deleteReceipt.proveedor.nombre }} · {{ deleteReceipt.products_count }} productos dados de baja.
+                        </p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button"
+                            class="rounded-lg border border-emerald-600 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-white"
+                            @click="openDeletionReceipt">
+                            Abrir / imprimir recibo
+                        </button>
+                        <button type="button"
+                            class="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                            :disabled="sendingDeletionReceipt || !deleteReceipt.proveedor.email"
+                            @click="sendDeletionReceiptEmail">
+                            {{ sendingDeletionReceipt ? 'Enviando…' : 'Enviar al proveedor' }}
+                        </button>
+                        <span v-if="!deleteReceipt.proveedor.email" class="self-center text-xs text-amber-700">
+                            Sin correo registrado.
+                        </span>
+                    </div>
+                    <p v-if="deletionReceiptMessage" class="text-xs font-semibold text-emerald-700">{{ deletionReceiptMessage }}</p>
+                    <p v-if="deletionReceiptError" class="text-xs font-semibold text-rose-700">{{ deletionReceiptError }}</p>
                 </div>
 
                 <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
@@ -632,13 +796,13 @@ onMounted(async () => {
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                    <button type="button" :disabled="saving" @click="submitCreateOrUpdate"
+                    <button type="button" :disabled="saving || selectedIsDeleted" @click="submitCreateOrUpdate"
                         class="rounded-lg bg-[#E4007C] hover:bg-[#cc006f] text-white px-4 py-2 text-sm disabled:opacity-60">
                         {{ form.id ? 'Actualizar proveedor' : 'Crear proveedor' }}
                     </button>
-                    <button type="button" :disabled="!form.id || saving" @click="removeProveedor"
+                    <button type="button" :disabled="!form.id || saving || selectedIsDeleted" @click="requestRemoveProveedor"
                         class="rounded-lg bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 text-sm disabled:opacity-60">
-                        Eliminar proveedor
+                        {{ selectedIsDeleted ? 'Proveedor eliminado' : 'Eliminar proveedor' }}
                     </button>
                 </div>
             </section>
@@ -692,6 +856,15 @@ onMounted(async () => {
                                 <option value="normal">Normal</option>
                                 <option value="consigna">Consigna</option>
                                 <option value="porcentaje">Por porcentaje</option>
+                            </select>
+                        </label>
+                        <label class="inline-flex items-center gap-2">
+                            <span class="font-medium text-gray-700">Estado</span>
+                            <select v-model="filterDeletedMode"
+                                class="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:ring-gray-900">
+                                <option value="active">Activos</option>
+                                <option value="deleted">Eliminados</option>
+                                <option value="all">Todos</option>
                             </select>
                         </label>
                         <label class="inline-flex items-center gap-2">
@@ -761,11 +934,13 @@ onMounted(async () => {
                                 <th class="text-left font-medium px-3 py-2">Ciudad</th>
                                 <th class="text-left font-medium px-3 py-2">Tipo proveedor</th>
                                 <th class="text-left font-medium px-3 py-2">Importe mensual</th>
+                                <th class="text-left font-medium px-3 py-2">Estado</th>
+                                <th class="text-left font-medium px-3 py-2">Motivo baja</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr v-for="p in visibleProveedores" :key="p.id" @click="selectRow(p)"
-                                :class="['cursor-pointer hover:bg-gray-50 transition', selectedId === p.id ? 'bg-gray-100' : '', bulkTipoDrafts[p.id]?.dirty ? 'ring-1 ring-rose-200' : '']">
+                                :class="['cursor-pointer hover:bg-gray-50 transition', selectedId === p.id ? 'bg-gray-100' : '', p.deleted_at ? 'text-gray-500 bg-gray-50/60' : '', bulkTipoDrafts[p.id]?.dirty ? 'ring-1 ring-rose-200' : '']">
                                 <td class="px-3 py-2">{{ p.id }}</td>
                                 <td class="px-3 py-2">{{ p.ident }}</td>
                                 <td class="px-3 py-2">{{ p.nombre }}</td>
@@ -775,6 +950,7 @@ onMounted(async () => {
                                 <td class="px-3 py-2 text-xs">
                                     <select class="w-full rounded-lg border-gray-300 text-sm capitalize focus:border-gray-800 focus:ring-gray-800"
                                         :value="ensureDraft(p).tipo"
+                                        :disabled="Boolean(p.deleted_at)"
                                         @click.stop
                                         @change="handleBulkTipoChange(p, ($event.target as HTMLSelectElement).value)">
                                         <option value="normal">Normal</option>
@@ -785,6 +961,7 @@ onMounted(async () => {
                                         <input type="number" min="1" max="100" step="0.5"
                                             class="w-20 rounded border-gray-300 text-xs focus:border-gray-800 focus:ring-gray-800"
                                             :value="ensureDraft(p).porcentaje ?? ''"
+                                            :disabled="Boolean(p.deleted_at)"
                                             @click.stop
                                             @input="handleBulkPorcentajeChange(p, ($event.target as HTMLInputElement).value)" />
                                         <span>% comisión</span>
@@ -798,6 +975,7 @@ onMounted(async () => {
                                         <input type="number" min="0" step="0.01"
                                             class="w-28 rounded border-gray-300 text-xs focus:border-gray-800 focus:ring-gray-800"
                                             :value="ensureDraft(p).importe ?? ''"
+                                            :disabled="Boolean(p.deleted_at)"
                                             @click.stop
                                             @input="handleBulkImporteChange(p, ($event.target as HTMLInputElement).value)" />
                                         <span class="text-gray-500">MXN</span>
@@ -816,12 +994,24 @@ onMounted(async () => {
                                     </div>
                                     <span v-else class="text-gray-400">No requerido</span>
                                 </td>
+                                <td class="px-3 py-2 text-xs">
+                                    <span class="inline-flex rounded-full px-2 py-0.5 font-semibold"
+                                        :class="p.deleted_at ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
+                                        {{ p.deleted_at ? 'Eliminado' : 'Activo' }}
+                                    </span>
+                                    <div v-if="p.deleted_at" class="mt-1 text-[11px] text-gray-500">
+                                        {{ formatDateTimeLabel(p.deleted_at) }}
+                                    </div>
+                                </td>
+                                <td class="max-w-xs truncate px-3 py-2 text-xs" :title="p.delete_reason || ''">
+                                    {{ p.delete_reason || '—' }}
+                                </td>
                             </tr>
                             <tr v-if="!loading && visibleProveedores.length === 0">
-                                <td colspan="8" class="px-3 py-3 text-center text-gray-500">Sin resultados</td>
+                                <td colspan="10" class="px-3 py-3 text-center text-gray-500">Sin resultados</td>
                             </tr>
                             <tr v-if="loading">
-                                <td colspan="8" class="px-3 py-3 text-center text-gray-500">Cargando…</td>
+                                <td colspan="10" class="px-3 py-3 text-center text-gray-500">Cargando…</td>
                             </tr>
                         </tbody>
                     </table>
@@ -830,12 +1020,22 @@ onMounted(async () => {
                     <div class="md:hidden divide-y divide-gray-100 max-h-80 overflow-auto">
                         <div v-for="p in visibleProveedores" :key="p.id"
                             class="w-full text-left p-3 space-y-3 transition hover:bg-gray-50"
-                            :class="[selectedId === p.id ? 'bg-gray-100' : 'bg-white', bulkTipoDrafts[p.id]?.dirty ? 'ring-1 ring-rose-200' : '']">
+                            :class="[selectedId === p.id ? 'bg-gray-100' : 'bg-white', p.deleted_at ? 'text-gray-500 bg-gray-50/60' : '', bulkTipoDrafts[p.id]?.dirty ? 'ring-1 ring-rose-200' : '']">
                             <button type="button" class="flex w-full items-center justify-between text-left"
                                 @click="selectRow(p)">
                                 <span class="text-sm font-semibold text-gray-800">{{ p.nombre }}</span>
                                 <span class="text-xs text-gray-500">#{{ p.ident }}</span>
                             </button>
+                            <div class="flex flex-wrap items-center gap-2 text-xs">
+                                <span class="inline-flex rounded-full px-2 py-0.5 font-semibold"
+                                    :class="p.deleted_at ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'">
+                                    {{ p.deleted_at ? 'Eliminado' : 'Activo' }}
+                                </span>
+                                <span v-if="p.deleted_at">{{ formatDateTimeLabel(p.deleted_at) }}</span>
+                            </div>
+                            <p v-if="p.deleted_at" class="text-xs text-gray-600">
+                                <span class="font-medium text-gray-700">Motivo:</span> {{ p.delete_reason || 'Sin motivo registrado.' }}
+                            </p>
                             <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600">
                                 <div><span class="font-medium text-gray-700">Tel:</span> {{ p.tel || '—' }}</div>
                                 <div><span class="font-medium text-gray-700">Email:</span> {{ p.email || '—' }}</div>
@@ -846,6 +1046,7 @@ onMounted(async () => {
                                 <label class="block text-[11px] font-semibold uppercase text-gray-500">Tipo de proveedor</label>
                                 <select class="w-full rounded-lg border-gray-300 text-sm capitalize focus:border-gray-800 focus:ring-gray-800"
                                     :value="ensureDraft(p).tipo"
+                                    :disabled="Boolean(p.deleted_at)"
                                     @change="handleBulkTipoChange(p, ($event.target as HTMLSelectElement).value)">
                                     <option value="normal">Normal</option>
                                     <option value="consigna">Consigna</option>
@@ -855,6 +1056,7 @@ onMounted(async () => {
                                     <input type="number" min="1" max="100" step="0.5"
                                         class="w-24 rounded border-gray-300 text-xs focus:border-gray-800 focus:ring-gray-800"
                                         :value="ensureDraft(p).porcentaje ?? ''"
+                                        :disabled="Boolean(p.deleted_at)"
                                         @input="handleBulkPorcentajeChange(p, ($event.target as HTMLInputElement).value)" />
                                     <span>% comisión</span>
                                 </div>
@@ -866,6 +1068,7 @@ onMounted(async () => {
                                     <input type="number" min="0" step="0.01"
                                         class="w-28 rounded border-gray-300 text-xs focus:border-gray-800 focus:ring-gray-800"
                                         :value="ensureDraft(p).importe ?? ''"
+                                        :disabled="Boolean(p.deleted_at)"
                                         @input="handleBulkImporteChange(p, ($event.target as HTMLInputElement).value)" />
                                     <span>MXN</span>
                                     <button type="button"
@@ -932,6 +1135,55 @@ onMounted(async () => {
                     </p>
                 </div>
             </section>
+
+            <div v-if="deleteModalOpen"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+                <form class="w-full max-w-lg rounded-xl bg-white shadow-xl"
+                    @submit.prevent="confirmRemoveProveedor">
+                    <header class="flex items-start justify-between border-b border-gray-200 px-5 py-4">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900">Eliminar proveedor</h3>
+                            <p class="text-sm text-gray-500">
+                                {{ deleteTarget?.nombre }} · #{{ deleteTarget?.ident }}
+                            </p>
+                        </div>
+                        <button type="button"
+                            class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+                            :disabled="saving"
+                            @click="closeDeleteModal">
+                            Cerrar
+                        </button>
+                    </header>
+                    <div class="space-y-4 px-5 py-4">
+                        <p class="text-sm text-gray-600">
+                            Se dará de baja el proveedor y se enviarán a eliminados todos sus productos activos.
+                        </p>
+                        <div class="space-y-1">
+                            <label class="block text-sm font-medium text-gray-700">Motivo de baja</label>
+                            <textarea v-model="deleteReason" rows="4" required
+                                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-gray-900"
+                                placeholder="Describe el motivo para guardarlo en el historial del proveedor."></textarea>
+                        </div>
+                        <div v-if="deletionReceiptError"
+                            class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                            {{ deletionReceiptError }}
+                        </div>
+                    </div>
+                    <footer class="flex flex-wrap justify-end gap-2 border-t border-gray-200 px-5 py-4">
+                        <button type="button"
+                            class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                            :disabled="saving"
+                            @click="closeDeleteModal">
+                            Cancelar
+                        </button>
+                        <button type="submit"
+                            class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-60"
+                            :disabled="saving">
+                            {{ saving ? 'Eliminando…' : 'Confirmar baja' }}
+                        </button>
+                    </footer>
+                </form>
+            </div>
         </div>
     </AppLayout>
 </template>

@@ -30,4 +30,4 @@ Route::prefix('api')->middleware('web')->group(function () {
 Route::view('/', 'landing');
 
 Route::view('/{any}', 'app')
-    ->where('any', '^(?!api|sanctum|storage).*$');
+    ->where('any', '^(?!(api|sanctum|storage|build)(/|$)).*$');
