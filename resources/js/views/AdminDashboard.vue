@@ -13,9 +13,11 @@ const RestockAlertsWidget = defineAsyncComponent(() => import('../components/wid
 const InventoryProposalWidget = defineAsyncComponent(() => import('../components/widgets/InventoryProposalWidget.vue'))
 const HostingServicePaymentsWidget = defineAsyncComponent(() => import('../components/widgets/HostingServicePaymentsWidget.vue'))
 
+const HOSTING_WIDGET_HOST = 'rosamexicano.on-forge.com';
 const auth = useAuthStore();
 const isCashier = computed(() => auth.isCashier);
 const canShowCashierWidget = computed(() => isCashier.value && auth.allowedModules.includes('dashboard'));
+const canShowHostingServicePaymentsWidget = computed(() => window.location.hostname === HOSTING_WIDGET_HOST);
 </script>
 
 <template>
@@ -31,7 +33,7 @@ const canShowCashierWidget = computed(() => isCashier.value && auth.allowedModul
             </p>
 
             <template v-if="!isCashier">
-                <Suspense>
+                <Suspense v-if="canShowHostingServicePaymentsWidget">
                     <HostingServicePaymentsWidget />
                     <template #fallback>
                         <div class="h-40 rounded-2xl border border-gray-200 bg-white shadow-sm animate-pulse" />

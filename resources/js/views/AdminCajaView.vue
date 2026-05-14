@@ -1364,7 +1364,11 @@ async function addToCart(producto: Producto) {
 }
 
 /** Keeps quantities valid while reacting to manual edits on the cart table. */
-async function onQtyChange(row: CartRow) {
+async function onQtyChange(row: CartRow, event?: Event) {
+    if (event) {
+        const value = (event.target as HTMLInputElement | null)?.value ?? '';
+        row.paidQty = value === '' ? 0 : Number(value);
+    }
     clampQty(row);
     row.promoOrder = ++cartTouchSeq;
     await refreshCartPromotions();
@@ -2042,7 +2046,7 @@ onUnmounted(() => {
                                         <div class="space-y-3 text-[12px] text-gray-600">
                                             <label class="flex flex-col gap-1">
                                                 <span class="font-medium text-gray-700">Cantidad</span>
-                                                <input v-model.number="r.paidQty" @change="onQtyChange(r)" type="number"
+                                                <input v-model.number="r.paidQty" @input="onQtyChange(r, $event)" type="number"
                                                     min="0" :max="r.existencia"
                                                     class="w-full rounded-md border px-2.5 py-1.5 text-right text-sm" />
                                                 <span v-if="(r.promoFreeQty ?? 0) > 0"
@@ -2139,7 +2143,7 @@ onUnmounted(() => {
                                                     currency(r.precio) }}</td>
                                                 <td class="px-2.5 py-1.5 text-right">{{ r.existencia }}</td>
                                                 <td class="px-2.5 py-1.5 text-right">
-                                                    <input v-model.number="r.paidQty" @change="onQtyChange(r)" type="number"
+                                                    <input v-model.number="r.paidQty" @input="onQtyChange(r, $event)" type="number"
                                                         min="0" :max="r.existencia"
                                                         class="w-20 rounded border px-2 py-1 text-right text-[12px]" />
                                                     <div v-if="(r.promoFreeQty ?? 0) > 0"

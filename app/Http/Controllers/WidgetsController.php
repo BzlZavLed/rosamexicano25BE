@@ -23,6 +23,7 @@ class WidgetsController extends Controller
         ['key' => 'dpekesypekas', 'name' => 'D Pekes y Pekas'],
     ];
     private const HOSTING_MONTHLY_AMOUNT = 200.00;
+    private const HOSTING_WIDGET_HOST = 'rosamexicano.on-forge.com';
 
     public function cashierSummary(Request $request)
     {
@@ -186,6 +187,10 @@ class WidgetsController extends Controller
 
     public function hostingServicePayments(Request $request)
     {
+        if (!$this->isHostingWidgetHost($request)) {
+            return response()->json(['message' => 'Widget no disponible en este dominio.'], 404);
+        }
+
         $months = (int) $request->input('months', 3);
         if (!in_array($months, [3, 6, 9, 12], true)) {
             $months = 3;
@@ -250,6 +255,10 @@ class WidgetsController extends Controller
 
     public function updateHostingServicePayment(Request $request, HostingServicePayment $payment)
     {
+        if (!$this->isHostingWidgetHost($request)) {
+            return response()->json(['message' => 'Widget no disponible en este dominio.'], 404);
+        }
+
         $data = $request->validate([
             'paid' => ['required', 'boolean'],
             'paid_at' => ['nullable', 'date'],
@@ -263,6 +272,11 @@ class WidgetsController extends Controller
         $payment->save();
 
         return response()->json($this->formatHostingPayment($payment->fresh()));
+    }
+
+    private function isHostingWidgetHost(Request $request): bool
+    {
+        return strcasecmp($request->getHost(), self::HOSTING_WIDGET_HOST) === 0;
     }
 
     private function formatHostingPayment(HostingServicePayment $payment): array
