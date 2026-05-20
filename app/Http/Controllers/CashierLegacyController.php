@@ -138,7 +138,8 @@ class CashierLegacyController extends Controller
     // GET /api/cashier/find-product?barcode=123456 or ?search=papel
     public function findProduct(CashierFindRequest $request)
     {
-        $q = Producto::with(['proveedor', 'inventario']);
+        $q = Producto::with(['proveedor', 'inventario'])
+            ->whereHas('proveedor');
 
         if ($barcode = $request->input('barcode')) {
             $q->where('ident', (int) $barcode);
@@ -191,7 +192,9 @@ class CashierLegacyController extends Controller
                     $ident = (int) $it['ident'];
                     $qty = (int) $it['qty'];
 
-                    $producto = Producto::where('ident', $ident)->first();
+                    $producto = Producto::where('ident', $ident)
+                        ->whereHas('proveedor')
+                        ->first();
                     if (!$producto) {
                         throw new \RuntimeException("Producto {$ident} no existe");
                     }

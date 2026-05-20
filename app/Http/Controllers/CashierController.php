@@ -262,7 +262,9 @@ class CashierController extends Controller
         if ($q === '')
             return response()->json([]);
 
-        $query = Producto::query()->with('proveedor');
+        $query = Producto::query()
+            ->with('proveedor')
+            ->whereHas('proveedor');
 
         if (is_numeric($q)) {
             $query->where('ident', (int) $q); // barcode
@@ -298,6 +300,7 @@ class CashierController extends Controller
                 $ident = (int) $line['idProd'];
                 $producto = Producto::with('proveedor')
                     ->where('ident', $ident)
+                    ->whereHas('proveedor')
                     ->firstOrFail();
 
                 $quantity = max(0, (int) $line['cant']);
