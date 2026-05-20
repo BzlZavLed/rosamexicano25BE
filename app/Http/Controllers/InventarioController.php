@@ -69,7 +69,9 @@ class InventarioController extends Controller
                 proveedores.nombre as proveedor_nombre
             ")
             ->join('producto', 'producto.ident', '=', 'inventario.ident')
-            ->join('proveedores', 'proveedores.ident', '=', 'producto.proveedorid');
+            ->join('proveedores', 'proveedores.ident', '=', 'producto.proveedorid')
+            ->whereNull('producto.deleted_at')
+            ->whereNull('proveedores.deleted_at');
 
         if ($prov = $request->get('proveedor_id')) {
             $query->where('producto.proveedorid', (int) $prov);
@@ -230,6 +232,8 @@ class InventarioController extends Controller
                 ")
                 ->join('producto', 'producto.ident', '=', 'inventario.ident')
                 ->join('proveedores', 'proveedores.ident', '=', 'producto.proveedorid')
+                ->whereNull('producto.deleted_at')
+                ->whereNull('proveedores.deleted_at')
                 ->where('inventario.id', $inv->id)
                 ->first();
 

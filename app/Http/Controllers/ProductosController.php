@@ -83,7 +83,8 @@ class ProductosController extends Controller
             $sort = 'nombre';
         }
 
-        $query = Producto::with(['proveedor', 'inventario']);
+        $query = Producto::with(['proveedor', 'inventario'])
+            ->whereHas('proveedor');
 
         if ($barcode = $request->get('barcode')) {
             $query->where('ident', (int) $barcode);

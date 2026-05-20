@@ -1136,7 +1136,8 @@ class ReportController extends Controller
         $provider = $this->currentProvider($request);
 
         $query = Producto::query()
-            ->with(['proveedor:ident,id,nombre']);
+            ->with(['proveedor:ident,id,nombre'])
+            ->whereHas('proveedor');
 
         if ($search !== '') {
             $normalized = Str::lower($search);
@@ -1209,9 +1210,9 @@ class ReportController extends Controller
             ],
             'totals' => [
                 'total_productos' => $paginator->total(),
-                'total_existencia' => (int) ($totalsRow->total_existencia ?? 0),
-                'valor_publico' => (float) ($totalsRow->valor_publico ?? 0),
-                'valor_proveedor' => (float) ($totalsRow->valor_proveedor ?? 0),
+                'total_existencia' => 0,
+                'valor_publico' => 0,
+                'valor_proveedor' => 0,
             ],
         ]);
     }
@@ -1231,8 +1232,10 @@ class ReportController extends Controller
         $providerIdent = $request->input('proveedor_id', null);
 
         $baseQuery = Inventario::query()
-            ->leftJoin('producto as p', 'p.ident', '=', 'inventario.ident')
-            ->leftJoin('proveedores as pr', 'pr.ident', '=', 'p.proveedorid');
+            ->join('producto as p', 'p.ident', '=', 'inventario.ident')
+            ->join('proveedores as pr', 'pr.ident', '=', 'p.proveedorid')
+            ->whereNull('p.deleted_at')
+            ->whereNull('pr.deleted_at');
 
         $baseQuery->when($search !== '', function ($q) use ($search) {
             $normalized = Str::lower($search);
