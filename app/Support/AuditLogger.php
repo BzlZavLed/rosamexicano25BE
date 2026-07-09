@@ -6,6 +6,7 @@ use App\Models\Usuario;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class AuditLogger
@@ -51,7 +52,7 @@ class AuditLogger
             'user_id'    => $authUser->id,
             'action'     => $action,
             'table_name' => $table,
-            'record_id'  => static::guessPrimaryKey($query->bindings),
+            'record_id'  => static::guessPrimaryKey($action, $query->bindings),
             'connection' => $query->connectionName,
             'statement'  => trim($query->sql),
             'bindings'   => json_encode($query->bindings),
@@ -94,9 +95,13 @@ class AuditLogger
         return trim($matches[1], '"`');
     }
 
-    protected static function guessPrimaryKey(array $bindings): ?int
+    protected static function guessPrimaryKey(string $action, array $bindings): ?int
     {
-        foreach ($bindings as $binding) {
+        if ($action === 'insert') {
+            return null;
+        }
+
+        foreach (array_reverse($bindings) as $binding) {
             if (is_int($binding)) {
                 return $binding;
             }
@@ -111,6 +116,11 @@ class AuditLogger
 
         try {
             DB::table('audit_logs')->insert($payload);
+        } catch (\Throwable $e) {
+            Log::warning('Audit log insert failed', [
+                'exception' => $e,
+                'payload' => $payload,
+            ]);
         } finally {
             static::$allowLogging = true;
         }
